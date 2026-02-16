@@ -133,6 +133,9 @@ def main() -> None:
     # --- Wire signals ---
     window.bounding_box_changed.connect(overlay.update_bounding_box)
     window.slot_layout_changed.connect(overlay.update_slot_layout)
+    window.overlay_visibility_changed.connect(
+        lambda visible: overlay.show() if visible else overlay.hide()
+    )
     window.config_changed.connect(worker.update_config)
     worker.frame_captured.connect(window.update_preview)
     worker.state_updated.connect(window.update_slot_states)

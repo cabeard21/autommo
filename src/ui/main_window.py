@@ -18,6 +18,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGroupBox,
     QHBoxLayout,
@@ -47,6 +48,8 @@ class MainWindow(QMainWindow):
     config_changed = pyqtSignal(AppConfig)
     # Emitted when slot layout changes (count, gap, padding) for overlay slot outlines
     slot_layout_changed = pyqtSignal(int, int, int)  # slot_count, slot_gap_pixels, slot_padding
+    # Emitted when overlay visibility is toggled (True = show, False = hide)
+    overlay_visibility_changed = pyqtSignal(bool)
 
     def __init__(self, config: AppConfig, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -90,6 +93,9 @@ class MainWindow(QMainWindow):
             spin.setSingleStep(1)
             bbox_layout.addWidget(QLabel(label))
             bbox_layout.addWidget(spin)
+
+        self._check_overlay = QCheckBox("Show overlay")
+        bbox_layout.addWidget(self._check_overlay)
 
         layout.addWidget(bbox_group)
 
@@ -158,6 +164,7 @@ class MainWindow(QMainWindow):
         self._spin_slots.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_gap.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_padding.valueChanged.connect(self._on_slot_layout_changed)
+        self._check_overlay.toggled.connect(self._on_overlay_toggled)
         self._slider_threshold.valueChanged.connect(self._on_threshold_changed)
         self._btn_save_config.clicked.connect(self._save_config)
 
@@ -171,6 +178,7 @@ class MainWindow(QMainWindow):
         self._spin_slots.setValue(self._config.slot_count)
         self._spin_gap.setValue(self._config.slot_gap_pixels)
         self._spin_padding.setValue(self._config.slot_padding)
+        self._check_overlay.setChecked(self._config.overlay_enabled)
         self._slider_threshold.setValue(int(self._config.brightness_threshold * 100))
         self._threshold_label.setText(f"{self._config.brightness_threshold:.2f}")
 
@@ -186,6 +194,10 @@ class MainWindow(QMainWindow):
     def _on_threshold_changed(self, value: int) -> None:
         self._config.brightness_threshold = value / 100.0
         self._threshold_label.setText(f"{self._config.brightness_threshold:.2f}")
+
+    def _on_overlay_toggled(self, checked: bool) -> None:
+        self._config.overlay_enabled = checked
+        self.overlay_visibility_changed.emit(checked)
 
     def _on_slot_layout_changed(self) -> None:
         self._config.slot_count = self._spin_slots.value()
