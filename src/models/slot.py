@@ -84,7 +84,9 @@ class AppConfig:
     slot_gap_pixels: int = 2
     slot_padding: int = 3
     polling_fps: int = 20
-    brightness_threshold: float = 0.65
+    brightness_threshold: float = 0.65  # Deprecated; kept for compatibility / future use
+    brightness_drop_threshold: int = 40  # 0-255; pixel counts as darkened if brightness dropped by more
+    cooldown_pixel_fraction: float = 0.30  # ON_COOLDOWN if this fraction of pixels darkened
     cooldown_min_duration_ms: int = 2000
     ocr_enabled: bool = True
     overlay_enabled: bool = True
@@ -101,6 +103,11 @@ class AppConfig:
             slot_padding=data.get("slots", {}).get("padding", 3),
             polling_fps=data.get("detection", {}).get("polling_fps", 20),
             brightness_threshold=data.get("detection", {}).get("brightness_threshold", 0.65),
+            brightness_drop_threshold=data.get("detection", {}).get(
+                "brightness_drop_threshold",
+                data.get("detection", {}).get("saturation_drop_threshold", 40),
+            ),
+            cooldown_pixel_fraction=data.get("detection", {}).get("cooldown_pixel_fraction", 0.30),
             cooldown_min_duration_ms=data.get("detection", {}).get("cooldown_min_duration_ms", 2000),
             ocr_enabled=data.get("detection", {}).get("ocr_enabled", True),
             overlay_enabled=data.get("overlay", {}).get("enabled", True),
@@ -121,6 +128,8 @@ class AppConfig:
             "detection": {
                 "polling_fps": self.polling_fps,
                 "brightness_threshold": self.brightness_threshold,
+                "brightness_drop_threshold": self.brightness_drop_threshold,
+                "cooldown_pixel_fraction": self.cooldown_pixel_fraction,
                 "cooldown_min_duration_ms": self.cooldown_min_duration_ms,
                 "ocr_enabled": self.ocr_enabled,
             },

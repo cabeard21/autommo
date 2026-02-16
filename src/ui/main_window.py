@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._config = config
         self.setWindowTitle("Cooldown Reader")
-        self.setMinimumSize(500, 400)
+        self.setMinimumSize(760, 400)
 
         self._build_ui()
         self._connect_signals()
@@ -120,12 +120,18 @@ class MainWindow(QMainWindow):
         self._spin_padding.setSuffix(" px")
         detect_layout.addWidget(self._spin_padding)
 
-        detect_layout.addWidget(QLabel("Brightness Threshold:"))
-        self._slider_threshold = QSlider(Qt.Orientation.Horizontal)
-        self._slider_threshold.setRange(30, 95)
-        self._threshold_label = QLabel("0.65")
-        detect_layout.addWidget(self._slider_threshold)
-        detect_layout.addWidget(self._threshold_label)
+        detect_layout.addWidget(QLabel("Brightness drop:"))
+        self._spin_brightness_drop = QSpinBox()
+        self._spin_brightness_drop.setRange(0, 255)
+        detect_layout.addWidget(self._spin_brightness_drop)
+
+        detect_layout.addWidget(QLabel("CD fraction:"))
+        self._slider_pixel_fraction = QSlider(Qt.Orientation.Horizontal)
+        self._slider_pixel_fraction.setRange(10, 90)  # 0.10 to 0.90
+        self._slider_pixel_fraction.setSingleStep(5)
+        self._pixel_fraction_label = QLabel("0.30")
+        detect_layout.addWidget(self._slider_pixel_fraction)
+        detect_layout.addWidget(self._pixel_fraction_label)
 
         layout.addWidget(detect_group)
 
@@ -165,7 +171,8 @@ class MainWindow(QMainWindow):
         self._spin_gap.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_padding.valueChanged.connect(self._on_slot_layout_changed)
         self._check_overlay.toggled.connect(self._on_overlay_toggled)
-        self._slider_threshold.valueChanged.connect(self._on_threshold_changed)
+        self._spin_brightness_drop.valueChanged.connect(self._on_detection_changed)
+        self._slider_pixel_fraction.valueChanged.connect(self._on_detection_changed)
         self._btn_save_config.clicked.connect(self._save_config)
 
     def _sync_ui_from_config(self) -> None:
@@ -175,12 +182,28 @@ class MainWindow(QMainWindow):
         self._spin_left.setValue(bb.left)
         self._spin_width.setValue(bb.width)
         self._spin_height.setValue(bb.height)
-        self._spin_slots.setValue(self._config.slot_count)
-        self._spin_gap.setValue(self._config.slot_gap_pixels)
-        self._spin_padding.setValue(self._config.slot_padding)
+        # Block signals so slot spinbox setValue doesn't overwrite config before all are set
+        self._spin_slots.blockSignals(True)
+        self._spin_gap.blockSignals(True)
+        self._spin_padding.blockSignals(True)
+        try:
+            self._spin_slots.setValue(self._config.slot_count)
+            self._spin_gap.setValue(self._config.slot_gap_pixels)
+            self._spin_padding.setValue(self._config.slot_padding)
+        finally:
+            self._spin_slots.blockSignals(False)
+            self._spin_gap.blockSignals(False)
+            self._spin_padding.blockSignals(False)
         self._check_overlay.setChecked(self._config.overlay_enabled)
-        self._slider_threshold.setValue(int(self._config.brightness_threshold * 100))
-        self._threshold_label.setText(f"{self._config.brightness_threshold:.2f}")
+        self._spin_brightness_drop.blockSignals(True)
+        self._slider_pixel_fraction.blockSignals(True)
+        try:
+            self._spin_brightness_drop.setValue(self._config.brightness_drop_threshold)
+            self._slider_pixel_fraction.setValue(int(self._config.cooldown_pixel_fraction * 100))
+            self._pixel_fraction_label.setText(f"{self._config.cooldown_pixel_fraction:.2f}")
+        finally:
+            self._spin_brightness_drop.blockSignals(False)
+            self._slider_pixel_fraction.blockSignals(False)
 
     def _on_bbox_changed(self) -> None:
         self._config.bounding_box = BoundingBox(
@@ -191,9 +214,11 @@ class MainWindow(QMainWindow):
         )
         self.bounding_box_changed.emit(self._config.bounding_box)
 
-    def _on_threshold_changed(self, value: int) -> None:
-        self._config.brightness_threshold = value / 100.0
-        self._threshold_label.setText(f"{self._config.brightness_threshold:.2f}")
+    def _on_detection_changed(self) -> None:
+        self._config.brightness_drop_threshold = self._spin_brightness_drop.value()
+        self._config.cooldown_pixel_fraction = self._slider_pixel_fraction.value() / 100.0
+        self._pixel_fraction_label.setText(f"{self._config.cooldown_pixel_fraction:.2f}")
+        self.config_changed.emit(self._config)
 
     def _on_overlay_toggled(self, checked: bool) -> None:
         self._config.overlay_enabled = checked
@@ -236,7 +261,7 @@ class MainWindow(QMainWindow):
             for _ in states:
                 lbl = QLabel()
                 lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lbl.setMinimumWidth(40)
+                lbl.setMinimumWidth(52)
                 lbl.setStyleSheet("border: 1px solid #444; padding: 4px;")
                 self._state_layout.addWidget(lbl)
                 self._slot_labels.append(lbl)
