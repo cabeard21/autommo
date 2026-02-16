@@ -9,6 +9,7 @@ from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -71,7 +72,7 @@ class SlotButton(QPushButton):
 
 
 class PriorityItemWidget(QFrame):
-    """One row in the priority list: handle, rank, [key], status. Draggable for reorder; drag out to remove."""
+    """One row in the priority list: handle, [key], status. Draggable for reorder; drag out to remove."""
 
     def __init__(self, slot_index: int, rank: int, keybind: str, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -87,15 +88,15 @@ class PriorityItemWidget(QFrame):
         self._handle_label = QLabel("\u28FF")  # Braille pattern for "handle"
         self._handle_label.setStyleSheet("color: #666;")
         layout.addWidget(self._handle_label)
-        self._rank_label = QLabel("0")
-        self._rank_label.setMinimumWidth(14)
-        layout.addWidget(self._rank_label)
+        layout.addStretch(1)
         self._key_label = QLabel("[?]")
-        layout.addWidget(self._key_label)
+        self._key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._key_label, 0, Qt.AlignmentFlag.AlignCenter)
+        layout.addStretch(1)
         self._status_label = QLabel("—")
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._status_label)
-        layout.addStretch()
-        self.setMinimumHeight(24)
+        self.setFixedHeight(44)
         self._update_style()
 
     @property
@@ -104,7 +105,6 @@ class PriorityItemWidget(QFrame):
 
     def set_rank(self, rank: int) -> None:
         self._rank = rank
-        self._rank_label.setText(str(rank))
 
     def set_keybind(self, keybind: str) -> None:
         self._keybind = keybind
@@ -118,18 +118,26 @@ class PriorityItemWidget(QFrame):
         elif cooldown_remaining is not None:
             self._status_label.setText(f"{cooldown_remaining:.1f}s")
         else:
-            self._status_label.setText("—")
+            self._status_label.setText("NOT READY")
         self._update_style()
 
     def _update_style(self) -> None:
-        color = {
-            "ready": "#2d5a2d",
-            "on_cooldown": "#5a2d2d",
-            "gcd": "#5a5a2d",
-            "unknown": "#333333",
-        }.get(self._state, "#333333")
-        self._status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
-        self.setStyleSheet(f"PriorityItemWidget {{ background: #2a2a2a; border: 1px solid #444; }}")
+        bg_ready = "#2d5a2d"
+        bg_not_ready = "#5a2d2d"
+        text_ready = "#b8e0b8"
+        text_not_ready = "#e0b8b8"
+        if self._state == "ready":
+            bg = bg_ready
+            text_color = text_ready
+        else:
+            bg = bg_not_ready
+            text_color = text_not_ready
+        self._status_label.setStyleSheet(f"color: {text_color}; font-size: 10px;")
+        self.setStyleSheet(
+            f"PriorityItemWidget {{ background: {bg}; border: 1px solid #444; }}"
+        )
+        self._handle_label.setStyleSheet("color: #888;")
+        self._key_label.setStyleSheet(f"color: {text_color}; font-weight: bold; font-size: 14px;")
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -179,6 +187,7 @@ class PriorityListWidget(QWidget):
         self._list_layout = QVBoxLayout(self._list_container)
         self._list_layout.setContentsMargins(0, 0, 0, 0)
         self._list_layout.setSpacing(2)
+        self._list_layout.addStretch()
         self._scroll.setWidget(self._list_container)
         layout.addWidget(self._scroll)
         self._item_widgets: list[PriorityItemWidget] = []
@@ -214,13 +223,8 @@ class PriorityListWidget(QWidget):
             w = PriorityItemWidget(slot_index, rank, keybind or "?", self._list_container)
             state, cd = self._states_by_index.get(slot_index, ("unknown", None))
             w.set_state(state, cd)
-            self._list_layout.addWidget(w)
+            self._list_layout.insertWidget(self._list_layout.count() - 1, w)
             self._item_widgets.append(w)
-        self._sync_ranks()
-
-    def _sync_ranks(self) -> None:
-        for rank, w in enumerate(self._item_widgets, 1):
-            w.set_rank(rank)
 
     def _emit_order(self) -> None:
         self.order_changed.emit(self.get_order())
@@ -288,19 +292,25 @@ class PriorityPanel(QWidget):
         self._check_automation.setChecked(False)
         layout.addWidget(self._check_automation)
 
-        layout.addWidget(QLabel("Last Action"))
+        last_action_group = QGroupBox("Last Action")
+        last_action_layout = QVBoxLayout(last_action_group)
         self._last_action_label = QLabel("—")
         self._last_action_label.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._last_action_label)
+        last_action_layout.addWidget(self._last_action_label)
+        layout.addWidget(last_action_group)
 
-        layout.addWidget(QLabel("Next Intention"))
+        next_intention_group = QGroupBox("Next Intention")
+        next_intention_layout = QVBoxLayout(next_intention_group)
         self._next_intention_label = QLabel("—")
         self._next_intention_label.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._next_intention_label)
+        next_intention_layout.addWidget(self._next_intention_label)
+        layout.addWidget(next_intention_group)
 
-        layout.addWidget(QLabel("Priority"))
+        priority_group = QGroupBox("Priority")
+        priority_group_layout = QVBoxLayout(priority_group)
         self._priority_list = PriorityListWidget(self)
-        layout.addWidget(self._priority_list, 1)
+        priority_group_layout.addWidget(self._priority_list, 1)
+        layout.addWidget(priority_group, 1)
 
     @property
     def automation_check(self) -> QCheckBox:
