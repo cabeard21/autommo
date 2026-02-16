@@ -94,6 +94,8 @@ class AppConfig:
     keybinds: list[str] = field(default_factory=list)  # keybinds[slot_index] = key string, e.g. "5", "F"
     # Persisted baselines: list of {"shape": [h, w], "data": base64} per slot (decoded at runtime in analyzer)
     slot_baselines: list = field(default_factory=list)
+    # Slot indices that had their baseline set by "Calibrate This Slot" (show bold in UI)
+    overwritten_baseline_slots: list[int] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict) -> AppConfig:
@@ -117,6 +119,7 @@ class AppConfig:
             overlay_border_color=data.get("overlay", {}).get("border_color", "#00FF00"),
             keybinds=data.get("slots", {}).get("keybinds", []),
             slot_baselines=data.get("slot_baselines", []),
+            overwritten_baseline_slots=data.get("overwritten_baseline_slots", []),
         )
 
     def to_dict(self) -> dict:
@@ -143,4 +146,5 @@ class AppConfig:
                 "border_color": self.overlay_border_color,
             },
             "slot_baselines": self.slot_baselines,
+            "overwritten_baseline_slots": self.overwritten_baseline_slots,
         }

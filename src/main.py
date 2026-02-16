@@ -222,7 +222,7 @@ def main() -> None:
             cap.stop()
             analyzer.calibrate_baselines(frame)
             logger.info("Baselines calibrated from current frame")
-            window.mark_slots_recalibrated(set(range(config.slot_count)))
+            window.clear_overwritten_baseline_slots()
             window._btn_calibrate.setText("Calibrated ✓")
             window._btn_calibrate.setStyleSheet("")
             QTimer.singleShot(2000, revert_calibrate_button)

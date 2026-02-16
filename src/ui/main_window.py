@@ -60,7 +60,8 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._config = config
         self._listening_slot_index: Optional[int] = None
-        self._slots_recalibrated: set[int] = set()  # slots with baseline changed this session (show bold)
+        # Slots whose baseline was set by "Calibrate This Slot" (show bold; persisted in config)
+        self._slots_recalibrated: set[int] = set(getattr(config, "overwritten_baseline_slots", []))
         self._before_save_callback: Optional[Callable[[], None]] = None
         self.setWindowTitle("Cooldown Reader")
         self.setMinimumSize(760, 400)
@@ -447,12 +448,15 @@ class MainWindow(QMainWindow):
         self._slots_recalibrated |= slot_indices
 
     def mark_slot_recalibrated(self, slot_index: int) -> None:
-        """Mark one slot as having a recalibrated baseline."""
+        """Mark one slot as having its baseline overwritten by Calibrate This Slot (show bold, persist)."""
         self._slots_recalibrated.add(slot_index)
+        if slot_index not in self._config.overwritten_baseline_slots:
+            self._config.overwritten_baseline_slots.append(slot_index)
 
-    def clear_recalibrated_slots(self) -> None:
-        """Clear recalibrated set (e.g. after save so baselines match disk)."""
+    def clear_overwritten_baseline_slots(self) -> None:
+        """Clear which slots are marked as overwritten (e.g. after full Calibrate Baselines)."""
         self._slots_recalibrated.clear()
+        self._config.overwritten_baseline_slots.clear()
 
     def _save_config(self) -> None:
         """Persist current config to JSON and show Saved ✓ feedback."""
@@ -463,7 +467,6 @@ class MainWindow(QMainWindow):
             with open(CONFIG_PATH, "w") as f:
                 json.dump(self._config.to_dict(), f, indent=2)
             logger.info(f"Config saved to {CONFIG_PATH}")
-            self.clear_recalibrated_slots()
             self._btn_save_config.setText("Saved ✓")
             QTimer.singleShot(2000, self._revert_save_config_button)
         except Exception as e:
