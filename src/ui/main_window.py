@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
 from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QImage, QPixmap, QKeySequence
+from PyQt6.QtGui import QFontMetrics, QImage, QPixmap, QKeySequence
 from PyQt6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
@@ -89,7 +89,9 @@ class _SlotStatesRow(QWidget):
         if w <= 0:
             return
         total_gap = (n - 1) * self._gap
-        side = max(24, (w - total_gap) // n)
+        # Keep this row height stable; very large squares can push the lower panel
+        # over the scroll threshold and cause resize/scrollbar oscillation.
+        side = max(24, min(34, (w - total_gap) // n))
         for b in self._buttons:
             b.setFixedSize(side, side)
 
@@ -157,7 +159,7 @@ class _ActionEntryRow(QWidget):
         self._name_label.setMinimumWidth(0)
         self._name_label.setMinimumHeight(18)
         self._name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        self._name_label.setWordWrap(True)
+        self._name_label.setWordWrap(False)
         info.addWidget(self._name_label)
         self._status_label = QLabel(status)
         self._status_label.setObjectName("actionMeta")
@@ -169,6 +171,8 @@ class _ActionEntryRow(QWidget):
         self._time_label.setObjectName("actionTime")
         self._time_label.setStyleSheet("font-size: 9px; color: #555; font-family: monospace;")
         self._time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # Keep row geometry stable while this text updates every 100 ms.
+        self._time_label.setFixedWidth(max(42, QFontMetrics(self._time_label.font()).horizontalAdvance("0000.0s")))
         layout.addWidget(self._time_label)
 
     def set_time(self, text: str) -> None:
@@ -381,17 +385,16 @@ class MainWindow(QMainWindow):
 
         # Slot States row (fixed, not in scroll)
         self._slot_states_row = _SlotStatesRow(left_column)
-        self._slot_states_row.setMinimumHeight(40)
+        self._slot_states_row.setFixedHeight(34)
         self._slot_buttons: list[SlotButton] = []
         left_column_layout.addWidget(self._slot_states_row)
 
         # Scroll area: only Last Action + Next Intention
         self._left_panel = _LeftPanel(parent=central)
-        self._left_panel.setMinimumHeight(220)
-        self._left_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self._left_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         left_layout = QVBoxLayout(self._left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(14)
-        left_layout.addStretch(1)
         last_action_frame = QFrame()
         last_action_frame.setObjectName("sectionFrameDark")
         last_action_frame.setStyleSheet(f"background: {SECTION_BG_DARK}; border: 1px solid {SECTION_BORDER}; border-radius: 4px; padding: 8px;")
@@ -411,7 +414,6 @@ class MainWindow(QMainWindow):
         last_action_frame.setMinimumHeight(140)
         last_action_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         left_layout.addWidget(last_action_frame)
-        left_layout.addStretch(1)
         next_frame = QFrame()
         next_frame.setObjectName("sectionFrameDark")
         next_frame.setStyleSheet(f"background: {SECTION_BG_DARK}; border: 1px solid {SECTION_BORDER}; border-radius: 4px; padding: 8px 10px;")
@@ -785,6 +787,11 @@ class MainWindow(QMainWindow):
         Args:
             states: List of dicts with keys: index, state, keybind, cooldown_remaining
         """
+        # Ignore transient empty payloads while capture is running to avoid
+        # rebuilding the slot row and causing visible geometry churn.
+        if not states:
+            return
+
         # Pad keybinds so we can index by slot
         while len(self._config.keybinds) < len(states):
             self._config.keybinds.append("")
