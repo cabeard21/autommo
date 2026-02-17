@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
 from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFontMetrics, QImage, QPixmap, QKeySequence
+from PyQt6.QtGui import QFontMetrics, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
@@ -38,6 +38,7 @@ from src.ui.priority_panel import (
     SlotButton,
 )
 from src.automation.global_hotkey import format_bind_for_display
+from src.automation.binds import normalize_bind, normalize_bind_from_parts
 
 if TYPE_CHECKING:
     from src.automation.key_sender import KeySender
@@ -1098,9 +1099,9 @@ class MainWindow(QMainWindow):
         )
         if not ok:
             return
-        keybind = (keybind or "").strip()
+        keybind = normalize_bind((keybind or "").strip())
         if not keybind:
-            self._show_status_message("Manual action requires a keybind.", 2000)
+            self._show_status_message("Manual action requires a valid keybind.", 2000)
             return
         self._config.ensure_priority_profiles()
         profile = self._config.get_active_priority_profile()
@@ -1162,9 +1163,9 @@ class MainWindow(QMainWindow):
         )
         if not ok:
             return
-        keybind = (keybind or "").strip()
+        keybind = normalize_bind((keybind or "").strip())
         if not keybind:
-            self._show_status_message("Manual action requires a keybind.", 2000)
+            self._show_status_message("Manual action requires a valid keybind.", 2000)
             return
         action["keybind"] = keybind
         self._priority_panel.priority_list.set_manual_actions(
@@ -1211,8 +1212,52 @@ class MainWindow(QMainWindow):
                 "background-color: #2d2d5a; color: white; border: 1px solid #444; padding: 4px;"
             )
         self._show_status_message(
-            f"Press a key to bind to slot {slot_index + 1}... (Esc to cancel)"
+            f"Press a key/combo to bind to slot {slot_index + 1}... (Esc to cancel)"
         )
+
+    @staticmethod
+    def _qt_key_to_bind_token(event) -> str:
+        key = int(event.key())
+        if int(Qt.Key.Key_0) <= key <= int(Qt.Key.Key_9):
+            return str(key - int(Qt.Key.Key_0))
+        if int(Qt.Key.Key_A) <= key <= int(Qt.Key.Key_Z):
+            return chr(ord("a") + (key - int(Qt.Key.Key_A)))
+        if int(Qt.Key.Key_F1) <= key <= int(Qt.Key.Key_F35):
+            return f"f{key - int(Qt.Key.Key_F1) + 1}"
+        key_map = {
+            int(Qt.Key.Key_Space): "space",
+            int(Qt.Key.Key_Tab): "tab",
+            int(Qt.Key.Key_Backtab): "tab",
+            int(Qt.Key.Key_Return): "enter",
+            int(Qt.Key.Key_Enter): "enter",
+            int(Qt.Key.Key_Backspace): "backspace",
+            int(Qt.Key.Key_Delete): "delete",
+            int(Qt.Key.Key_Insert): "insert",
+            int(Qt.Key.Key_Home): "home",
+            int(Qt.Key.Key_End): "end",
+            int(Qt.Key.Key_PageUp): "page up",
+            int(Qt.Key.Key_PageDown): "page down",
+            int(Qt.Key.Key_Left): "left",
+            int(Qt.Key.Key_Right): "right",
+            int(Qt.Key.Key_Up): "up",
+            int(Qt.Key.Key_Down): "down",
+            int(Qt.Key.Key_Minus): "-",
+            int(Qt.Key.Key_Equal): "=",
+            int(Qt.Key.Key_BracketLeft): "[",
+            int(Qt.Key.Key_BracketRight): "]",
+            int(Qt.Key.Key_Backslash): "\\",
+            int(Qt.Key.Key_Semicolon): ";",
+            int(Qt.Key.Key_Apostrophe): "'",
+            int(Qt.Key.Key_Comma): ",",
+            int(Qt.Key.Key_Period): ".",
+            int(Qt.Key.Key_Slash): "/",
+            int(Qt.Key.Key_QuoteLeft): "`",
+        }
+        token = key_map.get(key, "")
+        if token:
+            return token
+        text = str(event.text() or "").strip().lower()
+        return text if len(text) == 1 else ""
 
     def _cancel_listening(self) -> None:
         """Cancel key-binding mode and revert button / status."""
@@ -1236,7 +1281,19 @@ class MainWindow(QMainWindow):
                 self._cancel_listening()
                 event.accept()
                 return
-            key_str = QKeySequence(event.key()).toString().strip()
+            token = self._qt_key_to_bind_token(event)
+            if not token:
+                event.accept()
+                return
+            mods: set[str] = set()
+            modifiers = event.modifiers()
+            if modifiers & Qt.KeyboardModifier.ControlModifier:
+                mods.add("ctrl")
+            if modifiers & Qt.KeyboardModifier.ShiftModifier:
+                mods.add("shift")
+            if modifiers & Qt.KeyboardModifier.AltModifier:
+                mods.add("alt")
+            key_str = normalize_bind_from_parts(mods, token)
             if key_str:
                 idx = self._listening_slot_index
                 while len(self._config.keybinds) <= idx:

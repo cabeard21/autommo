@@ -15,6 +15,7 @@ from PyQt6.QtCore import QRect, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
+from src.automation.binds import normalize_bind
 from src.automation.global_hotkey import GlobalToggleListener
 from src.automation.key_sender import KeySender
 from src.automation.queue_listener import QueueListener
@@ -386,8 +387,8 @@ def main() -> None:
     def all_profile_binds() -> list[str]:
         binds: list[str] = []
         for p in getattr(config, "priority_profiles", []) or []:
-            toggle_bind = str(p.get("toggle_bind", "") or "").strip().lower()
-            single_fire_bind = str(p.get("single_fire_bind", "") or "").strip().lower()
+            toggle_bind = normalize_bind(str(p.get("toggle_bind", "") or ""))
+            single_fire_bind = normalize_bind(str(p.get("single_fire_bind", "") or ""))
             if toggle_bind:
                 binds.append(toggle_bind)
             if single_fire_bind:
@@ -395,17 +396,17 @@ def main() -> None:
         return binds
 
     def on_hotkey_triggered(triggered_bind: str):
-        bind = (triggered_bind or "").strip().lower()
+        bind = normalize_bind(triggered_bind or "")
         if not bind:
             return
         matched_profile = None
         matched_action = None
         for p in getattr(config, "priority_profiles", []) or []:
-            if bind == str(p.get("toggle_bind", "") or "").strip().lower():
+            if bind == normalize_bind(str(p.get("toggle_bind", "") or "")):
                 matched_profile = p
                 matched_action = "toggle"
                 break
-            if bind == str(p.get("single_fire_bind", "") or "").strip().lower():
+            if bind == normalize_bind(str(p.get("single_fire_bind", "") or "")):
                 matched_profile = p
                 matched_action = "single_fire"
                 break

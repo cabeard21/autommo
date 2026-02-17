@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from src.models import AppConfig
 
 from src.models import ActionBarState, SlotState
+from src.automation.binds import normalize_bind
 
 logger = logging.getLogger(__name__)
 
@@ -246,9 +247,11 @@ class KeySender:
             else:
                 continue
 
-            if not (keybind or "").strip():
+            if not keybind:
                 continue
-            keybind = keybind.strip()
+            keybind = normalize_bind(str(keybind))
+            if not keybind:
+                continue
 
             if not self.is_target_window_active():
                 return {

@@ -6,6 +6,8 @@ from typing import Optional
 
 import numpy as np
 
+from src.automation.binds import normalize_bind
+
 
 class SlotState(Enum):
     READY = "ready"
@@ -166,8 +168,15 @@ class AppConfig:
                 continue
             seen_ids.add(aid)
             name = str(raw.get("name", "") or "").strip() or aid.replace("_", " ").title()
-            keybind = str(raw.get("keybind", "") or "").strip()
+            keybind = normalize_bind(str(raw.get("keybind", "") or ""))
             normalized.append({"id": aid, "name": name, "keybind": keybind})
+        return normalized
+
+    @staticmethod
+    def _normalize_slot_keybinds(raw_keybinds: object) -> list[str]:
+        normalized: list[str] = []
+        for raw in list(raw_keybinds or []):
+            normalized.append(normalize_bind(str(raw or "")))
         return normalized
 
     @staticmethod
@@ -202,6 +211,7 @@ class AppConfig:
 
     def _normalize_profiles(self) -> None:
         """Ensure automation profiles are valid and there is always an active profile."""
+        self.keybinds = self._normalize_slot_keybinds(self.keybinds)
         normalized: list[dict] = []
         seen_ids: set[str] = set()
         for p in list(self.priority_profiles or []):
@@ -232,8 +242,8 @@ class AppConfig:
                 for item in priority_items
                 if item.get("type") == "slot" and isinstance(item.get("slot_index"), int)
             ]
-            toggle_bind = str(p.get("toggle_bind", "") or "").strip().lower()
-            single_fire_bind = str(p.get("single_fire_bind", "") or "").strip().lower()
+            toggle_bind = normalize_bind(str(p.get("toggle_bind", "") or ""))
+            single_fire_bind = normalize_bind(str(p.get("single_fire_bind", "") or ""))
             normalized.append(
                 {
                     "id": pid,
@@ -258,9 +268,9 @@ class AppConfig:
                         if isinstance(i, int)
                     ],
                     "manual_actions": [],
-                    "toggle_bind": str(self.automation_toggle_bind or "").strip().lower(),
+                    "toggle_bind": normalize_bind(str(self.automation_toggle_bind or "")),
                     "single_fire_bind": (
-                        str(self.automation_toggle_bind or "").strip().lower()
+                        normalize_bind(str(self.automation_toggle_bind or ""))
                         if (self.automation_hotkey_mode or "").strip().lower() == "single_fire"
                         else ""
                     ),
@@ -358,7 +368,7 @@ class AppConfig:
             overlay_enabled=data.get("overlay", {}).get("enabled", True),
             overlay_border_color=data.get("overlay", {}).get("border_color", "#00FF00"),
             always_on_top=data.get("display", {}).get("always_on_top", False),
-            keybinds=data.get("slots", {}).get("keybinds", []),
+            keybinds=cls._normalize_slot_keybinds(data.get("slots", {}).get("keybinds", [])),
             slot_display_names=data.get("slot_display_names", []),
             slot_baselines=data.get("slot_baselines", []),
             overwritten_baseline_slots=data.get("overwritten_baseline_slots", []),
@@ -382,7 +392,7 @@ class AppConfig:
             )
         else:
             # Legacy migration path from single priority list + single hotkey.
-            legacy_toggle_bind = str(data.get("automation_toggle_bind", "") or "").strip().lower()
+            legacy_toggle_bind = normalize_bind(str(data.get("automation_toggle_bind", "") or ""))
             legacy_mode = (data.get("automation_hotkey_mode", "toggle") or "toggle").strip().lower()
             cfg.priority_profiles = [
                 {

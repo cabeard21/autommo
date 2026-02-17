@@ -12,36 +12,28 @@ from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 
+from src.automation.binds import (
+    format_bind_for_display,
+    is_modifier_token,
+    normalize_bind,
+    normalize_bind_from_parts,
+    normalize_key_token,
+    parse_bind,
+)
+
 logger = logging.getLogger(__name__)
 
 # Mouse button names we do not register as keyboard hotkeys
 _MOUSE_BIND_NAMES = frozenset({"x1", "x2", "left", "right", "middle"})
 
 
-def format_bind_for_display(bind: str) -> str:
-    """Convert stored bind string to display label (e.g. 'f5' -> 'F5', 'x1' -> 'Mouse 4')."""
-    if not bind or not bind.strip():
-        return "Set"
-    b = bind.strip().lower()
-    if b == "x1":
-        return "Mouse 4"
-    if b == "x2":
-        return "Mouse 5"
-    if b in ("left", "right", "middle"):
-        return {"left": "LMB", "right": "RMB", "middle": "MMB"}.get(b, b)
-    if len(b) <= 2 and b.startswith("f"):
-        return b.upper()
-    return b.upper() if len(b) <= 2 else b.capitalize()
-
-
-def normalize_bind(bind: str) -> str:
-    """Normalize bind string for comparison (lowercase, stripped)."""
-    return bind.strip().lower() if bind else ""
-
-
 def _is_keyboard_bind(bind: str) -> bool:
     """True if the bind is a keyboard key (we only listen for keyboard keys)."""
-    return bool(bind) and normalize_bind(bind) not in _MOUSE_BIND_NAMES
+    parsed = parse_bind(bind)
+    if parsed is None:
+        return False
+    _, primary = parsed
+    return primary not in _MOUSE_BIND_NAMES
 
 
 class _ListenerThread(QThread):
@@ -69,7 +61,7 @@ class _ListenerThread(QThread):
             binds = {
                 normalize_bind(b)
                 for b in (self._get_binds() or [])
-                if _is_keyboard_bind(normalize_bind(b))
+                if _is_keyboard_bind(b)
             }
             if not binds:
                 self.msleep(500)
@@ -82,8 +74,20 @@ class _ListenerThread(QThread):
                         pass
                     self._hook = None
 
-                # Track key-down state so we trigger only on press, not on key repeat.
-                key_held: dict[str, bool] = {}
+                parsed_binds: dict[str, tuple[frozenset[str], str]] = {}
+                key_to_bind: dict[str, set[str]] = {}
+                for bind in binds:
+                    parsed = parse_bind(bind)
+                    if parsed is None:
+                        continue
+                    parsed_binds[bind] = parsed
+                    key = parsed[1]
+                    key_to_bind.setdefault(key, set()).add(bind)
+
+                # Track key-down state so we trigger only once per press.
+                held_keys: set[str] = set()
+                held_modifiers: set[str] = set()
+                active_triggers: set[str] = set()
 
                 def on_event(event):
                     if not self._running:
@@ -91,15 +95,28 @@ class _ListenerThread(QThread):
                     name = getattr(event, "name", None)
                     if not name:
                         return
-                    key_normalized = str(name).strip().lower()
-                    if key_normalized not in binds:
+                    key_normalized = normalize_key_token(str(name))
+                    if not key_normalized:
                         return
+                    is_modifier = is_modifier_token(key_normalized)
                     if event.event_type == keyboard.KEY_DOWN:
-                        if not key_held.get(key_normalized, False):
-                            key_held[key_normalized] = True
-                            self.triggered.emit(key_normalized)
+                        if is_modifier:
+                            held_modifiers.add(key_normalized)
+                            return
+                        if key_normalized in held_keys:
+                            return
+                        held_keys.add(key_normalized)
+                        candidate = normalize_bind_from_parts(held_modifiers, key_normalized)
+                        if candidate in parsed_binds and candidate not in active_triggers:
+                            active_triggers.add(candidate)
+                            self.triggered.emit(candidate)
                     elif event.event_type == keyboard.KEY_UP:
-                        key_held[key_normalized] = False
+                        if is_modifier:
+                            held_modifiers.discard(key_normalized)
+                            return
+                        held_keys.discard(key_normalized)
+                        for bind in key_to_bind.get(key_normalized, set()):
+                            active_triggers.discard(bind)
 
                 self._hook = keyboard.hook(on_event)
             except Exception as e:
@@ -109,7 +126,7 @@ class _ListenerThread(QThread):
                 current_binds = {
                     normalize_bind(b)
                     for b in (self._get_binds() or [])
-                    if _is_keyboard_bind(normalize_bind(b))
+                    if _is_keyboard_bind(b)
                 }
                 if current_binds != binds:
                     break
@@ -127,7 +144,7 @@ class _ListenerThread(QThread):
 
 
 class CaptureOneKeyThread(QThread):
-    """Captures the next keyboard key press and emits it as a bind string (keyboard only)."""
+    """Captures the next keyboard combo and emits it as a bind string (keyboard only)."""
 
     captured = pyqtSignal(str)
     cancelled = pyqtSignal()
@@ -144,24 +161,37 @@ class CaptureOneKeyThread(QThread):
             self.cancelled.emit()
             return
 
-        result = [None]
+        result = [""]
+        held_modifiers: set[str] = set()
+        pending_primary = [""]
 
         def on_event(event):
-            if self._done or result[0] is not None:
+            if self._done or result[0]:
                 return
+            name = getattr(event, "name", None) or str(getattr(event, "scan_code", ""))
+            token = normalize_key_token(str(name))
+            if not token:
+                return
+            is_mod = is_modifier_token(token)
             if event.event_type == keyboard.KEY_DOWN:
-                name = getattr(event, "name", None) or str(getattr(event, "scan_code", ""))
-                if name:
-                    result[0] = str(name).lower()
-                    if self._hook is not None:
-                        try:
-                            keyboard.unhook(self._hook)
-                        except Exception:
-                            pass
-                        self._hook = None
+                if is_mod:
+                    held_modifiers.add(token)
+                    return
+                if pending_primary[0]:
+                    return
+                pending_primary[0] = token
+                result[0] = normalize_bind_from_parts(held_modifiers, token)
+                if self._hook is not None:
+                    try:
+                        keyboard.unhook(self._hook)
+                    except Exception:
+                        pass
+                    self._hook = None
+            elif event.event_type == keyboard.KEY_UP and is_mod:
+                held_modifiers.discard(token)
 
         self._hook = keyboard.hook(on_event)
-        while not self._done and result[0] is None:
+        while not self._done and not result[0]:
             self.msleep(50)
         if self._hook is not None:
             try:
@@ -169,7 +199,7 @@ class CaptureOneKeyThread(QThread):
             except Exception:
                 pass
             self._hook = None
-        if result[0] is not None:
+        if result[0]:
             self.captured.emit(result[0])
 
     def cancel(self) -> None:

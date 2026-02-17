@@ -45,7 +45,7 @@ Each slot is a button showing `[key]` and state:
 - **Gray**: locked (optional global lock from cast-bar ROI)
 
 - **Right-click** a slot to open the context menu:
-  - **Bind Key** — Set which key this slot sends (e.g. `1`, `2`, `f`, `f5`). Click the option, then press the key you want. The slot label updates to that key.
+  - **Bind Key** — Set which key this slot sends (e.g. `1`, `2`, `f`, `f5`, `ctrl+1`, `shift+1`). Click the option, then press the key/combo you want. The slot label updates to that bind.
   - **Calibrate This Slot** — Recalibrate only this slot’s baseline from the current frame (useful if one ability is 'disabled' while you calibrate baseline).
   - **Rename...** — Give the slot a display name (e.g. “Fireball”) so it’s easier to recognize in the priority list.
 - **Drag** a slot (left-click and drag) **into the Priority list** on the right to add it to the automation order. You can only add slots that have a keybind set.
@@ -71,7 +71,7 @@ The right panel also shows:
 
 - **Enable / Disable** — Green **Enable** turns automation on (sends keys in priority order); red **Disable** turns it off. Automation always starts **off** when you launch the app.
 - **List profiles** — In **Settings → Automation**, use **+ / Copy / −** to create, duplicate, or remove list profiles (for example: Single Target, AoE, Utility). Each profile stores its own priority list.
-- **Per-profile hotkeys** — Each list profile has two optional global binds:
+- **Per-profile hotkeys** — Each list profile has two optional global binds (single key or combo like `ctrl+f24`):
   - **Toggle bind** — Switches to that profile and toggles continuous automation on/off.
   - **Single bind** — Switches to that profile and arms exactly one next action (single fire) without enabling continuous automation.
 - **Conflict warning** — If a bind is reused across profiles (or toggle/single collide), Settings shows a red conflict badge so you can resolve it quickly.
@@ -94,7 +94,7 @@ The right panel also shows:
 
 | What to rebind | How |
 |----------------|-----|
-| **Slot key** (which key the app presses for that slot) | Right-click the slot → **Bind Key** → press the key |
+| **Slot key** (which key the app presses for that slot) | Right-click the slot → **Bind Key** → press the key/combo |
 | **Automation list hotkeys** (global actions per profile) | In **Settings → Automation**: pick the list profile, then set **Toggle bind** and/or **Single bind** |
 
 ---
