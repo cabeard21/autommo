@@ -952,6 +952,8 @@ class SettingsDialog(QDialog):
                 "id": new_id,
                 "name": f"Profile {i}",
                 "priority_order": [],
+                "priority_items": [],
+                "manual_actions": [],
                 "toggle_bind": "",
                 "single_fire_bind": "",
             }
@@ -994,6 +996,8 @@ class SettingsDialog(QDialog):
                 "id": new_id,
                 "name": new_name,
                 "priority_order": list(source.get("priority_order", [])),
+                "priority_items": list(source.get("priority_items", [])),
+                "manual_actions": list(source.get("manual_actions", [])),
                 "toggle_bind": str(source.get("toggle_bind", "") or ""),
                 "single_fire_bind": str(source.get("single_fire_bind", "") or ""),
             }

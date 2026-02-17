@@ -1,4 +1,4 @@
-"""Priority panel — automation toggle, next intention, and drag-drop priority list."""
+"""Priority panel - automation toggle, next intention, and drag-drop priority list."""
 from __future__ import annotations
 
 import logging
@@ -10,9 +10,9 @@ from PyQt6.QtCore import Qt, QMimeData, QPoint, QTimer, pyqtSignal
 from PyQt6.QtGui import QDrag, QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -76,7 +76,7 @@ class SlotButton(QPushButton):
 def _format_countdown(seconds: Optional[float]) -> str:
     """Format cooldown for display: no decimals, e.g. 12s or 1m."""
     if seconds is None or seconds <= 0:
-        return "—"
+        return "-"
     secs = int(seconds)
     if secs >= 60:
         return f"{secs // 60}m"
@@ -84,18 +84,24 @@ def _format_countdown(seconds: Optional[float]) -> str:
 
 
 class PriorityItemWidget(QFrame):
-    """One row: handle + [key] (small), display name, countdown area (fixed width). Draggable for reorder."""
+    """One row: handle + [key] + name + countdown. Draggable for reorder."""
 
     def __init__(
         self,
-        slot_index: int,
+        item_key: str,
+        item_type: str,
+        slot_index: Optional[int],
+        action_id: Optional[str],
         rank: int,
         keybind: str,
         display_name: str,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
+        self._item_key = item_key
+        self._item_type = item_type
         self._slot_index = slot_index
+        self._action_id = action_id
         self._rank = rank
         self._keybind = keybind
         self._display_name = display_name or "Unidentified"
@@ -104,21 +110,26 @@ class PriorityItemWidget(QFrame):
         self._cast_progress: Optional[float] = None
         self._cast_ends_at: Optional[float] = None
         self._drag_start: Optional[QPoint] = None
+
         self.setAcceptDrops(False)
         self.setObjectName("priorityItem")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 5, 6, 5)
         layout.setSpacing(6)
-        self._handle_label = QLabel("\u28FF")  # drag handle
+
+        self._handle_label = QLabel("\u28FF")
         self._handle_label.setObjectName("priorityHandle")
         layout.addWidget(self._handle_label)
+
         self._rank_label = QLabel(str(rank))
         self._rank_label.setObjectName("priorityRank")
         self._rank_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._rank_label)
+
         self._key_label = QLabel(f"[{keybind}]")
         self._key_label.setObjectName("priorityKey")
         layout.addWidget(self._key_label)
+
         self._name_label = QLabel(self._display_name)
         self._name_label.setObjectName("priorityName")
         self._name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -127,7 +138,8 @@ class PriorityItemWidget(QFrame):
         self._name_label.setMinimumHeight(20)
         self._name_label.setWordWrap(False)
         layout.addWidget(self._name_label, 1)
-        self._countdown_label = QLabel("—")
+
+        self._countdown_label = QLabel("-")
         self._countdown_label.setMinimumWidth(32)
         self._countdown_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         font = QFont("Consolas")
@@ -136,17 +148,31 @@ class PriorityItemWidget(QFrame):
         font.setPointSize(9)
         self._countdown_label.setFont(font)
         layout.addWidget(self._countdown_label)
-        self._remove_btn = QLabel("−")
+
+        self._remove_btn = QLabel("-")
         self._remove_btn.setObjectName("priorityRemove")
         self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self._remove_btn)
+
         self.setMinimumHeight(40)
         self.setFixedHeight(40)
         self._update_style()
 
     @property
-    def slot_index(self) -> int:
+    def item_key(self) -> str:
+        return self._item_key
+
+    @property
+    def item_type(self) -> str:
+        return self._item_type
+
+    @property
+    def slot_index(self) -> Optional[int]:
         return self._slot_index
+
+    @property
+    def action_id(self) -> Optional[str]:
+        return self._action_id
 
     def set_rank(self, rank: int) -> None:
         self._rank = rank
@@ -161,14 +187,12 @@ class PriorityItemWidget(QFrame):
         self._update_name_elided()
 
     def _update_name_elided(self) -> None:
-        """Set name label to full or elided text to avoid horizontal clipping."""
         w = self._name_label.width()
         if w <= 0:
             self._name_label.setText(self._display_name)
             return
         metrics = QFontMetrics(self._name_label.font())
-        elided = metrics.elidedText(self._display_name, Qt.TextElideMode.ElideRight, w)
-        self._name_label.setText(elided)
+        self._name_label.setText(metrics.elidedText(self._display_name, Qt.TextElideMode.ElideRight, w))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -235,7 +259,7 @@ class PriorityItemWidget(QFrame):
             super().mouseMoveEvent(event)
             return
         mime = QMimeData()
-        mime.setData(MIME_PRIORITY_ITEM, str(self._slot_index).encode())
+        mime.setData(MIME_PRIORITY_ITEM, self._item_key.encode())
         drag = QDrag(self)
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.MoveAction)
@@ -247,18 +271,45 @@ class PriorityItemWidget(QFrame):
             self._drag_start = None
         super().mouseReleaseEvent(event)
 
+    def contextMenuEvent(self, event) -> None:
+        if self._item_type != "manual" or not self._action_id:
+            event.ignore()
+            return
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename...")
+        rebind_action = menu.addAction("Rebind...")
+        remove_action = menu.addAction("Remove")
+        chosen = menu.exec(event.globalPos())
+        if chosen is None:
+            return
+        parent = self.parent()
+        while parent is not None and not hasattr(parent, "_on_manual_item_action"):
+            parent = parent.parent()
+        if parent is None:
+            return
+        if chosen == rename_action:
+            parent._on_manual_item_action(self._action_id, "rename")
+        elif chosen == rebind_action:
+            parent._on_manual_item_action(self._action_id, "rebind")
+        elif chosen == remove_action:
+            parent._on_manual_item_action(self._action_id, "remove")
+
 
 class PriorityListWidget(QWidget):
     """Vertical list of priority items. Accepts slot drops (add) and priority-item drops (reorder)."""
 
-    order_changed = pyqtSignal(list)  # new list of slot indices
+    items_changed = pyqtSignal(list)
+    manual_action_rename_requested = pyqtSignal(str)
+    manual_action_rebind_requested = pyqtSignal(str)
+    manual_action_remove_requested = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self._order: list[int] = []
+        self._items: list[dict] = []
         self._keybinds: list[str] = []
         self._display_names: list[str] = []
+        self._manual_actions: list[dict] = []
         self._states_by_index: dict[int, tuple[str, Optional[float], Optional[float], Optional[float]]] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -276,30 +327,39 @@ class PriorityListWidget(QWidget):
         layout.addWidget(self._scroll)
         self._item_widgets: list[PriorityItemWidget] = []
 
+    @staticmethod
+    def _item_key(item: dict) -> str:
+        if str(item.get("type", "") or "").strip().lower() == "slot":
+            return f"slot:{item.get('slot_index')}"
+        return f"manual:{str(item.get('action_id', '') or '').strip().lower()}"
+
     def set_keybinds(self, keybinds: list[str]) -> None:
         self._keybinds = keybinds
         for w in self._item_widgets:
-            if w.slot_index < len(keybinds):
+            if w.item_type == "slot" and isinstance(w.slot_index, int) and w.slot_index < len(keybinds):
                 w.set_keybind(keybinds[w.slot_index] or "?")
 
     def set_display_names(self, names: list[str]) -> None:
         self._display_names = list(names)
         for w in self._item_widgets:
-            if w.slot_index < len(names) and names[w.slot_index].strip():
-                w.set_display_name(names[w.slot_index].strip())
-            else:
-                w.set_display_name("Unidentified")
+            if w.item_type == "slot" and isinstance(w.slot_index, int):
+                if w.slot_index < len(names) and names[w.slot_index].strip():
+                    w.set_display_name(names[w.slot_index].strip())
+                else:
+                    w.set_display_name("Unidentified")
 
-    def set_order(self, order: list[int]) -> None:
-        """Replace the list with the given slot indices and refresh widgets."""
-        self._order = list(order)
+    def set_manual_actions(self, actions: list[dict]) -> None:
+        self._manual_actions = list(actions)
         self._rebuild_items()
 
-    def get_order(self) -> list[int]:
-        return list(self._order)
+    def set_items(self, items: list[dict]) -> None:
+        self._items = [dict(i) for i in list(items or []) if isinstance(i, dict)]
+        self._rebuild_items()
+
+    def get_items(self) -> list[dict]:
+        return [dict(i) for i in self._items]
 
     def update_states(self, states: list[dict]) -> None:
-        """Update status (READY/cooldown) for each item from state_updated."""
         by_index = {
             s["index"]: (
                 s.get("state", "unknown"),
@@ -311,34 +371,69 @@ class PriorityListWidget(QWidget):
         }
         self._states_by_index = by_index
         for w in self._item_widgets:
-            state, cd, cast_progress, cast_ends_at = by_index.get(
-                w.slot_index,
-                ("unknown", None, None, None),
-            )
-            w.set_state(state, cd, cast_progress, cast_ends_at)
+            if w.item_type == "slot" and isinstance(w.slot_index, int):
+                state, cd, cast_progress, cast_ends_at = by_index.get(
+                    w.slot_index,
+                    ("unknown", None, None, None),
+                )
+                w.set_state(state, cd, cast_progress, cast_ends_at)
+            else:
+                w.set_state("ready", None, None, None)
+
+    def _manual_action_by_id(self, action_id: str) -> Optional[dict]:
+        aid = str(action_id or "").strip().lower()
+        for action in self._manual_actions:
+            if str(action.get("id", "") or "").strip().lower() == aid:
+                return action
+        return None
 
     def _rebuild_items(self) -> None:
         for w in self._item_widgets:
             w.deleteLater()
         self._item_widgets.clear()
-        for rank, slot_index in enumerate(self._order, 1):
-            keybind = self._keybinds[slot_index] if slot_index < len(self._keybinds) else "?"
-            name = (
-                self._display_names[slot_index].strip()
-                if slot_index < len(self._display_names) and self._display_names[slot_index].strip()
-                else "Unidentified"
+        for rank, item in enumerate(self._items, 1):
+            item_type = str(item.get("type", "") or "").strip().lower()
+            slot_index = item.get("slot_index")
+            action_id = str(item.get("action_id", "") or "").strip().lower()
+            if item_type == "slot" and isinstance(slot_index, int):
+                keybind = self._keybinds[slot_index] if slot_index < len(self._keybinds) else "?"
+                name = (
+                    self._display_names[slot_index].strip()
+                    if slot_index < len(self._display_names) and self._display_names[slot_index].strip()
+                    else "Unidentified"
+                )
+            elif item_type == "manual":
+                action = self._manual_action_by_id(action_id)
+                if not isinstance(action, dict):
+                    continue
+                keybind = str(action.get("keybind", "") or "").strip() or "?"
+                name = str(action.get("name", "") or "").strip() or "Manual Action"
+            else:
+                continue
+
+            w = PriorityItemWidget(
+                self._item_key(item),
+                item_type,
+                slot_index if isinstance(slot_index, int) else None,
+                action_id if item_type == "manual" and action_id else None,
+                rank,
+                keybind or "?",
+                name,
+                self._list_container,
             )
-            w = PriorityItemWidget(slot_index, rank, keybind or "?", name, self._list_container)
-            state, cd, cast_progress, cast_ends_at = self._states_by_index.get(
-                slot_index,
-                ("unknown", None, None, None),
-            )
-            w.set_state(state, cd, cast_progress, cast_ends_at)
+            if item_type == "slot" and isinstance(slot_index, int):
+                state, cd, cast_progress, cast_ends_at = self._states_by_index.get(
+                    slot_index,
+                    ("unknown", None, None, None),
+                )
+                w.set_state(state, cd, cast_progress, cast_ends_at)
+            else:
+                w.set_state("ready", None, None, None)
             self._list_layout.insertWidget(self._list_layout.count() - 1, w)
             self._item_widgets.append(w)
 
-    def _emit_order(self) -> None:
-        self.order_changed.emit(self.get_order())
+    def _emit_items(self) -> None:
+        self.items_changed.emit(self.get_items())
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasFormat(MIME_SLOT) or event.mimeData().hasFormat(MIME_PRIORITY_ITEM):
@@ -349,21 +444,24 @@ class PriorityListWidget(QWidget):
         pos = event.position().toPoint()
         if mime.hasFormat(MIME_SLOT):
             slot_index = int(mime.data(MIME_SLOT).data().decode())
-            if slot_index in self._order:
+            if any(
+                str(item.get("type", "") or "").strip().lower() == "slot"
+                and item.get("slot_index") == slot_index
+                for item in self._items
+            ):
                 event.acceptProposedAction()
                 return
-            has_keybind = (
-                slot_index < len(self._keybinds) and bool(self._keybinds[slot_index].strip())
-            )
+            has_keybind = slot_index < len(self._keybinds) and bool(self._keybinds[slot_index].strip())
             if not has_keybind:
                 event.acceptProposedAction()
                 return
-            self._order.append(slot_index)
+            self._items.append({"type": "slot", "slot_index": slot_index})
             self._rebuild_items()
-            self._emit_order()
+            self._emit_items()
         elif mime.hasFormat(MIME_PRIORITY_ITEM):
-            from_index = int(mime.data(MIME_PRIORITY_ITEM).data().decode())
-            if from_index not in self._order:
+            from_key = str(mime.data(MIME_PRIORITY_ITEM).data().decode() or "")
+            from_item = next((i for i in self._items if self._item_key(i) == from_key), None)
+            if from_item is None:
                 event.ignore()
                 return
             local_pos = self._list_container.mapFrom(self, pos)
@@ -373,29 +471,38 @@ class PriorityListWidget(QWidget):
                     drop_idx = i
                     break
             try:
-                self._order.remove(from_index)
-                self._order.insert(drop_idx, from_index)
+                self._items.remove(from_item)
+                self._items.insert(drop_idx, from_item)
             except ValueError:
                 pass
             self._rebuild_items()
-            self._emit_order()
+            self._emit_items()
         event.acceptProposedAction()
 
-    def remove_slot(self, slot_index: int) -> None:
-        """Remove a slot from the priority list (e.g. dropped outside)."""
-        if slot_index in self._order:
-            self._order.remove(slot_index)
+    def remove_item_by_key(self, item_key: str) -> None:
+        before = len(self._items)
+        self._items = [i for i in self._items if self._item_key(i) != item_key]
+        if len(self._items) != before:
             self._rebuild_items()
-            self._emit_order()
+            self._emit_items()
+
+    def _on_manual_item_action(self, action_id: str, op: str) -> None:
+        if op == "rename":
+            self.manual_action_rename_requested.emit(action_id)
+        elif op == "rebind":
+            self.manual_action_rebind_requested.emit(action_id)
+        elif op == "remove":
+            self.manual_action_remove_requested.emit(action_id)
 
 
 class PriorityPanel(QWidget):
     """Right-side panel: priority list only (Last Action and Next Intention are in main window left column)."""
 
-    gcd_updated = pyqtSignal(float)  # Estimated GCD in seconds
+    gcd_updated = pyqtSignal(float)
+    add_manual_action_requested = pyqtSignal()
 
-    GCD_WINDOW_SIZE = 20  # Number of recent send timestamps to keep
-    GCD_MIN_SAMPLES = 3   # Minimum sends before estimating (need >= 2 intervals)
+    GCD_WINDOW_SIZE = 20
+    GCD_MIN_SAMPLES = 3
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -415,27 +522,36 @@ class PriorityPanel(QWidget):
         priority_frame.setObjectName("priorityPanel")
         priority_inner = QVBoxLayout(priority_frame)
         priority_inner.setContentsMargins(8, 8, 8, 8)
-        title = QLabel("PRIORITY ↕")
+
+        title_row = QHBoxLayout()
+        title = QLabel("PRIORITY")
         title.setStyleSheet(
             "font-family: monospace; font-size: 10px; color: #666; font-weight: bold; letter-spacing: 1.5px;"
         )
-        priority_inner.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        self._btn_add_manual = QPushButton("+ manual")
+        self._btn_add_manual.setObjectName("priorityAddManual")
+        self._btn_add_manual.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_add_manual.setToolTip("Add action not tied to a monitored slot")
+        self._btn_add_manual.clicked.connect(self.add_manual_action_requested.emit)
+        title_row.addWidget(self._btn_add_manual)
+        priority_inner.addLayout(title_row)
+
         self._priority_list = PriorityListWidget(self)
         priority_inner.addWidget(self._priority_list, 1)
         layout.addWidget(priority_frame, 1)
 
     @property
     def last_action_label(self) -> QLabel:
-        """Deprecated: Last Action is now in main window. Returns a dummy label for backwards compat."""
         if not hasattr(self, "_dummy_last_action_label"):
-            self._dummy_last_action_label = QLabel("—")
+            self._dummy_last_action_label = QLabel("-")
         return self._dummy_last_action_label
 
     @property
     def next_intention_label(self) -> QLabel:
-        """Deprecated: Next Intention is now in main window. Returns a dummy label for backwards compat."""
         if not hasattr(self, "_dummy_next_intention_label"):
-            self._dummy_next_intention_label = QLabel("—")
+            self._dummy_next_intention_label = QLabel("-")
         return self._dummy_next_intention_label
 
     @property
@@ -443,7 +559,6 @@ class PriorityPanel(QWidget):
         return self._priority_list
 
     def update_last_action_sent(self, keybind: str, timestamp: float, display_name: str = "Unidentified") -> None:
-        """Legacy: update label and record for GCD. Prefer record_send_timestamp when main window has its own Last Action display."""
         self._last_action_keybind = keybind
         self._last_action_display_name = display_name or "Unidentified"
         self._last_action_timestamp = timestamp
@@ -454,7 +569,6 @@ class PriorityPanel(QWidget):
         self.record_send_timestamp(timestamp)
 
     def record_send_timestamp(self, timestamp: float) -> None:
-        """Record a key-send timestamp for GCD estimation. Call from main window when Last Action is displayed there."""
         self._send_timestamps.append(timestamp)
         if len(self._send_timestamps) > self.GCD_WINDOW_SIZE:
             self._send_timestamps = self._send_timestamps[-self.GCD_WINDOW_SIZE:]
@@ -467,23 +581,18 @@ class PriorityPanel(QWidget):
             self._last_action_timer.stop()
             return
         elapsed = time.time() - self._last_action_timestamp
-        self._last_action_label.setText(f"[{self._last_action_keybind}] {self._last_action_display_name}  {elapsed:.1f}s ago")
+        self._last_action_label.setText(
+            f"[{self._last_action_keybind}] {self._last_action_display_name}  {elapsed:.1f}s ago"
+        )
 
     def update_next_intention_blocked(self, keybind: str, display_name: str = "Unidentified") -> None:
-        """Set Next Intention to [keybind] display_name — waiting (window)."""
         name = display_name or "Unidentified"
-        self._next_intention_label.setText(f"[{keybind}] {name} — waiting (window)")
+        self._next_intention_label.setText(f"[{keybind}] {name} - waiting (window)")
 
     def stop_last_action_timer(self) -> None:
-        """Stop the 'Xs ago' timer (e.g. when automation is turned off)."""
         self._last_action_timer.stop()
 
     def _compute_estimated_gcd(self) -> Optional[float]:
-        """Estimate the GCD from the median interval between recent key sends.
-
-        Uses the median rather than the mean so that occasional long gaps
-        (when no ability was available) are ignored as outliers.
-        """
         if len(self._send_timestamps) < self.GCD_MIN_SAMPLES:
             return None
         intervals = [
@@ -493,5 +602,4 @@ class PriorityPanel(QWidget):
         return statistics.median(intervals)
 
     def reset_gcd_estimate(self) -> None:
-        """Clear tracked send timestamps (e.g. when priority list changes)."""
         self._send_timestamps.clear()

@@ -128,8 +128,9 @@ class CaptureWorker(QThread):
                     if self._key_sender is not None:
                         result = self._key_sender.evaluate_and_send(
                             state,
-                            self._config.active_priority_order(),
+                            self._config.active_priority_items(),
                             self._config.keybinds,
+                            self._config.active_manual_actions(),
                             getattr(self._config, "automation_enabled", False),
                         )
                         if result is not None:
@@ -261,9 +262,10 @@ def main() -> None:
 
     def on_key_action(result: dict) -> None:
         slot_index = result.get("slot_index")
+        item_type = str(result.get("item_type", "") or "").strip().lower()
         names = getattr(config, "slot_display_names", [])
-        display_name = "Unidentified"
-        if (
+        display_name = str(result.get("display_name", "") or "").strip() or "Unidentified"
+        if item_type == "slot" and (
             slot_index is not None
             and slot_index < len(names)
             and (names[slot_index] or "").strip()
