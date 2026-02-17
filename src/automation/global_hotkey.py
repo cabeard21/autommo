@@ -1,9 +1,9 @@
-"""Global hotkey listener for automation toggle (works when app does not have focus).
+"""Global hotkey listener for automation profile binds (works when app does not have focus).
 
 Uses the 'keyboard' library with a low-level hook (keyboard.hook) instead of add_hotkey,
-so the toggle key is detected even when other keys (e.g. W) or mouse buttons (e.g. right-click)
+so bound keys are detected even when other keys (e.g. W) or mouse buttons (e.g. right-click)
 are held. add_hotkey can miss the key in those cases; the raw hook sees every key down/up.
-Only keyboard keys are supported for the toggle bind (e.g. F24 from a mouse key).
+Only keyboard keys are supported (e.g. F24 from a mouse key mapped in software).
 """
 from __future__ import annotations
 
@@ -45,14 +45,13 @@ def _is_keyboard_bind(bind: str) -> bool:
 
 
 class _ListenerThread(QThread):
-    """Uses a low-level keyboard.hook to listen for the toggle key. Fires once per key press
-    (ignores repeat) and works when other keys or mouse buttons are held."""
+    """Uses a low-level keyboard.hook to listen for one or more binds."""
 
-    triggered = pyqtSignal()
+    triggered = pyqtSignal(str)
 
-    def __init__(self, get_bind: Callable[[], str], parent: Optional[QObject] = None):
+    def __init__(self, get_binds: Callable[[], list[str]], parent: Optional[QObject] = None):
         super().__init__(parent)
-        self._get_bind = get_bind
+        self._get_binds = get_binds
         self._running = True
         self._hook = None
 
@@ -67,8 +66,12 @@ class _ListenerThread(QThread):
             return
 
         while self._running:
-            bind = normalize_bind(self._get_bind())
-            if not _is_keyboard_bind(bind):
+            binds = {
+                normalize_bind(b)
+                for b in (self._get_binds() or [])
+                if _is_keyboard_bind(normalize_bind(b))
+            }
+            if not binds:
                 self.msleep(500)
                 continue
             try:
@@ -79,8 +82,8 @@ class _ListenerThread(QThread):
                         pass
                     self._hook = None
 
-                # Track key-down state so we trigger only on press, not on key repeat
-                key_held = [False]
+                # Track key-down state so we trigger only on press, not on key repeat.
+                key_held: dict[str, bool] = {}
 
                 def on_event(event):
                     if not self._running:
@@ -89,20 +92,27 @@ class _ListenerThread(QThread):
                     if not name:
                         return
                     key_normalized = str(name).strip().lower()
-                    if key_normalized != bind:
+                    if key_normalized not in binds:
                         return
                     if event.event_type == keyboard.KEY_DOWN:
-                        if not key_held[0]:
-                            key_held[0] = True
-                            self.triggered.emit()
+                        if not key_held.get(key_normalized, False):
+                            key_held[key_normalized] = True
+                            self.triggered.emit(key_normalized)
                     elif event.event_type == keyboard.KEY_UP:
-                        key_held[0] = False
+                        key_held[key_normalized] = False
 
                 self._hook = keyboard.hook(on_event)
             except Exception as e:
-                logger.debug("keyboard hook failed for %r: %s", bind, e)
+                logger.debug("keyboard hook failed for %r: %s", sorted(binds), e)
 
-            while self._running and normalize_bind(self._get_bind()) == bind and _is_keyboard_bind(bind):
+            while self._running:
+                current_binds = {
+                    normalize_bind(b)
+                    for b in (self._get_binds() or [])
+                    if _is_keyboard_bind(normalize_bind(b))
+                }
+                if current_binds != binds:
+                    break
                 self.msleep(200)
 
         if self._hook is not None:
@@ -167,19 +177,19 @@ class CaptureOneKeyThread(QThread):
 
 
 class GlobalToggleListener(QObject):
-    """Starts a background thread that emits when the automation toggle key is pressed."""
+    """Starts a background thread that emits when any configured global bind is pressed."""
 
-    triggered = pyqtSignal()
+    triggered = pyqtSignal(str)
 
-    def __init__(self, get_bind: Callable[[], str], parent: Optional[QObject] = None):
+    def __init__(self, get_binds: Callable[[], list[str]], parent: Optional[QObject] = None):
         super().__init__(parent)
-        self._get_bind = get_bind
+        self._get_binds = get_binds
         self._thread: Optional[_ListenerThread] = None
 
     def start(self) -> None:
         if self._thread is not None and self._thread.isRunning():
             return
-        self._thread = _ListenerThread(self._get_bind, self)
+        self._thread = _ListenerThread(self._get_binds, self)
         self._thread.triggered.connect(self.triggered.emit)
         self._thread.start()
 

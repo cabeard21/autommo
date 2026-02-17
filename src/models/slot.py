@@ -127,13 +127,15 @@ class AppConfig:
     slot_baselines: list = field(default_factory=list)
     # Slot indices that had their baseline set by "Calibrate This Slot" (show bold in UI)
     overwritten_baseline_slots: list[int] = field(default_factory=list)
-    # Priority order for automation: list of slot indices (first READY in this order is "next")
+    # Priority order for automation: kept for backward compatibility with older config files.
     priority_order: list[int] = field(default_factory=list)
     automation_enabled: bool = False
-    # Global hotkey to toggle automation (e.g. "f5", "x1" for mouse side button); empty = not set
+    # Legacy single hotkey fields kept for migration compatibility.
     automation_toggle_bind: str = ""
-    # Global hotkey behavior: "toggle" keeps automation on/off, "single_fire" queues one next action
     automation_hotkey_mode: str = "toggle"
+    # Multiple automation profiles, each with its own priority list + hotkeys.
+    priority_profiles: list[dict] = field(default_factory=list)
+    active_priority_profile_id: str = "default"
     # Minimum ms between keypresses when automation is sending keys
     min_press_interval_ms: int = 150
     # If non-empty, only send keys when foreground window title contains this (case-insensitive)
@@ -143,13 +145,98 @@ class AppConfig:
     # Number of visible entries in Last Action history (1-10)
     history_rows: int = 3
 
+    def _normalize_profiles(self) -> None:
+        """Ensure automation profiles are valid and there is always an active profile."""
+        normalized: list[dict] = []
+        seen_ids: set[str] = set()
+        for p in list(self.priority_profiles or []):
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("id", "") or "").strip().lower()
+            if not pid:
+                pid = f"profile_{len(normalized) + 1}"
+            if pid in seen_ids:
+                continue
+            seen_ids.add(pid)
+            name = str(p.get("name", "") or "").strip() or pid.replace("_", " ").title()
+            order = p.get("priority_order", [])
+            if not isinstance(order, list):
+                order = []
+            toggle_bind = str(p.get("toggle_bind", "") or "").strip().lower()
+            single_fire_bind = str(p.get("single_fire_bind", "") or "").strip().lower()
+            normalized.append(
+                {
+                    "id": pid,
+                    "name": name,
+                    "priority_order": [int(i) for i in order if isinstance(i, int)],
+                    "toggle_bind": toggle_bind,
+                    "single_fire_bind": single_fire_bind,
+                }
+            )
+
+        if not normalized:
+            normalized = [
+                {
+                    "id": "default",
+                    "name": "Default",
+                    "priority_order": [int(i) for i in self.priority_order if isinstance(i, int)],
+                    "toggle_bind": str(self.automation_toggle_bind or "").strip().lower(),
+                    "single_fire_bind": (
+                        str(self.automation_toggle_bind or "").strip().lower()
+                        if (self.automation_hotkey_mode or "").strip().lower() == "single_fire"
+                        else ""
+                    ),
+                }
+            ]
+
+        self.priority_profiles = normalized
+        active = (self.active_priority_profile_id or "").strip().lower()
+        if not active or not any(p["id"] == active for p in normalized):
+            self.active_priority_profile_id = normalized[0]["id"]
+        else:
+            self.active_priority_profile_id = active
+        # Keep legacy mirror fields aligned with the active profile for compatibility.
+        active_profile = next(
+            (p for p in normalized if p["id"] == self.active_priority_profile_id),
+            normalized[0],
+        )
+        self.priority_order = list(active_profile.get("priority_order", []))
+        self.automation_toggle_bind = str(active_profile.get("toggle_bind", "") or "")
+        self.automation_hotkey_mode = "toggle"
+
+    def get_active_priority_profile(self) -> dict:
+        self._normalize_profiles()
+        for p in self.priority_profiles:
+            if p["id"] == self.active_priority_profile_id:
+                return p
+        return self.priority_profiles[0]
+
+    def ensure_priority_profiles(self) -> None:
+        self._normalize_profiles()
+
+    def set_active_priority_profile(self, profile_id: str) -> bool:
+        self._normalize_profiles()
+        pid = (profile_id or "").strip().lower()
+        if not pid or not any(p["id"] == pid for p in self.priority_profiles):
+            return False
+        if self.active_priority_profile_id == pid:
+            return False
+        self.active_priority_profile_id = pid
+        active = self.get_active_priority_profile()
+        self.priority_order = list(active.get("priority_order", []))
+        self.automation_toggle_bind = str(active.get("toggle_bind", "") or "")
+        return True
+
+    def active_priority_order(self) -> list[int]:
+        return list(self.get_active_priority_profile().get("priority_order", []))
+
     @classmethod
     def from_dict(cls, data: dict) -> AppConfig:
         bb = data.get("bounding_box", {})
         hotkey_mode = (data.get("automation_hotkey_mode", "toggle") or "toggle").strip().lower()
         if hotkey_mode not in ("toggle", "single_fire"):
             hotkey_mode = "toggle"
-        return cls(
+        cfg = cls(
             monitor_index=data.get("monitor_index", 1),
             bounding_box=BoundingBox(**bb),
             slot_count=data.get("slots", {}).get("count", 10),
@@ -200,6 +287,28 @@ class AppConfig:
             profile_name=data.get("profile_name", ""),
             history_rows=data.get("history_rows", 3),
         )
+        raw_profiles = data.get("priority_profiles")
+        if isinstance(raw_profiles, list):
+            cfg.priority_profiles = list(raw_profiles)
+            cfg.active_priority_profile_id = str(
+                data.get("active_priority_profile_id", "default") or "default"
+            )
+        else:
+            # Legacy migration path from single priority list + single hotkey.
+            legacy_toggle_bind = str(data.get("automation_toggle_bind", "") or "").strip().lower()
+            legacy_mode = (data.get("automation_hotkey_mode", "toggle") or "toggle").strip().lower()
+            cfg.priority_profiles = [
+                {
+                    "id": "default",
+                    "name": "Default",
+                    "priority_order": list(data.get("priority_order", [])),
+                    "toggle_bind": legacy_toggle_bind if legacy_mode == "toggle" else "",
+                    "single_fire_bind": legacy_toggle_bind if legacy_mode == "single_fire" else "",
+                }
+            ]
+            cfg.active_priority_profile_id = "default"
+        cfg._normalize_profiles()
+        return cfg
 
     def to_dict(self) -> dict:
         """Serialize to dict for JSON config file (round-trip with from_dict)."""
@@ -246,6 +355,8 @@ class AppConfig:
             "automation_enabled": self.automation_enabled,
             "automation_toggle_bind": self.automation_toggle_bind,
             "automation_hotkey_mode": self.automation_hotkey_mode,
+            "priority_profiles": self.priority_profiles,
+            "active_priority_profile_id": self.active_priority_profile_id,
             "min_press_interval_ms": self.min_press_interval_ms,
             "target_window_title": self.target_window_title,
             "profile_name": self.profile_name,

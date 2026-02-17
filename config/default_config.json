@@ -151,13 +151,43 @@
   ],
   "priority_order": [
     0,
-    1,
-    2,
-    3
+    1
   ],
   "automation_enabled": false,
-  "automation_toggle_bind": "f24",
+  "automation_toggle_bind": "",
   "automation_hotkey_mode": "toggle",
+  "priority_profiles": [
+    {
+      "id": "default",
+      "name": "Default",
+      "priority_order": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "toggle_bind": "f24",
+      "single_fire_bind": ""
+    },
+    {
+      "id": "profile_1",
+      "name": "Profile 1",
+      "priority_order": [],
+      "toggle_bind": "",
+      "single_fire_bind": ""
+    },
+    {
+      "id": "profile_2",
+      "name": "Profile 2",
+      "priority_order": [
+        0,
+        1
+      ],
+      "toggle_bind": "",
+      "single_fire_bind": ""
+    }
+  ],
+  "active_priority_profile_id": "profile_2",
   "min_press_interval_ms": 150,
   "target_window_title": "",
   "profile_name": "Teglaan",

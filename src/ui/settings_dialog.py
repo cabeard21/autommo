@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -78,6 +79,7 @@ class SettingsDialog(QDialog):
         self._before_save_callback = before_save_callback
         self._monitors: list[dict] = []
         self._capture_bind_thread: Optional[CaptureOneKeyThread] = None
+        self._capture_bind_target: Optional[str] = None
         self._last_auto_saved: Optional[datetime] = None
         self._auto_save_timer = QTimer(self)
         self._auto_save_timer.setSingleShot(True)
@@ -308,19 +310,38 @@ class SettingsDialog(QDialog):
         g = QGroupBox("Automation")
         g.setStyleSheet("QGroupBox { font-weight: bold; }")
         fl = QFormLayout(g)
-        self._btn_rebind = QPushButton("F24")
-        self._btn_rebind.setStyleSheet("font-family: monospace;")
-        self._btn_rebind.setMinimumWidth(56)
-        rebind_help = QLabel("click to rebind")
-        rebind_help.setStyleSheet("font-size: 10px; color: #666;")
-        rebind_row = QHBoxLayout()
-        rebind_row.addWidget(self._btn_rebind)
-        rebind_row.addWidget(rebind_help)
-        fl.addRow(_row_label("Hotkey bind:"), rebind_row)
-        self._combo_hotkey_mode = QComboBox()
-        self._combo_hotkey_mode.addItem("Toggle automation", "toggle")
-        self._combo_hotkey_mode.addItem("Single fire next action", "single_fire")
-        fl.addRow(_row_label("Hotkey mode:"), self._combo_hotkey_mode)
+        self._combo_automation_profile = QComboBox()
+        self._btn_add_automation_profile = QPushButton("+")
+        self._btn_remove_automation_profile = QPushButton("−")
+        self._btn_add_automation_profile.setFixedWidth(28)
+        self._btn_remove_automation_profile.setFixedWidth(28)
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(self._combo_automation_profile, 1)
+        profile_row.addWidget(self._btn_add_automation_profile)
+        profile_row.addWidget(self._btn_remove_automation_profile)
+        fl.addRow(_row_label("List profile:"), profile_row)
+        self._edit_automation_profile_name = QLineEdit()
+        self._edit_automation_profile_name.setPlaceholderText("e.g. Single Target")
+        self._edit_automation_profile_name.setClearButtonEnabled(True)
+        fl.addRow(_row_label("List name:"), self._edit_automation_profile_name)
+        self._btn_toggle_bind = QPushButton("—")
+        self._btn_toggle_bind.setStyleSheet("font-family: monospace;")
+        self._btn_toggle_bind.setMinimumWidth(72)
+        toggle_help = QLabel("click to bind toggle")
+        toggle_help.setStyleSheet("font-size: 10px; color: #666;")
+        toggle_row = QHBoxLayout()
+        toggle_row.addWidget(self._btn_toggle_bind)
+        toggle_row.addWidget(toggle_help)
+        fl.addRow(_row_label("Toggle bind:"), toggle_row)
+        self._btn_single_fire_bind = QPushButton("—")
+        self._btn_single_fire_bind.setStyleSheet("font-family: monospace;")
+        self._btn_single_fire_bind.setMinimumWidth(72)
+        single_help = QLabel("click to bind single fire")
+        single_help.setStyleSheet("font-size: 10px; color: #666;")
+        single_row = QHBoxLayout()
+        single_row.addWidget(self._btn_single_fire_bind)
+        single_row.addWidget(single_help)
+        fl.addRow(_row_label("Single bind:"), single_row)
         self._spin_min_delay = QSpinBox()
         self._spin_min_delay.setRange(50, 2000)
         self._spin_min_delay.setMaximumWidth(56)
@@ -392,8 +413,12 @@ class SettingsDialog(QDialog):
         self._spin_cast_bar_width.valueChanged.connect(self._on_detection_changed)
         self._spin_cast_bar_height.valueChanged.connect(self._on_detection_changed)
         self._spin_cast_bar_activity.valueChanged.connect(self._on_detection_changed)
-        self._btn_rebind.clicked.connect(self._on_rebind_clicked)
-        self._combo_hotkey_mode.currentIndexChanged.connect(self._on_hotkey_mode_changed)
+        self._combo_automation_profile.currentIndexChanged.connect(self._on_automation_profile_selected)
+        self._btn_add_automation_profile.clicked.connect(self._on_add_automation_profile)
+        self._btn_remove_automation_profile.clicked.connect(self._on_remove_automation_profile)
+        self._edit_automation_profile_name.textChanged.connect(self._on_automation_profile_name_changed)
+        self._btn_toggle_bind.clicked.connect(self._on_rebind_toggle_clicked)
+        self._btn_single_fire_bind.clicked.connect(self._on_rebind_single_fire_clicked)
         self._spin_min_delay.valueChanged.connect(self._on_min_delay_changed)
         self._spin_queue_window.valueChanged.connect(self._on_queue_window_changed)
         self._check_allow_cast_while_casting.toggled.connect(self._on_allow_cast_while_casting_changed)
@@ -402,6 +427,7 @@ class SettingsDialog(QDialog):
 
     def sync_from_config(self) -> None:
         """Populate all controls from current config."""
+        self._config.ensure_priority_profiles()
         self._edit_profile_name.blockSignals(True)
         self._edit_profile_name.setText(getattr(self._config, "profile_name", "") or "")
         self._edit_profile_name.blockSignals(False)
@@ -497,15 +523,7 @@ class SettingsDialog(QDialog):
         self._spin_cast_bar_width.blockSignals(False)
         self._spin_cast_bar_height.blockSignals(False)
         self._spin_cast_bar_activity.blockSignals(False)
-        key = getattr(self._config, "automation_toggle_bind", "") or ""
-        self._btn_rebind.setText(format_bind_for_display(key) if key else "—")
-        mode = getattr(self._config, "automation_hotkey_mode", "toggle") or "toggle"
-        if mode not in ("toggle", "single_fire"):
-            mode = "toggle"
-        self._combo_hotkey_mode.blockSignals(True)
-        idx = self._combo_hotkey_mode.findData(mode)
-        self._combo_hotkey_mode.setCurrentIndex(idx if idx >= 0 else 0)
-        self._combo_hotkey_mode.blockSignals(False)
+        self._sync_automation_profile_controls()
         self._spin_min_delay.blockSignals(True)
         self._spin_min_delay.setValue(getattr(self._config, "min_press_interval_ms", 150))
         self._spin_min_delay.blockSignals(False)
@@ -521,6 +539,29 @@ class SettingsDialog(QDialog):
         self._edit_window_title.setText(getattr(self._config, "target_window_title", "") or "")
         self._edit_window_title.blockSignals(False)
         self._update_monitor_combo()
+
+    def _sync_automation_profile_controls(self) -> None:
+        self._config.ensure_priority_profiles()
+        self._combo_automation_profile.blockSignals(True)
+        self._combo_automation_profile.clear()
+        for p in self._config.priority_profiles:
+            profile_name = str(p.get("name", "") or "").strip() or str(p.get("id", "Profile"))
+            self._combo_automation_profile.addItem(profile_name, p.get("id"))
+        active_id = self._config.active_priority_profile_id
+        idx = self._combo_automation_profile.findData(active_id)
+        self._combo_automation_profile.setCurrentIndex(idx if idx >= 0 else 0)
+        self._combo_automation_profile.blockSignals(False)
+        active = self._config.get_active_priority_profile()
+        self._edit_automation_profile_name.blockSignals(True)
+        self._edit_automation_profile_name.setText(str(active.get("name", "") or ""))
+        self._edit_automation_profile_name.blockSignals(False)
+        toggle_bind = str(active.get("toggle_bind", "") or "")
+        single_fire_bind = str(active.get("single_fire_bind", "") or "")
+        self._btn_toggle_bind.setText(format_bind_for_display(toggle_bind) if toggle_bind else "—")
+        self._btn_single_fire_bind.setText(
+            format_bind_for_display(single_fire_bind) if single_fire_bind else "—"
+        )
+        self._btn_remove_automation_profile.setEnabled(len(self._config.priority_profiles) > 1)
 
     def _update_monitor_combo(self) -> None:
         self._monitor_combo.blockSignals(True)
@@ -690,38 +731,69 @@ class SettingsDialog(QDialog):
         self._config.cast_bar_activity_threshold = float(self._spin_cast_bar_activity.value())
         self._emit_config()
 
-    def _on_rebind_clicked(self) -> None:
+    def _start_rebind_capture(self, target: str, button: QPushButton) -> None:
         if self._capture_bind_thread is not None and self._capture_bind_thread.isRunning():
             return
-        self._btn_rebind.setText("...")
-        self._btn_rebind.setEnabled(False)
+        self._capture_bind_target = target
+        button.setText("...")
+        button.setEnabled(False)
         self._capture_bind_thread = CaptureOneKeyThread(self)
         self._capture_bind_thread.captured.connect(self._on_rebind_captured)
         self._capture_bind_thread.cancelled.connect(self._on_rebind_cancelled)
         self._capture_bind_thread.finished.connect(self._on_rebind_finished)
         self._capture_bind_thread.start()
 
+    def _on_rebind_toggle_clicked(self) -> None:
+        self._start_rebind_capture("toggle_bind", self._btn_toggle_bind)
+
+    def _on_rebind_single_fire_clicked(self) -> None:
+        self._start_rebind_capture("single_fire_bind", self._btn_single_fire_bind)
+
+    def _is_bind_in_use_elsewhere(self, bind: str, field_name: str) -> bool:
+        active_id = self._config.active_priority_profile_id
+        for p in self._config.priority_profiles:
+            if str(p.get("id", "") or "") == active_id:
+                continue
+            if bind and bind == str(p.get("toggle_bind", "") or "").strip().lower():
+                return True
+            if bind and bind == str(p.get("single_fire_bind", "") or "").strip().lower():
+                return True
+        active = self._config.get_active_priority_profile()
+        if field_name == "toggle_bind" and bind and bind == str(active.get("single_fire_bind", "") or "").strip().lower():
+            return True
+        if field_name == "single_fire_bind" and bind and bind == str(active.get("toggle_bind", "") or "").strip().lower():
+            return True
+        return False
+
     def _on_rebind_captured(self, bind_str: str) -> None:
         key = (bind_str or "").strip().lower()
         if key in ("esc", "escape"):
             self._on_rebind_cancelled()
             return
-        self._config.automation_toggle_bind = (bind_str or "").strip()
-        self._btn_rebind.setText(format_bind_for_display(self._config.automation_toggle_bind))
-        self._btn_rebind.setEnabled(True)
+        target = self._capture_bind_target
+        if target not in ("toggle_bind", "single_fire_bind"):
+            self._on_rebind_cancelled()
+            return
+        if self._is_bind_in_use_elsewhere(key, target):
+            QMessageBox.warning(
+                self,
+                "Bind already in use",
+                "That key is already used by another automation profile bind.",
+            )
+            self._on_rebind_cancelled()
+            return
+        active = self._config.get_active_priority_profile()
+        active[target] = key
+        self._sync_automation_profile_controls()
         self._emit_config()
 
     def _on_rebind_cancelled(self) -> None:
-        key = getattr(self._config, "automation_toggle_bind", "") or ""
-        self._btn_rebind.setText(format_bind_for_display(key) if key else "—")
-        self._btn_rebind.setEnabled(True)
+        self._sync_automation_profile_controls()
 
     def _on_rebind_finished(self) -> None:
         self._capture_bind_thread = None
-        if self._btn_rebind.text() == "...":
-            key = getattr(self._config, "automation_toggle_bind", "") or ""
-            self._btn_rebind.setText(format_bind_for_display(key) if key else "—")
-            self._btn_rebind.setEnabled(True)
+        self._capture_bind_target = None
+        self._sync_automation_profile_controls()
 
     def _on_min_delay_changed(self, value: int) -> None:
         self._config.min_press_interval_ms = max(50, min(2000, value))
@@ -735,11 +807,57 @@ class SettingsDialog(QDialog):
         self._config.allow_cast_while_casting = bool(checked)
         self._emit_config()
 
-    def _on_hotkey_mode_changed(self, index: int) -> None:
-        mode = self._combo_hotkey_mode.itemData(index)
-        if mode not in ("toggle", "single_fire"):
-            mode = "toggle"
-        self._config.automation_hotkey_mode = str(mode)
+    def _on_automation_profile_selected(self, index: int) -> None:
+        if index < 0:
+            return
+        pid = str(self._combo_automation_profile.itemData(index) or "")
+        if not pid:
+            return
+        changed = self._config.set_active_priority_profile(pid)
+        self._sync_automation_profile_controls()
+        if changed:
+            self._emit_config()
+
+    def _on_add_automation_profile(self) -> None:
+        self._config.ensure_priority_profiles()
+        existing_ids = {str(p.get("id", "") or "") for p in self._config.priority_profiles}
+        i = 1
+        while f"profile_{i}" in existing_ids:
+            i += 1
+        new_id = f"profile_{i}"
+        self._config.priority_profiles.append(
+            {
+                "id": new_id,
+                "name": f"Profile {i}",
+                "priority_order": [],
+                "toggle_bind": "",
+                "single_fire_bind": "",
+            }
+        )
+        self._config.set_active_priority_profile(new_id)
+        self._sync_automation_profile_controls()
+        self._emit_config()
+
+    def _on_remove_automation_profile(self) -> None:
+        self._config.ensure_priority_profiles()
+        if len(self._config.priority_profiles) <= 1:
+            return
+        active_id = self._config.active_priority_profile_id
+        self._config.priority_profiles = [
+            p for p in self._config.priority_profiles if str(p.get("id", "") or "") != active_id
+        ]
+        self._config.ensure_priority_profiles()
+        self._sync_automation_profile_controls()
+        self._emit_config()
+
+    def _on_automation_profile_name_changed(self) -> None:
+        active = self._config.get_active_priority_profile()
+        active["name"] = (self._edit_automation_profile_name.text() or "").strip() or "Profile"
+        idx = self._combo_automation_profile.currentIndex()
+        if idx >= 0:
+            self._combo_automation_profile.blockSignals(True)
+            self._combo_automation_profile.setItemText(idx, active["name"])
+            self._combo_automation_profile.blockSignals(False)
         self._emit_config()
 
     def _on_window_title_changed(self) -> None:
