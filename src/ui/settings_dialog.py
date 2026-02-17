@@ -268,6 +268,12 @@ class SettingsDialog(QDialog):
         self._spin_queue_timeout.setSuffix(" ms")
         self._spin_queue_timeout.setMaximumWidth(80)
         fl.addRow(_row_label("Queue timeout:"), self._spin_queue_timeout)
+        self._spin_queue_fire_delay = QSpinBox()
+        self._spin_queue_fire_delay.setRange(0, 300)
+        self._spin_queue_fire_delay.setSuffix(" ms")
+        self._spin_queue_fire_delay.setMaximumWidth(80)
+        self._spin_queue_fire_delay.setToolTip("Delay after GCD ready before sending queued key (avoids firing too early)")
+        fl.addRow(_row_label("Fire delay:"), self._spin_queue_fire_delay)
         return g
 
     def _calibration_section(self) -> QGroupBox:
@@ -315,6 +321,7 @@ class SettingsDialog(QDialog):
         self._edit_window_title.textChanged.connect(self._on_window_title_changed)
         self._edit_queue_keys.textChanged.connect(self._on_queue_keys_changed)
         self._spin_queue_timeout.valueChanged.connect(self._on_queue_timeout_changed)
+        self._spin_queue_fire_delay.valueChanged.connect(self._on_queue_fire_delay_changed)
         self._btn_calibrate.clicked.connect(self._on_calibrate_clicked)
 
     def sync_from_config(self) -> None:
@@ -375,6 +382,9 @@ class SettingsDialog(QDialog):
         self._spin_queue_timeout.blockSignals(True)
         self._spin_queue_timeout.setValue(getattr(self._config, "queue_timeout_ms", 5000))
         self._spin_queue_timeout.blockSignals(False)
+        self._spin_queue_fire_delay.blockSignals(True)
+        self._spin_queue_fire_delay.setValue(getattr(self._config, "queue_fire_delay_ms", 100))
+        self._spin_queue_fire_delay.blockSignals(False)
         self._update_monitor_combo()
 
     def _update_monitor_combo(self) -> None:
@@ -570,6 +580,9 @@ class SettingsDialog(QDialog):
 
     def _on_queue_timeout_changed(self, value: int) -> None:
         self._config.queue_timeout_ms = max(1000, min(30000, value))
+
+    def _on_queue_fire_delay_changed(self, value: int) -> None:
+        self._config.queue_fire_delay_ms = max(0, min(300, value))
         self._emit_config()
 
     def _on_calibrate_clicked(self) -> None:

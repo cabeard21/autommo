@@ -126,9 +126,10 @@ class CaptureWorker(QThread):
                         }
                         for s in state.slots
                     ]
+                    # Snapshot queue at start of tick so priority never replaces it this tick.
+                    queued = self._queue_listener.get_queue() if self._queue_listener else None
                     self.state_updated.emit(slot_dicts)
                     if self._key_sender is not None:
-                        queued = self._queue_listener.get_queue() if self._queue_listener else None
                         on_queued_sent = (
                             self._queue_listener.clear_queue if self._queue_listener else None
                         )

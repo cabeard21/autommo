@@ -50,6 +50,7 @@ class _QueueHookThread(QThread):
         def on_event(event):
             if not self._running:
                 return
+            logger.debug("Queue hook: key=%s, type=%s", getattr(event, "name", None), getattr(event, "event_type", None))
             if getattr(event, "event_type", None) != keyboard.KEY_DOWN:
                 return
             name = getattr(event, "name", None)
@@ -135,12 +136,16 @@ class QueueListener(QObject):
         """Return current queue or None. If queue is older than queue_timeout_ms, clear and return None."""
         try:
             config = self._get_config()
-            timeout_sec = (getattr(config, "queue_timeout_ms", 5000) or 5000) / 1000.0
+            timeout_ms = getattr(config, "queue_timeout_ms", 5000) or 5000
+            timeout_sec = timeout_ms / 1000.0
         except Exception:
             timeout_sec = 5.0
+            timeout_ms = 5000
         with self._lock:
             if self._queue is None:
                 return None
+            age_ms = (time.time() - self._queue_time) * 1000
+            logger.debug("Queue age: %sms, timeout: %sms", age_ms, timeout_ms)
             if (time.time() - self._queue_time) >= timeout_sec:
                 self._queue = None
                 self._queue_time = 0.0

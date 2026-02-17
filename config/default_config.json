@@ -143,5 +143,6 @@
   "queue_whitelist": [
     "v"
   ],
-  "queue_timeout_ms": 5000
+  "queue_timeout_ms": 5000,
+  "queue_fire_delay_ms": 100
 }

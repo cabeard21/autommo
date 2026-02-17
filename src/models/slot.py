@@ -116,6 +116,8 @@ class AppConfig:
     queue_whitelist: list[str] = field(default_factory=list)
     # Max ms to keep a queued action before clearing (prevents stale queue)
     queue_timeout_ms: int = 5000
+    # Ms to wait after detecting GCD ready before sending queued key (avoids firing too early)
+    queue_fire_delay_ms: int = 100
 
     @classmethod
     def from_dict(cls, data: dict) -> AppConfig:
@@ -151,6 +153,7 @@ class AppConfig:
             history_rows=data.get("history_rows", 3),
             queue_whitelist=[str(k).strip().lower() for k in data.get("queue_whitelist", []) if str(k).strip()],
             queue_timeout_ms=int(data.get("queue_timeout_ms", 5000)),
+            queue_fire_delay_ms=int(data.get("queue_fire_delay_ms", 100)),
         )
 
     def to_dict(self) -> dict:
@@ -189,4 +192,5 @@ class AppConfig:
             "history_rows": self.history_rows,
             "queue_whitelist": self.queue_whitelist,
             "queue_timeout_ms": self.queue_timeout_ms,
+            "queue_fire_delay_ms": self.queue_fire_delay_ms,
         }

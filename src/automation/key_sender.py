@@ -47,6 +47,8 @@ class KeySender:
     def __init__(self, config: "AppConfig"):
         self._config = config
         self._last_send_time = 0.0
+        # After sending a queued key, don't send priority key until this time (so game gets only the queued key).
+        self._suppress_priority_until = 0.0
 
     def update_config(self, config: "AppConfig") -> None:
         self._config = config
@@ -77,46 +79,68 @@ class KeySender:
         min_interval_ok = (now - self._last_send_time) >= min_interval_sec
         window_ok = self.is_target_window_active()
 
+        slots_by_index = {s.index: s for s in state.slots}
+        # Queued key fires only when at least one priority slot is READY (GCD over; game accepts input).
+        any_priority_ready = any(
+            slots_by_index.get(i) and slots_by_index[i].state == SlotState.READY
+            for i in priority_order
+        )
+
         if queued_override:
             source = queued_override.get("source")
             key = (queued_override.get("key") or "").strip()
             if source == "whitelist" and key:
-                if min_interval_ok and window_ok:
+                if any_priority_ready and min_interval_ok and window_ok:
+                    logger.info("Queue override SENT: %s", queued_override)
+                    # Wait so we don't fire before the game's GCD is actually ready (visual ready can be 1 frame early).
+                    delay_sec = (getattr(self._config, "queue_fire_delay_ms", 100) or 0) / 1000.0
+                    if delay_sec > 0:
+                        time.sleep(delay_sec)
                     try:
                         import keyboard
+                        # Use same API as priority keys so the game receives the queued key the same way.
                         keyboard.send(key)
                     except Exception as e:
-                        logger.warning("keyboard.send(queued %r) failed: %s", key, e)
+                        logger.warning("keyboard send(queued %r) failed: %s", key, e)
                         return None
                     self._last_send_time = now
+                    # Suppress priority for one full GCD (1.5s) so only the queued key reaches the game.
+                    self._suppress_priority_until = now + 1.5
                     if on_queued_sent:
                         on_queued_sent()
                     logger.info("Sent queued key: %s", key)
                     return {"keybind": key, "action": "sent", "timestamp": now, "queued": True}
+                logger.info("Queue override BLOCKED: window=%s, interval_ok=%s, any_priority_ready=%s", window_ok, min_interval_ok, any_priority_ready)
                 return None
             if source == "tracked":
                 slot_index = queued_override.get("slot_index")
                 if slot_index is not None and key:
-                    slots_by_index = {s.index: s for s in state.slots}
                     slot = slots_by_index.get(slot_index)
-                    if slot and slot.state == SlotState.READY and min_interval_ok and window_ok:
+                    if slot and slot.state == SlotState.READY and any_priority_ready and min_interval_ok and window_ok:
+                        delay_sec = (getattr(self._config, "queue_fire_delay_ms", 100) or 0) / 1000.0
+                        if delay_sec > 0:
+                            time.sleep(delay_sec)
                         try:
                             import keyboard
                             keyboard.send(key)
                         except Exception as e:
-                            logger.warning("keyboard.send(queued %r) failed: %s", key, e)
+                            logger.warning("keyboard send(queued %r) failed: %s", key, e)
                             return None
                         self._last_send_time = now
+                        self._suppress_priority_until = now + 1.5
                         if on_queued_sent:
                             on_queued_sent()
                         logger.info("Sent queued key: %s (slot %s)", key, slot_index)
                         return {"keybind": key, "action": "sent", "timestamp": now, "slot_index": slot_index, "queued": True}
                 return None
+            # Had a queued override but didn't send (wrong source/key); never send priority instead.
+            return None
 
         if not min_interval_ok:
             return None
+        if now < self._suppress_priority_until:
+            return None
 
-        slots_by_index = {s.index: s for s in state.slots}
         for slot_index in priority_order:
             slot = slots_by_index.get(slot_index)
             if not slot or slot.state != SlotState.READY:

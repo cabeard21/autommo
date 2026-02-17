@@ -618,6 +618,7 @@ class MainWindow(QMainWindow):
 
     def set_queued_override(self, q: Optional[dict]) -> None:
         """Update the current spell queue state (dict or None). Next intention row shows queued key when set."""
+        logger.debug("set_queued_override called with: %s", q)
         self._queued_override = q
 
     def set_queue_listener(self, listener: Optional[object]) -> None:
