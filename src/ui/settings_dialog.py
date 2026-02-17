@@ -345,6 +345,13 @@ class SettingsDialog(QDialog):
         single_row.addWidget(self._btn_single_fire_bind)
         single_row.addWidget(single_help)
         fl.addRow(_row_label("Single bind:"), single_row)
+        self._automation_bind_conflict_badge = QLabel("")
+        self._automation_bind_conflict_badge.setWordWrap(True)
+        self._automation_bind_conflict_badge.setStyleSheet(
+            "font-size: 10px; color: #ffb3b3; background: #4a1f1f; border: 1px solid #7a2f2f; border-radius: 3px; padding: 4px 6px;"
+        )
+        self._automation_bind_conflict_badge.setVisible(False)
+        fl.addRow("", self._automation_bind_conflict_badge)
         self._spin_min_delay = QSpinBox()
         self._spin_min_delay.setRange(50, 2000)
         self._spin_min_delay.setMaximumWidth(56)
@@ -565,7 +572,55 @@ class SettingsDialog(QDialog):
         self._btn_single_fire_bind.setText(
             format_bind_for_display(single_fire_bind) if single_fire_bind else "—"
         )
+        self._update_automation_bind_conflict_badge()
         self._btn_remove_automation_profile.setEnabled(len(self._config.priority_profiles) > 1)
+
+    def _automation_bind_conflicts(self) -> list[str]:
+        active = self._config.get_active_priority_profile()
+        active_id = str(active.get("id", "") or "")
+        active_name = str(active.get("name", "") or "Active").strip() or "Active"
+        active_toggle = str(active.get("toggle_bind", "") or "").strip().lower()
+        active_single = str(active.get("single_fire_bind", "") or "").strip().lower()
+        conflicts: list[str] = []
+        if active_toggle and active_toggle == active_single:
+            conflicts.append(
+                f"{active_name}: toggle and single use the same key ({format_bind_for_display(active_toggle)})"
+            )
+        for p in self._config.priority_profiles:
+            pid = str(p.get("id", "") or "")
+            if pid == active_id:
+                continue
+            pname = str(p.get("name", "") or pid or "Profile").strip() or "Profile"
+            other_toggle = str(p.get("toggle_bind", "") or "").strip().lower()
+            other_single = str(p.get("single_fire_bind", "") or "").strip().lower()
+            if active_toggle:
+                if active_toggle == other_toggle:
+                    conflicts.append(
+                        f"Toggle {format_bind_for_display(active_toggle)} is also toggle on {pname}"
+                    )
+                if active_toggle == other_single:
+                    conflicts.append(
+                        f"Toggle {format_bind_for_display(active_toggle)} is single-fire on {pname}"
+                    )
+            if active_single:
+                if active_single == other_toggle:
+                    conflicts.append(
+                        f"Single {format_bind_for_display(active_single)} is toggle on {pname}"
+                    )
+                if active_single == other_single:
+                    conflicts.append(
+                        f"Single {format_bind_for_display(active_single)} is also single-fire on {pname}"
+                    )
+        return conflicts
+
+    def _update_automation_bind_conflict_badge(self) -> None:
+        conflicts = self._automation_bind_conflicts()
+        if not conflicts:
+            self._automation_bind_conflict_badge.clear()
+            self._automation_bind_conflict_badge.setVisible(False)
+            return
+        self._automation_bind_conflict_badge.setText("Bind conflict:\n" + "\n".join(conflicts))
+        self._automation_bind_conflict_badge.setVisible(True)
 
     def _update_monitor_combo(self) -> None:
         self._monitor_combo.blockSignals(True)

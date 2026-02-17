@@ -74,6 +74,7 @@ The right panel also shows:
 - **Per-profile hotkeys** — Each list profile has two optional global binds:
   - **Toggle bind** — Switches to that profile and toggles continuous automation on/off.
   - **Single bind** — Switches to that profile and arms exactly one next action (single fire) without enabling continuous automation.
+- **Conflict warning** — If a bind is reused across profiles (or toggle/single collide), Settings shows a red conflict badge so you can resolve it quickly.
 - **Delay (ms)** — Minimum time in milliseconds between any two keypresses (50–2000). Helps avoid spamming faster than the game’s GCD.
 - **Queue (ms)** — Extra wait after detected cast end before sending the next key (default 120 ms).
 - **Allow sends while casting/channeling** — If off (default), automation waits until cast/channel completes.
