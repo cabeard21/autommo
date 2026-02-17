@@ -134,5 +134,6 @@
   "automation_enabled": false,
   "automation_toggle_bind": "f24",
   "min_press_interval_ms": 50,
-  "target_window_title": ""
+  "target_window_title": "",
+  "profile_name": "Teglaan"
 }

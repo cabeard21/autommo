@@ -324,12 +324,10 @@ def main() -> None:
             cap.stop()
             analyzer.calibrate_single_slot(frame, slot_index)
             window.mark_slot_recalibrated(slot_index)
-            window.statusBar().showMessage(f"Slot {slot_index + 1} calibrated ✓")
-            QTimer.singleShot(2000, window.statusBar().clearMessage)
+            window.show_status_message(f"Slot {slot_index + 1} calibrated ✓", 2000)
         except Exception as e:
             logger.error(f"Per-slot calibration failed: {e}")
-            window.statusBar().showMessage(f"Calibration failed: {e}")
-            QTimer.singleShot(2000, window.statusBar().clearMessage)
+            window.show_status_message(f"Calibration failed: {e}", 2000)
 
     window.calibrate_slot_requested.connect(calibrate_single_slot)
 

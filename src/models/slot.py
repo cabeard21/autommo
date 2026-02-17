@@ -107,6 +107,8 @@ class AppConfig:
     min_press_interval_ms: int = 150
     # If non-empty, only send keys when foreground window title contains this (case-insensitive)
     target_window_title: str = ""
+    # Profile name (e.g. "Default") to distinguish which profile is loaded; used for export default filename
+    profile_name: str = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> AppConfig:
@@ -137,6 +139,7 @@ class AppConfig:
             automation_toggle_bind=data.get("automation_toggle_bind", ""),
             min_press_interval_ms=data.get("min_press_interval_ms", 150),
             target_window_title=data.get("target_window_title", ""),
+            profile_name=data.get("profile_name", ""),
         )
 
     def to_dict(self) -> dict:
@@ -170,4 +173,5 @@ class AppConfig:
             "automation_toggle_bind": self.automation_toggle_bind,
             "min_press_interval_ms": self.min_press_interval_ms,
             "target_window_title": self.target_window_title,
+            "profile_name": self.profile_name,
         }

@@ -21,6 +21,7 @@ from PyQt6.QtGui import QImage, QPixmap, QKeySequence, QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -108,7 +109,16 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 400)
 
         self._build_ui()
-        self.setStatusBar(QStatusBar())
+        status_bar = QStatusBar()
+        status_bar.setStyleSheet("QStatusBar { background-color: #1a1a1a; }")
+        self.setStatusBar(status_bar)
+        self._btn_settings = QPushButton("Settings")
+        self._btn_settings.setStyleSheet("font-size: 11px;")
+        self._btn_settings.clicked.connect(self._on_settings_clicked)
+        self.statusBar().addWidget(self._btn_settings)
+        self._status_message_label = QLabel()
+        self._status_message_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.statusBar().addWidget(self._status_message_label, 1)
         self._gcd_label = QLabel("Est. GCD: waiting for data…")
         self._gcd_label.setStyleSheet("color: #aaa; font-size: 11px; padding-right: 6px;")
         self.statusBar().addPermanentWidget(self._gcd_label)
@@ -154,6 +164,20 @@ class MainWindow(QMainWindow):
         automation_layout.addLayout(options_row)
         layout.addWidget(automation_group)
         self._capture_bind_thread: Optional[CaptureOneKeyThread] = None
+
+        # --- Profile ---
+        profile_group = QGroupBox("Profile")
+        profile_layout = QHBoxLayout(profile_group)
+        profile_layout.addWidget(QLabel("Name:"))
+        self._edit_profile_name = QLineEdit()
+        self._edit_profile_name.setPlaceholderText("e.g. Default")
+        self._edit_profile_name.setClearButtonEnabled(True)
+        profile_layout.addWidget(self._edit_profile_name)
+        self._btn_export = QPushButton("Export")
+        self._btn_import = QPushButton("Import")
+        profile_layout.addWidget(self._btn_export)
+        profile_layout.addWidget(self._btn_import)
+        layout.addWidget(profile_group)
 
         # --- Display ---
         monitor_group = QGroupBox("Display")
@@ -275,10 +299,8 @@ class MainWindow(QMainWindow):
         controls_layout = QHBoxLayout()
         self._btn_start = QPushButton("Start Capture")
         self._btn_calibrate = QPushButton("Calibrate Baselines")
-        self._btn_save_config = QPushButton("Save Settings")
         controls_layout.addWidget(self._btn_start)
         controls_layout.addWidget(self._btn_calibrate)
-        controls_layout.addWidget(self._btn_save_config)
         layout.addLayout(controls_layout)
 
         # --- Live preview ---
@@ -319,11 +341,13 @@ class MainWindow(QMainWindow):
         self._check_always_on_top.toggled.connect(self._on_always_on_top_toggled)
         self._spin_brightness_drop.valueChanged.connect(self._on_detection_changed)
         self._slider_pixel_fraction.valueChanged.connect(self._on_detection_changed)
-        self._btn_save_config.clicked.connect(self._save_config)
         self._spin_min_delay.valueChanged.connect(self._on_min_delay_changed)
         self._edit_window_title.textChanged.connect(self._on_window_title_changed)
+        self._edit_profile_name.textChanged.connect(self._on_profile_name_changed)
         self._priority_panel.priority_list.order_changed.connect(self._on_priority_order_changed)
         self._priority_panel.gcd_updated.connect(self._on_gcd_updated)
+        self._btn_export.clicked.connect(self._on_config_export)
+        self._btn_import.clicked.connect(self._on_config_import)
 
     def _sync_ui_from_config(self) -> None:
         """Set UI controls to match current config."""
@@ -360,12 +384,15 @@ class MainWindow(QMainWindow):
         self._config.automation_enabled = False
         self._spin_min_delay.blockSignals(True)
         self._edit_window_title.blockSignals(True)
+        self._edit_profile_name.blockSignals(True)
         try:
             self._spin_min_delay.setValue(getattr(self._config, "min_press_interval_ms", 150))
             self._edit_window_title.setText(getattr(self._config, "target_window_title", ""))
+            self._edit_profile_name.setText(getattr(self._config, "profile_name", ""))
         finally:
             self._spin_min_delay.blockSignals(False)
             self._edit_window_title.blockSignals(False)
+            self._edit_profile_name.blockSignals(False)
         self._update_automation_button_text()
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
         self._priority_panel.priority_list.set_display_names(getattr(self._config, "slot_display_names", []))
@@ -377,26 +404,21 @@ class MainWindow(QMainWindow):
         self._prepopulate_slot_buttons()
         if CONFIG_PATH.exists():
             self._last_saved_config = copy.deepcopy(self._config.to_dict())
-        self._update_save_button_state()
+        self._maybe_auto_save()
 
-    def _update_save_button_state(self) -> None:
-        """Enable button when there are unsaved changes; disable when in sync. Label is always 'Save Settings'.
-        automation_enabled is excluded from the comparison (it resets on launch and toggling it should not affect save state).
-        """
-        self._btn_save_config.setText("Save Settings")
+    def _maybe_auto_save(self) -> None:
+        """If there are unsaved changes (compared to _last_saved_config, excluding automation_enabled), save and show status."""
         if self._last_saved_config is None:
-            self._btn_save_config.setEnabled(True)
+            self._save_config()
             return
         try:
             current = self._config.to_dict()
             current_compare = {k: v for k, v in current.items() if k != "automation_enabled"}
             last_compare = {k: v for k, v in self._last_saved_config.items() if k != "automation_enabled"}
-            if current_compare == last_compare:
-                self._btn_save_config.setEnabled(False)
-            else:
-                self._btn_save_config.setEnabled(True)
+            if current_compare != last_compare:
+                self._save_config()
         except Exception:
-            self._btn_save_config.setEnabled(True)
+            self._save_config()
 
     def _prepopulate_slot_buttons(self) -> None:
         """Build slot buttons from config (slot_count + keybinds) in a not-ready state. Used on load before capture runs."""
@@ -431,19 +453,19 @@ class MainWindow(QMainWindow):
             height=self._spin_height.value(),
         )
         self.bounding_box_changed.emit(self._config.bounding_box)
-        self._update_save_button_state()
+        self._maybe_auto_save()
 
     def _on_detection_changed(self) -> None:
         self._config.brightness_drop_threshold = self._spin_brightness_drop.value()
         self._config.cooldown_pixel_fraction = self._slider_pixel_fraction.value() / 100.0
         self._pixel_fraction_label.setText(f"{self._config.cooldown_pixel_fraction:.2f}")
         self.config_changed.emit(self._config)
-        self._update_save_button_state()
+        self._maybe_auto_save()
 
     def _on_overlay_toggled(self, checked: bool) -> None:
         self._config.overlay_enabled = checked
         self.overlay_visibility_changed.emit(checked)
-        self._update_save_button_state()
+        self._maybe_auto_save()
 
     def _on_monitor_changed(self, index: int) -> None:
         monitor_index = self._monitor_combo.itemData(index)
@@ -455,7 +477,7 @@ class MainWindow(QMainWindow):
         self._config.monitor_index = monitor_index
         self.monitor_changed.emit(monitor_index)
         self.config_changed.emit(self._config)
-        self._update_save_button_state()
+        self._maybe_auto_save()
 
     def _on_always_on_top_toggled(self, checked: bool) -> None:
         flags = self.windowFlags()
@@ -476,7 +498,7 @@ class MainWindow(QMainWindow):
             self._config.slot_padding,
         )
         self._prepopulate_slot_buttons()
-        self._update_save_button_state()
+        self._maybe_auto_save()
 
     def _update_automation_button_text(self) -> None:
         """Set toggle button to Enable/Disable (green/red) and rebind button to Bind Toggle [key]."""
@@ -530,7 +552,7 @@ class MainWindow(QMainWindow):
         self._config.automation_toggle_bind = (bind_str or "").strip()
         self._update_automation_button_text()
         self.config_changed.emit(self._config)
-        self._update_save_button_state()
+        self._maybe_auto_save()
         self._btn_rebind.setEnabled(True)
 
     def _on_rebind_cancelled(self) -> None:
@@ -546,12 +568,17 @@ class MainWindow(QMainWindow):
     def _on_min_delay_changed(self, value: int) -> None:
         self._config.min_press_interval_ms = max(50, min(2000, value))
         self.config_changed.emit(self._config)
-        self._update_save_button_state()
+        self._maybe_auto_save()
 
     def _on_window_title_changed(self) -> None:
         self._config.target_window_title = (self._edit_window_title.text() or "").strip()
         self.config_changed.emit(self._config)
-        self._update_save_button_state()
+        self._maybe_auto_save()
+
+    def _on_profile_name_changed(self) -> None:
+        self._config.profile_name = (self._edit_profile_name.text() or "").strip()
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
 
     def set_key_sender(self, key_sender: Optional["KeySender"]) -> None:
         self._key_sender = key_sender
@@ -559,7 +586,7 @@ class MainWindow(QMainWindow):
     def _on_priority_order_changed(self, order: list) -> None:
         self._config.priority_order = list(order)
         self.config_changed.emit(self._config)
-        self._update_save_button_state()
+        self._maybe_auto_save()
 
     def _on_gcd_updated(self, gcd_seconds: float) -> None:
         """Update the estimated GCD display in the status bar."""
@@ -571,7 +598,7 @@ class MainWindow(QMainWindow):
         self._priority_panel.priority_list.remove_slot(slot_index)
         self._config.priority_order = self._priority_panel.priority_list.get_order()
         self.config_changed.emit(self._config)
-        self._update_save_button_state()
+        self._maybe_auto_save()
 
     # Padding (px) around the preview image inside the Live Preview panel
     PREVIEW_PADDING = 12
@@ -666,7 +693,7 @@ class MainWindow(QMainWindow):
             self._config.slot_display_names[slot_index] = new_name.strip()
             self._priority_panel.priority_list.set_display_names(self._config.slot_display_names)
             self.config_changed.emit(self._config)
-            self._update_save_button_state()
+            self._maybe_auto_save()
 
     def _start_listening_for_key(self, slot_index: int) -> None:
         """Turn slot button blue and show status; next keypress will bind (or Esc cancel)."""
@@ -676,7 +703,7 @@ class MainWindow(QMainWindow):
             self._slot_buttons[slot_index].setStyleSheet(
                 "background-color: #2d2d5a; color: white; border: 1px solid #444; padding: 4px;"
             )
-        self.statusBar().showMessage(
+        self._show_status_message(
             f"Press a key to bind to slot {slot_index + 1}... (Esc to cancel)"
         )
 
@@ -686,7 +713,7 @@ class MainWindow(QMainWindow):
             return
         idx = self._listening_slot_index
         self._listening_slot_index = None
-        self.statusBar().clearMessage()
+        self._status_message_label.setText("")
         if idx < len(self._slot_buttons):
             keybind = self._config.keybinds[idx] if idx < len(self._config.keybinds) else "?"
             self._apply_slot_button_style(
@@ -712,13 +739,13 @@ class MainWindow(QMainWindow):
                     self._config.keybinds.append("")
                 self._config.keybinds[idx] = key_str
                 self._listening_slot_index = None
-                self.statusBar().clearMessage()
+                self._status_message_label.setText("")
                 if idx < len(self._slot_buttons):
                     self._apply_slot_button_style(
                         self._slot_buttons[idx], "unknown", key_str, slot_index=idx
                     )
                 self.config_changed.emit(self._config)
-                self._update_save_button_state()
+                self._maybe_auto_save()
             event.accept()
             return
         super().keyPressEvent(event)
@@ -799,7 +826,7 @@ class MainWindow(QMainWindow):
         self._config.overwritten_baseline_slots.clear()
 
     def _save_config(self) -> None:
-        """Persist current config to JSON and show Saved ✓ feedback."""
+        """Persist current config to JSON and show status message."""
         try:
             if self._before_save_callback:
                 self._before_save_callback()
@@ -808,18 +835,70 @@ class MainWindow(QMainWindow):
                 json.dump(self._config.to_dict(), f, indent=2)
             logger.info(f"Config saved to {CONFIG_PATH}")
             self._last_saved_config = copy.deepcopy(self._config.to_dict())
-            self._btn_save_config.setText("Saved ✓")
-            self._btn_save_config.setEnabled(False)
-            QTimer.singleShot(2000, self._revert_save_config_button)
+            self._show_status_message("Settings saved", 2000)
         except Exception as e:
             logger.error(f"Config save failed: {e}")
-            self._btn_save_config.setText("Save failed")
-            self._btn_save_config.setStyleSheet("color: red;")
-            QTimer.singleShot(2000, self._revert_save_config_button)
+            self._show_status_message("Save failed", 3000)
 
-    def _revert_save_config_button(self) -> None:
-        self._btn_save_config.setStyleSheet("")
-        self._update_save_button_state()
+    def show_status_message(self, text: str, timeout_ms: int = 0) -> None:
+        """Show text in the status bar to the right of the Settings button. If timeout_ms > 0, clear after that many ms."""
+        self._status_message_label.setText(text)
+        if timeout_ms > 0:
+            QTimer.singleShot(timeout_ms, lambda: self._status_message_label.setText(""))
+
+    def _show_status_message(self, text: str, timeout_ms: int = 0) -> None:
+        """Internal alias for show_status_message."""
+        self.show_status_message(text, timeout_ms)
+
+    def _on_settings_clicked(self) -> None:
+        """Stub for Settings button in status bar."""
+        self._show_status_message("Settings (coming soon)", 2000)
+
+    def _on_config_export(self) -> None:
+        """Export current config to a user-chosen JSON file."""
+        profile = (self._config.profile_name or "").strip()
+        default_path = ""
+        if profile:
+            safe_name = "".join(c if c not in '<>:"/\\|?*' else "_" for c in profile)
+            default_path = str(Path.home() / f"{safe_name}.json")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Config", default_path, "JSON (*.json);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            if self._before_save_callback:
+                self._before_save_callback()
+            with open(path, "w") as f:
+                json.dump(self._config.to_dict(), f, indent=2)
+            logger.info(f"Config exported to {path}")
+            self._show_status_message("Config exported", 2000)
+        except Exception as e:
+            logger.error(f"Export failed: {e}")
+            self._show_status_message("Export failed", 3000)
+
+    def _on_config_import(self) -> None:
+        """Import config from a JSON file and apply as new default."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Config", "", "JSON (*.json);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            self._config = AppConfig.from_dict(data)
+            self._sync_ui_from_config()
+            self.config_changed.emit(self._config)
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(CONFIG_PATH, "w") as f:
+                json.dump(self._config.to_dict(), f, indent=2)
+            self._last_saved_config = copy.deepcopy(self._config.to_dict())
+            logger.info(f"Config imported from {path}")
+            self._show_status_message("Config imported", 2000)
+        except Exception as e:
+            logger.error(f"Import failed: {e}")
+            self._show_status_message("Import failed", 3000)
 
     def populate_monitors(self, monitors: list[dict]) -> None:
         """Fill the monitor dropdown with available monitors."""
@@ -838,4 +917,4 @@ class MainWindow(QMainWindow):
                 self._monitor_combo.setCurrentIndex(clamped_index - 1)
         finally:
             self._monitor_combo.blockSignals(False)
-        self._update_save_button_state()
+        self._maybe_auto_save()
