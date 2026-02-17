@@ -122,20 +122,6 @@ class MainWindow(QMainWindow):
         self._left_panel = _LeftPanel(parent=central)
         layout = QVBoxLayout(self._left_panel)
 
-        # --- Monitor selector ---
-        monitor_group = QGroupBox("Display")
-        monitor_layout = QHBoxLayout(monitor_group)
-        self._monitor_combo = QComboBox()
-        self._monitor_combo.setMaximumWidth(180)
-        monitor_layout.addWidget(QLabel("Monitor:"))
-        monitor_layout.addWidget(self._monitor_combo)
-        monitor_layout.addStretch(1)
-        self._check_overlay = QCheckBox("Show Region Overlay")
-        monitor_layout.addWidget(self._check_overlay)
-        self._check_always_on_top = QCheckBox("Always on top")
-        monitor_layout.addWidget(self._check_always_on_top)
-        layout.addWidget(monitor_group)
-
         # --- Automation ---
         automation_group = QGroupBox("Automation")
         automation_layout = QVBoxLayout(automation_group)
@@ -165,6 +151,20 @@ class MainWindow(QMainWindow):
         automation_layout.addLayout(options_row)
         layout.addWidget(automation_group)
         self._capture_bind_thread: Optional[CaptureOneKeyThread] = None
+
+        # --- Display ---
+        monitor_group = QGroupBox("Display")
+        monitor_layout = QHBoxLayout(monitor_group)
+        self._monitor_combo = QComboBox()
+        self._monitor_combo.setMaximumWidth(180)
+        monitor_layout.addWidget(QLabel("Monitor:"))
+        monitor_layout.addWidget(self._monitor_combo)
+        monitor_layout.addStretch(1)
+        self._check_overlay = QCheckBox("Show Region Overlay")
+        monitor_layout.addWidget(self._check_overlay)
+        self._check_always_on_top = QCheckBox("Always on top")
+        monitor_layout.addWidget(self._check_always_on_top)
+        layout.addWidget(monitor_group)
 
         # --- Capture Region ---
         capture_group = QGroupBox("Capture Region")
