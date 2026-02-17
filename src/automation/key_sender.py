@@ -1,4 +1,5 @@
 """Key sender — sends keypresses based on slot states and priority order."""
+
 from __future__ import annotations
 
 import logging
@@ -20,6 +21,7 @@ def _is_target_window_active_win(target_title: str) -> bool:
         return True
     try:
         import ctypes
+
         user32 = ctypes.windll.user32
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
@@ -49,13 +51,20 @@ class KeySender:
         self._last_send_time = 0.0
         # After sending a queued key, don't send priority key until this time (so game gets only the queued key).
         self._suppress_priority_until = 0.0
+        self._single_fire_pending = False
 
     def update_config(self, config: "AppConfig") -> None:
         self._config = config
 
+    def request_single_fire(self) -> None:
+        """Arm one key send for the next valid ready action."""
+        self._single_fire_pending = True
+
     def is_target_window_active(self) -> bool:
         """True if foreground window matches target_window_title, or target is empty."""
-        return is_target_window_active(getattr(self._config, "target_window_title", "") or "")
+        return is_target_window_active(
+            getattr(self._config, "target_window_title", "") or ""
+        )
 
     def evaluate_and_send(
         self,
@@ -71,10 +80,13 @@ class KeySender:
         then find first READY slot in priority_order and send its keybind. Returns None if nothing
         sent/blocked; otherwise a dict for the UI (may include "queued": True).
         """
-        if not automation_enabled:
+        single_fire_pending = self._single_fire_pending
+        if not automation_enabled and not single_fire_pending:
             return None
 
-        min_interval_sec = (getattr(self._config, "min_press_interval_ms", 150) or 150) / 1000.0
+        min_interval_sec = (
+            getattr(self._config, "min_press_interval_ms", 150) or 150
+        ) / 1000.0
         now = time.time()
         min_interval_ok = (now - self._last_send_time) >= min_interval_sec
         window_ok = self.is_target_window_active()
@@ -93,11 +105,14 @@ class KeySender:
                 if any_priority_ready and min_interval_ok and window_ok:
                     logger.info("Queue override SENT: %s", queued_override)
                     # Wait so we don't fire before the game's GCD is actually ready (visual ready can be 1 frame early).
-                    delay_sec = (getattr(self._config, "queue_fire_delay_ms", 100) or 0) / 1000.0
+                    delay_sec = (
+                        getattr(self._config, "queue_fire_delay_ms", 100) or 0
+                    ) / 1000.0
                     if delay_sec > 0:
                         time.sleep(delay_sec)
                     try:
                         import keyboard
+
                         # Use same API as priority keys so the game receives the queued key the same way.
                         keyboard.send(key)
                     except Exception as e:
@@ -109,29 +124,56 @@ class KeySender:
                     if on_queued_sent:
                         on_queued_sent()
                     logger.info("Sent queued key: %s", key)
-                    return {"keybind": key, "action": "sent", "timestamp": now, "queued": True}
-                logger.info("Queue override BLOCKED: window=%s, interval_ok=%s, any_priority_ready=%s", window_ok, min_interval_ok, any_priority_ready)
+                    return {
+                        "keybind": key,
+                        "action": "sent",
+                        "timestamp": now,
+                        "queued": True,
+                    }
+                logger.info(
+                    "Queue override BLOCKED: window=%s, interval_ok=%s, any_priority_ready=%s",
+                    window_ok,
+                    min_interval_ok,
+                    any_priority_ready,
+                )
                 return None
             if source == "tracked":
                 slot_index = queued_override.get("slot_index")
                 if slot_index is not None and key:
                     slot = slots_by_index.get(slot_index)
-                    if slot and slot.state == SlotState.READY and any_priority_ready and min_interval_ok and window_ok:
-                        delay_sec = (getattr(self._config, "queue_fire_delay_ms", 100) or 0) / 1000.0
+                    if (
+                        slot
+                        and slot.state == SlotState.READY
+                        and any_priority_ready
+                        and min_interval_ok
+                        and window_ok
+                    ):
+                        delay_sec = (
+                            getattr(self._config, "queue_fire_delay_ms", 100) or 0
+                        ) / 1000.0
                         if delay_sec > 0:
                             time.sleep(delay_sec)
                         try:
                             import keyboard
+
                             keyboard.send(key)
                         except Exception as e:
-                            logger.warning("keyboard send(queued %r) failed: %s", key, e)
+                            logger.warning(
+                                "keyboard send(queued %r) failed: %s", key, e
+                            )
                             return None
                         self._last_send_time = now
                         self._suppress_priority_until = now + 1.5
                         if on_queued_sent:
                             on_queued_sent()
                         logger.info("Sent queued key: %s (slot %s)", key, slot_index)
-                        return {"keybind": key, "action": "sent", "timestamp": now, "slot_index": slot_index, "queued": True}
+                        return {
+                            "keybind": key,
+                            "action": "sent",
+                            "timestamp": now,
+                            "slot_index": slot_index,
+                            "queued": True,
+                        }
                 return None
             # Had a queued override but didn't send (wrong source/key); never send priority instead.
             return None
@@ -151,17 +193,30 @@ class KeySender:
             keybind = keybind.strip()
 
             if not self.is_target_window_active():
-                return {"keybind": keybind, "action": "blocked", "reason": "window", "slot_index": slot_index}
+                return {
+                    "keybind": keybind,
+                    "action": "blocked",
+                    "reason": "window",
+                    "slot_index": slot_index,
+                }
 
             try:
                 import keyboard
+
                 keyboard.send(keybind)
             except Exception as e:
                 logger.warning("keyboard.send(%r) failed: %s", keybind, e)
                 return None
 
             self._last_send_time = now
+            if single_fire_pending:
+                self._single_fire_pending = False
             logger.info("Sent key: %s", keybind)
-            return {"keybind": keybind, "action": "sent", "timestamp": now, "slot_index": slot_index}
+            return {
+                "keybind": keybind,
+                "action": "sent",
+                "timestamp": now,
+                "slot_index": slot_index,
+            }
 
         return None

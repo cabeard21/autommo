@@ -318,8 +318,13 @@ def main() -> None:
 
     window.start_capture_requested.connect(on_start_capture_requested)
 
-    # Global hotkey to toggle automation (works when app does not have focus)
+    # Global hotkey action (works when app does not have focus)
     def on_global_toggle():
+        mode = (getattr(config, "automation_hotkey_mode", "toggle") or "toggle").strip().lower()
+        if mode == "single_fire":
+            key_sender.request_single_fire()
+            window.show_status_message("Single-fire armed", 1000)
+            return
         window.toggle_automation()
 
     hotkey_listener = GlobalToggleListener(

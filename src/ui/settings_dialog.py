@@ -238,7 +238,11 @@ class SettingsDialog(QDialog):
         rebind_row = QHBoxLayout()
         rebind_row.addWidget(self._btn_rebind)
         rebind_row.addWidget(rebind_help)
-        fl.addRow(_row_label("Toggle bind:"), rebind_row)
+        fl.addRow(_row_label("Hotkey bind:"), rebind_row)
+        self._combo_hotkey_mode = QComboBox()
+        self._combo_hotkey_mode.addItem("Toggle automation", "toggle")
+        self._combo_hotkey_mode.addItem("Single fire next action", "single_fire")
+        fl.addRow(_row_label("Hotkey mode:"), self._combo_hotkey_mode)
         self._spin_min_delay = QSpinBox()
         self._spin_min_delay.setRange(50, 2000)
         self._spin_min_delay.setMaximumWidth(56)
@@ -317,6 +321,7 @@ class SettingsDialog(QDialog):
         self._spin_brightness_drop.valueChanged.connect(self._on_detection_changed)
         self._slider_pixel_fraction.valueChanged.connect(self._on_detection_changed)
         self._btn_rebind.clicked.connect(self._on_rebind_clicked)
+        self._combo_hotkey_mode.currentIndexChanged.connect(self._on_hotkey_mode_changed)
         self._spin_min_delay.valueChanged.connect(self._on_min_delay_changed)
         self._edit_window_title.textChanged.connect(self._on_window_title_changed)
         self._edit_queue_keys.textChanged.connect(self._on_queue_keys_changed)
@@ -369,6 +374,13 @@ class SettingsDialog(QDialog):
         self._slider_pixel_fraction.blockSignals(False)
         key = getattr(self._config, "automation_toggle_bind", "") or ""
         self._btn_rebind.setText(format_bind_for_display(key) if key else "—")
+        mode = getattr(self._config, "automation_hotkey_mode", "toggle") or "toggle"
+        if mode not in ("toggle", "single_fire"):
+            mode = "toggle"
+        self._combo_hotkey_mode.blockSignals(True)
+        idx = self._combo_hotkey_mode.findData(mode)
+        self._combo_hotkey_mode.setCurrentIndex(idx if idx >= 0 else 0)
+        self._combo_hotkey_mode.blockSignals(False)
         self._spin_min_delay.blockSignals(True)
         self._spin_min_delay.setValue(getattr(self._config, "min_press_interval_ms", 150))
         self._spin_min_delay.blockSignals(False)
@@ -566,6 +578,13 @@ class SettingsDialog(QDialog):
 
     def _on_min_delay_changed(self, value: int) -> None:
         self._config.min_press_interval_ms = max(50, min(2000, value))
+        self._emit_config()
+
+    def _on_hotkey_mode_changed(self, index: int) -> None:
+        mode = self._combo_hotkey_mode.itemData(index)
+        if mode not in ("toggle", "single_fire"):
+            mode = "toggle"
+        self._config.automation_hotkey_mode = str(mode)
         self._emit_config()
 
     def _on_window_title_changed(self) -> None:
