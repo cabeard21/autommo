@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChillDown — UI Mockup v2</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #111120;
+    color: #e0e0e0;
+    font-family: 'IBM Plex Sans', sans-serif;
+    padding: 32px;
+    min-height: 100vh;
+  }
+
+  h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: #6ef;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 4px;
+  }
+
+  .page-subtitle {
+    color: #555;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 28px;
+  }
+
+  .windows-container {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  /* ===== WINDOW CHROME ===== */
+  .window {
+    background: #2a2a3a;
+    border: 1px solid #444;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+
+  .title-bar {
+    background: #1e1e2e;
+    padding: 7px 12px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    border-bottom: 1px solid #333;
+  }
+
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.r { background: #e55; }
+  .dot.y { background: #eb5; }
+  .dot.g { background: #5b5; }
+
+  .title-bar .title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #888;
+    margin-left: 6px;
+  }
+
+  .title-bar .settings-icon {
+    margin-left: auto;
+    font-size: 14px;
+    color: #666;
+    cursor: pointer;
+  }
+
+  .title-bar .settings-icon:hover { color: #aaa; }
+
+  /* ===== SHARED STYLES ===== */
+  .section {
+    background: #252535;
+    border: 1px solid #3a3a4a;
+    border-radius: 4px;
+    padding: 10px 12px;
+  }
+
+  .section-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 8px;
+  }
+
+  .fake-input {
+    background: #1a1a2a;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 4px 7px;
+    color: #ccc;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .fake-input.wide {
+    text-align: left;
+    width: 100%;
+  }
+
+  .fake-btn {
+    background: #333345;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 7px 12px;
+    color: #ccc;
+    font-size: 11px;
+    text-align: center;
+    font-family: 'IBM Plex Sans', sans-serif;
+    cursor: pointer;
+  }
+
+  .fake-btn:hover { background: #3d3d50; }
+
+  .fake-btn.primary {
+    background: #2d5a2d;
+    border-color: #3a7a3a;
+    color: #8f8;
+  }
+
+  .fake-btn.danger {
+    background: #5a2d2d;
+    border-color: #7a3a3a;
+    color: #f88;
+  }
+
+  label {
+    font-size: 11px;
+    color: #999;
+  }
+
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row.spread { justify-content: space-between; }
+
+  .control-pair {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .control-pair .fake-input { width: 48px; }
+
+  .fake-slider {
+    flex: 1;
+    height: 4px;
+    background: #444;
+    border-radius: 2px;
+    position: relative;
+    min-width: 60px;
+  }
+  .fake-slider::after {
+    content: '';
+    position: absolute;
+    left: 20%;
+    top: -4px;
+    width: 12px; height: 12px;
+    background: #888;
+    border-radius: 50%;
+  }
+
+  .fake-dropdown {
+    background: #1a1a2a;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 4px 8px;
+    color: #ccc;
+    font-size: 11px;
+  }
+
+  .fake-checkbox {
+    width: 14px; height: 14px;
+    background: #1a1a2a;
+    border: 1px solid #555;
+    border-radius: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: #8f8;
+    flex-shrink: 0;
+  }
+
+  /* ===== MAIN WINDOW ===== */
+  .main-window {
+    width: 580px;
+  }
+
+  .main-body {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Enable bar */
+  .enable-bar {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .enable-btn {
+    flex: 1;
+    padding: 10px;
+    border-radius: 4px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'IBM Plex Sans', sans-serif;
+    border: 1px solid;
+  }
+
+  .enable-btn.on {
+    background: #2d5a2d;
+    border-color: #3a7a3a;
+    color: #8f8;
+  }
+
+  .enable-btn.off {
+    background: #333345;
+    border-color: #555;
+    color: #999;
+  }
+
+  .bind-display {
+    background: #252535;
+    border: 1px solid #3a3a4a;
+    border-radius: 4px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #888;
+  }
+
+  .bind-display .key {
+    color: #6ef;
+    font-weight: 600;
+  }
+
+  /* Content split: left (preview + actions) / right (priority) */
+  .content-split {
+    display: flex;
+    gap: 10px;
+    min-height: 340px;
+  }
+
+  .left-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .right-col {
+    width: 175px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Live Preview */
+  .preview-area {
+    background: #111;
+    border-radius: 3px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 2px 4px;
+  }
+
+  .preview-icon {
+    width: 34px; height: 34px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  /* Slot States */
+  .slot-row {
+    display: flex;
+    gap: 3px;
+  }
+
+  .slot-btn {
+    flex: 1;
+    padding: 5px 2px;
+    border-radius: 3px;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    min-width: 0;
+  }
+
+  .slot-ready {
+    background: #2d5a2d;
+    color: #8f8;
+    border-color: #3a7a3a;
+  }
+
+  .slot-cooldown {
+    background: #5a2d2d;
+    color: #f88;
+    border-color: #7a3a3a;
+  }
+
+  /* Action Log (Last Action / Next Intention) */
+  .action-log {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .action-section {
+    background: #1e1e2e;
+    border: 1px solid #3a3a4a;
+    border-radius: 4px;
+    padding: 8px 10px;
+    flex: 1;
+  }
+
+  .action-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: 3px;
+    margin-top: 4px;
+    background: #252535;
+  }
+
+  .action-key {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 24px;
+    text-align: center;
+  }
+
+  .action-key.sent { color: #6ef; }
+  .action-key.next { color: #8f8; }
+  .action-key.blocked { color: #eb5; }
+
+  .action-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .action-name {
+    font-size: 11px;
+    color: #ccc;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .action-meta {
+    font-size: 9px;
+    color: #666;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .action-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: #555;
+    flex-shrink: 0;
+  }
+
+  .action-entry.faded { opacity: 0.5; }
+
+  /* Priority List */
+  .priority-panel {
+    background: #1e1e2e;
+    border: 1px solid #3a3a4a;
+    border-radius: 4px;
+    padding: 8px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .priority-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+  }
+
+  .priority-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 7px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    cursor: grab;
+  }
+
+  .priority-item.ready {
+    background: #2d5a2d;
+    border-color: #3a7a3a;
+  }
+
+  .priority-item.cooldown {
+    background: #5a2d2d;
+    border-color: #7a3a3a;
+  }
+
+  .priority-handle {
+    color: #444;
+    font-size: 11px;
+    cursor: grab;
+    user-select: none;
+    line-height: 1;
+  }
+
+  .priority-rank {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: #555;
+    width: 12px;
+    text-align: center;
+  }
+
+  .priority-key {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    min-width: 18px;
+    text-align: center;
+    color: #aaa;
+  }
+
+  .priority-name {
+    font-size: 11px;
+    font-weight: 500;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .priority-item.ready .priority-name { color: #8f8; }
+  .priority-item.cooldown .priority-name { color: #f88; }
+
+  .priority-remove {
+    color: #555;
+    font-size: 12px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 2px;
+  }
+
+  .priority-drop-hint {
+    border: 1px dashed #444;
+    border-radius: 4px;
+    padding: 12px;
+    text-align: center;
+    color: #444;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    margin-top: 4px;
+  }
+
+  /* Start/Stop at the bottom */
+  .bottom-bar {
+    display: flex;
+    gap: 8px;
+  }
+
+  .bottom-bar .fake-btn { flex: 1; }
+
+  /* Status bar */
+  .status-bar {
+    padding: 4px 12px;
+    background: #1e1e2e;
+    border-top: 1px solid #333;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #555;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ===== SETTINGS WINDOW ===== */
+  .settings-window {
+    width: 420px;
+  }
+
+  .settings-body {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 560px;
+    overflow-y: auto;
+  }
+
+  .settings-body .section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .settings-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .settings-row label {
+    min-width: 70px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .settings-row .fake-input {
+    flex: 1;
+  }
+
+  .settings-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .settings-actions {
+    display: flex;
+    gap: 8px;
+    padding-top: 4px;
+    border-top: 1px solid #3a3a4a;
+  }
+
+  .settings-actions .fake-btn { flex: 1; }
+
+  /* ===== ANNOTATIONS ===== */
+  .annotation-block {
+    max-width: 1060px;
+    margin: 24px auto 0;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .callout {
+    background: #1a1a2e;
+    border: 1px solid rgba(102, 238, 255, 0.15);
+    border-left: 3px solid #6ef;
+    padding: 10px 12px;
+    border-radius: 0 4px 4px 0;
+    font-size: 11px;
+    color: #aaa;
+    line-height: 1.6;
+    flex: 1;
+    min-width: 280px;
+  }
+
+  .callout strong { color: #6ef; font-weight: 600; }
+
+  .window-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 8px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Cooldown Reader — Cleaned Up Layout</h1>
+<p class="page-subtitle">Main window (gameplay) + Settings window (setup)</p>
+
+<div class="windows-container">
+
+  <!-- ==================== MAIN WINDOW ==================== -->
+  <div>
+    <div class="window-label">Main Window — always visible during gameplay</div>
+    <div class="window main-window">
+      <div class="title-bar">
+        <div class="dot r"></div>
+        <div class="dot y"></div>
+        <div class="dot g"></div>
+        <span class="title">Cooldown Reader</span>
+        <span class="settings-icon" title="Open Settings">⚙</span>
+      </div>
+
+      <div class="main-body">
+
+        <!-- Enable + Bind display -->
+        <div class="enable-bar">
+          <div class="enable-btn on">Enabled</div>
+          <div class="bind-display">
+            <span>Toggle:</span>
+            <span class="key">F24</span>
+          </div>
+        </div>
+
+        <!-- Content split -->
+        <div class="content-split">
+
+          <!-- LEFT: Preview, Slots, Action Logs -->
+          <div class="left-col">
+
+            <!-- Live Preview -->
+            <div class="section" style="padding:8px">
+              <div class="section-title">Live Preview</div>
+              <div class="preview-area">
+                <div class="preview-icon" style="background:linear-gradient(135deg,#e83,#a30)"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#c6f,#639)"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#fc6,#a80)"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#333,#222);opacity:0.35"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#69f,#33a)"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#333,#222);opacity:0.35"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#f66,#a22)"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#6cf,#389)"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#f6f,#a3a)"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#333,#222);opacity:0.35"></div>
+                <div class="preview-icon" style="background:linear-gradient(135deg,#f3a,#a06)"></div>
+              </div>
+            </div>
+
+            <!-- Slot States -->
+            <div class="slot-row">
+              <div class="slot-btn slot-ready">[1]</div>
+              <div class="slot-btn slot-ready">[2]</div>
+              <div class="slot-btn slot-cooldown">[3]</div>
+              <div class="slot-btn slot-ready">[4]</div>
+              <div class="slot-btn slot-ready">[5]</div>
+              <div class="slot-btn slot-cooldown">[6]</div>
+              <div class="slot-btn slot-ready">[F]</div>
+              <div class="slot-btn slot-ready">[G]</div>
+              <div class="slot-btn slot-ready">[E]</div>
+              <div class="slot-btn slot-cooldown">[Q]</div>
+              <div class="slot-btn slot-ready">[T]</div>
+            </div>
+
+            <!-- Last Action -->
+            <div class="action-section">
+              <div class="section-title">Last Action</div>
+              <div class="action-entry">
+                <div class="action-key sent">3</div>
+                <div class="action-info">
+                  <div class="action-name">Judgement</div>
+                  <div class="action-meta">sent</div>
+                </div>
+                <div class="action-time">0.3s</div>
+              </div>
+              <div class="action-entry faded">
+                <div class="action-key sent">1</div>
+                <div class="action-info">
+                  <div class="action-name">Concentration</div>
+                  <div class="action-meta">sent</div>
+                </div>
+                <div class="action-time">1.8s</div>
+              </div>
+              <div class="action-entry faded">
+                <div class="action-key sent">E</div>
+                <div class="action-info">
+                  <div class="action-name">Deconstruct</div>
+                  <div class="action-meta">sent</div>
+                </div>
+                <div class="action-time">3.2s</div>
+              </div>
+            </div>
+
+            <!-- Next Intention -->
+            <div class="action-section">
+              <div class="section-title">Next Intention</div>
+              <div class="action-entry">
+                <div class="action-key next">1</div>
+                <div class="action-info">
+                  <div class="action-name">Concentration</div>
+                  <div class="action-meta">ready — next</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Start/Stop + Settings -->
+            <div class="bottom-bar">
+              <div class="fake-btn primary">⏹ Stop Capture</div>
+              <div class="fake-btn" style="flex:0 0 auto; padding: 7px 16px">⚙ Settings</div>
+            </div>
+
+          </div>
+
+          <!-- RIGHT: Priority only -->
+          <div class="right-col">
+            <div class="priority-panel">
+              <div class="section-title">Priority ↕</div>
+              <div class="priority-list">
+
+                <div class="priority-item ready">
+                  <span class="priority-handle">⠿</span>
+                  <span class="priority-rank">1</span>
+                  <span class="priority-key">[3]</span>
+                  <span class="priority-name">Judgement</span>
+                  <span class="priority-remove">−</span>
+                </div>
+
+                <div class="priority-item cooldown">
+                  <span class="priority-handle">⠿</span>
+                  <span class="priority-rank">2</span>
+                  <span class="priority-key">[1]</span>
+                  <span class="priority-name">Concentration</span>
+                  <span class="priority-remove">−</span>
+                </div>
+
+                <div class="priority-item ready">
+                  <span class="priority-handle">⠿</span>
+                  <span class="priority-rank">3</span>
+                  <span class="priority-key">[E]</span>
+                  <span class="priority-name">Deconstruct</span>
+                  <span class="priority-remove">−</span>
+                </div>
+
+                <div class="priority-item ready">
+                  <span class="priority-handle">⠿</span>
+                  <span class="priority-rank">4</span>
+                  <span class="priority-key">[5]</span>
+                  <span class="priority-name">Divine Storm</span>
+                  <span class="priority-remove">−</span>
+                </div>
+
+                <div class="priority-item cooldown">
+                  <span class="priority-handle">⠿</span>
+                  <span class="priority-rank">5</span>
+                  <span class="priority-key">[F]</span>
+                  <span class="priority-name">Wake of Ashes</span>
+                  <span class="priority-remove">−</span>
+                </div>
+
+                <div class="priority-drop-hint">drag slot here to add</div>
+
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <span>Profile: Teglaan</span>
+        <span>Est. GCD: 1.42s</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SETTINGS WINDOW ==================== -->
+  <div>
+    <div class="window-label">Settings Window — open as needed, non-modal</div>
+    <div class="window settings-window">
+      <div class="title-bar">
+        <div class="dot r"></div>
+        <div class="dot y"></div>
+        <div class="dot g"></div>
+        <span class="title">Settings</span>
+      </div>
+
+      <div class="settings-body">
+
+        <!-- Profile -->
+        <div class="section">
+          <div class="section-title">Profile</div>
+          <div class="settings-row">
+            <label>Name:</label>
+            <div class="fake-input wide">Teglaan</div>
+          </div>
+          <div class="row" style="gap:6px">
+            <div class="fake-btn" style="flex:1">Export</div>
+            <div class="fake-btn" style="flex:1">Import</div>
+          </div>
+        </div>
+
+        <!-- Display -->
+        <div class="section">
+          <div class="section-title">Display</div>
+          <div class="settings-row">
+            <label>Monitor:</label>
+            <div class="fake-dropdown" style="flex:1">Monitor 1: 1920×1080</div>
+          </div>
+          <div class="row" style="gap: 12px">
+            <div class="row" style="gap:4px">
+              <div class="fake-checkbox">✓</div>
+              <label>Show Region Overlay</label>
+            </div>
+            <div class="row" style="gap:4px">
+              <div class="fake-checkbox">✓</div>
+              <label>Always on Top</label>
+            </div>
+          </div>
+          <div class="settings-row">
+            <label>History rows:</label>
+            <div class="fake-input" style="width:48px">3</div>
+            <label style="min-width:auto; color:#666; font-size:10px">Last Action / Next Intention</label>
+          </div>
+        </div>
+
+        <!-- Capture Region -->
+        <div class="section">
+          <div class="section-title">Capture Region</div>
+          <div class="settings-2col">
+            <div class="control-pair"><label>Top:</label><div class="fake-input">854</div></div>
+            <div class="control-pair"><label>Left:</label><div class="fake-input">757</div></div>
+            <div class="control-pair"><label>Width:</label><div class="fake-input">406</div></div>
+            <div class="control-pair"><label>Height:</label><div class="fake-input">35</div></div>
+          </div>
+          <div class="row" style="gap:12px">
+            <div class="control-pair"><label>Slots:</label><div class="fake-input">11</div></div>
+            <div class="control-pair"><label>Gap:</label><div class="fake-input">1</div></div>
+            <div class="control-pair"><label>Padding:</label><div class="fake-input">3</div></div>
+          </div>
+        </div>
+
+        <!-- Detection -->
+        <div class="section">
+          <div class="section-title">Detection</div>
+          <div class="settings-row">
+            <label>Darken:</label>
+            <div class="fake-input" style="width:48px">30</div>
+            <span style="font-size:10px;color:#666;cursor:help" title="Pixels must darken by this many brightness levels (0-255) to count as 'on cooldown'">(?)</span>
+          </div>
+          <div class="settings-row">
+            <label>Trigger:</label>
+            <div class="fake-slider"></div>
+            <span style="font-size:11px;color:#999;font-family:'JetBrains Mono',monospace;width:32px;text-align:right">0.10</span>
+            <span style="font-size:10px;color:#666;cursor:help" title="Fraction of pixels that must be darkened to trigger cooldown detection">(?)</span>
+          </div>
+        </div>
+
+        <!-- Automation -->
+        <div class="section">
+          <div class="section-title">Automation</div>
+          <div class="settings-row">
+            <label>Toggle bind:</label>
+            <div class="fake-btn" style="flex:0; padding:4px 14px; font-family:'JetBrains Mono',monospace; font-size:11px">F24</div>
+            <label style="min-width:auto; color:#555; font-size:10px">click to rebind</label>
+          </div>
+          <div class="settings-row">
+            <label>Delay (ms):</label>
+            <div class="fake-input" style="width:56px">50</div>
+          </div>
+          <div class="settings-row">
+            <label>Window:</label>
+            <div class="fake-input wide" style="color:#666">World of Warcraft</div>
+          </div>
+        </div>
+
+        <!-- Calibration -->
+        <div class="section">
+          <div class="section-title">Calibration</div>
+          <div class="fake-btn" style="width:100%">Calibrate All Baselines</div>
+          <div style="font-size:10px; color:#555; margin-top:4px; font-family:'JetBrains Mono',monospace">
+            Tip: individual slots can be calibrated via right-click on Slot States
+          </div>
+        </div>
+
+        <!-- Save -->
+        <div class="settings-actions">
+          <div class="fake-btn primary">Save Config</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Annotations -->
+<div class="annotation-block">
+  <div class="callout">
+    <strong>Main window</strong> is streamlined for gameplay. Enable toggle + bind display at top. Left column: preview, slots, last action history (configurable rows), next intention, and start/stop + settings button. Right column: just the priority list with drag-to-add from slots. Settings gear in title bar or bottom button both open the settings window.
+  </div>
+  <div class="callout">
+    <strong>Settings window</strong> is a separate non-modal window — stays open alongside main window so you can see the live preview while adjusting capture region. Contains all the setup stuff: profile, display, capture region, detection tuning, automation config (toggle bind, delay, window title), and calibration. "History rows" setting controls how many entries show in Last Action / Next Intention.
+  </div>
+  <div class="callout">
+    <strong>Last Action</strong> now shows a scrolling history — most recent at top, older entries faded. The number of visible rows is configurable in settings. Each entry shows the key, ability name, and time ago. <strong>Next Intention</strong> shows what would fire next (or why it's blocked — window focus, paused, etc).
+  </div>
+</div>
+
+</body>
+</html>

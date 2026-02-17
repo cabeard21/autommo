@@ -1,0 +1,249 @@
+# UI Refactor: Main Window Cleanup + Separate Settings Window
+
+## Overview
+
+Refactor the application into two windows:
+1. **Main Window** — streamlined for gameplay, showing only what's needed while playing
+2. **Settings Window** — separate non-modal QDialog for all configuration, opened from the main window
+
+A visual mockup of both windows is available at `./mockup/cooldown-reader-mockup-v2.html`. Open it in a browser for pixel-reference. The mockup is the source of truth for layout, spacing, and visual hierarchy.
+
+---
+
+## MAIN WINDOW — Layout Specification
+
+The main window should be roughly 580px wide. It keeps the existing dark theme/colors. The overall structure is a QVBoxLayout containing:
+
+### 1. Enable Bar (top, full width)
+A horizontal row with two elements side by side:
+- **Enable button** — The existing large toggle button. Takes most of the width (flex/stretch). Green background (`#2d5a2d`, border `#3a7a3a`, text `#88ff88`) when ON, dark gray (`#333345`, border `#555`, text `#999`) when OFF. Text: "Enabled" / "Disabled". Font size ~13px, bold, padded ~10px vertically.
+- **Bind display** — A read-only display (NOT the rebind button, just showing the current bind). Smaller, right-aligned. Background `#252535`, border `#3a3a4a`, rounded. Shows "Toggle: F24" (or whatever the bind is) in monospace. The key itself is colored `#66eeff` (cyan). This is NOT interactive — rebinding is done in settings. If no bind is set, show "Toggle: —".
+
+### 2. Content Split (middle, takes remaining space)
+A QHBoxLayout splitting the remaining space into left and right columns.
+
+#### Left Column (flex: 1, stretches to fill)
+A QVBoxLayout containing these sections top to bottom:
+
+**A. Live Preview section**
+- Wrapped in a styled container (background `#252535`, border `#3a3a4a`, rounded, padding 8px).
+- Section title "Live Preview" in the standard section-title style (monospace, 10px, uppercase, `#666`, letter-spacing 1.5px).
+- Below the title: the existing preview QLabel showing the captured action bar image. Background `#111`, height ~42px, rounded.
+
+**B. Slot States row**
+- Directly below the preview, NOT inside a container box — just the row of slot buttons.
+- Same as current: horizontal row of QPushButtons, 3px gap between them, each showing `[key]` with green (ready) or red (cooldown) background. Font: monospace 10px bold.
+- Right-click context menu (bind key, calibrate, rename) stays the same.
+- Left-click + drag to priority list stays the same.
+
+**C. Last Action section**
+- Wrapped in a styled container (background `#1e1e2e`, border `#3a3a4a`, rounded, padding 8px).
+- Section title "Last Action" in standard section-title style.
+- Below the title: a vertical list of action entries. The number of visible entries is controlled by a `history_rows` config value (default 3, configurable in settings, range 1-10).
+- Each action entry is a small horizontal widget/row (background `#252535`, rounded 3px, padding 4px 6px, margin-top 4px between entries):
+  - **Key indicator** (left): The keybind character, monospace 14px bold, colored `#66eeff` (cyan) for sent actions. Min-width 24px, centered.
+  - **Info block** (middle, stretches): Two lines stacked:
+    - Ability name: 11px, color `#ccc`, ellipsis overflow if too long.
+    - Status text: 9px monospace, color `#666`. Shows "sent".
+  - **Time** (right): "0.3s", "1.8s" etc. Monospace 9px, color `#555`, right-aligned, no-shrink.
+- Entries are ordered most recent at top. Older entries should fade — apply decreasing opacity. The most recent entry is full opacity (1.0), and each subsequent entry reduces by roughly 0.25 (so entry 2 is ~0.75 opacity, entry 3 is ~0.5, entry 4 is ~0.35, etc. — adjust to look good, the mockup shows a visible fade on rows 2 and 3).
+- When a new action is sent, prepend it to the list and remove the oldest if the list exceeds `history_rows`. The time displays should update live (every 100ms via QTimer) to show how long ago each action was sent.
+- If no actions have been sent yet, show a single entry with "—" in the key position and "waiting..." in the info area at reduced opacity.
+
+**D. Next Intention section**
+- Same container style as Last Action (background `#1e1e2e`, border `#3a3a4a`).
+- Section title "Next Intention".
+- Shows ONE action entry (same widget style as Last Action entries) displaying what the automation would press next:
+  - Key colored `#88ff88` (green) if ready and will fire.
+  - Key colored `#eecc55` (yellow) if ready but blocked (wrong window, paused).
+  - Status text shows context: "ready — next", "ready (paused)", "ready (window)".
+- If nothing is ready or automation is off and nothing would fire, show "—" with "no action" in the info area.
+
+**E. Bottom Bar**
+- Horizontal row, full width of left column, two buttons:
+  - **Start/Stop Capture** button — takes most of the width. Uses the `.primary` green style (`#2d5a2d`) when capturing (text "⏹ Stop Capture"), gray when stopped (text "▶ Start Capture").
+  - **Settings button** — fixed smaller width, auto-sizing to content. Gray default style. Text: "⚙ Settings". Clicking opens the Settings window.
+
+#### Right Column (fixed width: 175px)
+Contains ONLY the Priority panel — nothing else.
+
+**Priority Panel**
+- Takes full height of the right column (stretches vertically).
+- Background `#1e1e2e`, border `#3a3a4a`, rounded, padding 8px.
+- Section title "Priority ↕" in standard section-title style.
+- Below: the existing draggable priority list. Each item is a horizontal row (padding 6px 7px, rounded 4px, 3px gap between items):
+  - Drag handle: "⠿" character, color `#444`, 11px, cursor grab.
+  - Rank number: monospace 9px, color `#555`, width 12px centered.
+  - Key: monospace 10px bold, color `#aaa`, e.g. "[3]".
+  - Ability name: 11px, bold 500 weight, colored green (`#88ff88`) if ready or red (`#ff8888`) if on cooldown. Ellipsis overflow. Stretches to fill remaining space.
+  - Remove button: "−" character, color `#555`, 12px, clickable.
+- Background of each item: green (`#2d5a2d`, border `#3a7a3a`) when ready, red (`#5a2d2d`, border `#7a3a3a`) when on cooldown.
+- At the bottom of the priority list, if there's room, show a drop hint area: dashed border (`#444`), rounded, padding 12px, centered text "drag slot here to add" in monospace 10px color `#444`. This hint is always visible below the last item.
+- All existing drag behaviors (drag from slot states to add, drag within to reorder, drag out to remove) remain the same.
+
+### 3. Status Bar (bottom, full width)
+- Thin bar at the very bottom of the window, outside the main content area.
+- Background `#1e1e2e`, top border `#333`, padding 4px 12px.
+- Two labels spread to left and right edges:
+  - Left: "Profile: Teglaan" (or whatever the profile name is).
+  - Right: "Est. GCD: 1.42s" (or whatever the current value is).
+- Font: monospace 10px, color `#555`.
+
+---
+
+## SETTINGS WINDOW — Layout Specification
+
+The settings window is a separate `QDialog` (NOT `QMainWindow`). It is **non-modal** — the user can interact with both the main window and settings window simultaneously. This is important because the user needs to see the live preview updating while adjusting capture region values.
+
+Width: ~420px. Should not be resizable (or has a reasonable min size). Has its own title bar: "Settings".
+
+The settings window body is a QVBoxLayout with scrollable content (wrap in QScrollArea if content overflows). Sections are stacked vertically with 10px gap.
+
+### Settings Sections (top to bottom):
+
+#### 1. Profile
+- Section container with title "Profile".
+- Row: Label "Name:" (right-aligned, 70px min-width) + QLineEdit (stretches to fill).
+- Row: Two buttons side by side — "Export" and "Import", each taking 50% width.
+
+#### 2. Display
+- Section container with title "Display".
+- Row: Label "Monitor:" + QComboBox dropdown (stretches to fill). Shows "Monitor 1: 1920×1080" etc.
+- Row: Two checkboxes side by side — "Show Region Overlay" and "Always on Top". Each is a QCheckBox.
+- Row: Label "History rows:" + QSpinBox (width 48px, range 1-10, default 3) + helper text "(Last Action / Next Intention)" in small gray text (10px, `#666`).
+
+#### 3. Capture Region
+- Section container with title "Capture Region".
+- 2x2 grid of controls:
+  - Top-left: Label "Top:" + QSpinBox
+  - Top-right: Label "Left:" + QSpinBox
+  - Bottom-left: Label "Width:" + QSpinBox
+  - Bottom-right: Label "Height:" + QSpinBox
+- Below the grid, a horizontal row: Label "Slots:" + QSpinBox, Label "Gap:" + QSpinBox, Label "Padding:" + QSpinBox. Same ranges and behavior as current.
+- All spinbox value changes should immediately update the capture (emit config changes) so the user sees the live preview update in the main window in real-time.
+
+#### 4. Detection
+- Section container with title "Detection".
+- Row: Label "Darken:" + QSpinBox (width 48px) + "(?)" tooltip text explaining "Pixels must darken by this many brightness levels (0-255) to count as on cooldown".
+- Row: Label "Trigger:" + QSlider (horizontal, stretches) + value label showing current value like "0.10" (monospace 11px) + "(?)" tooltip explaining "Fraction of pixels that must be darkened to trigger cooldown detection".
+
+#### 5. Automation
+- Section container with title "Automation".
+- Row: Label "Toggle bind:" + QPushButton showing current bind (e.g. "F24") in monospace. Clicking starts the bind capture flow (same as existing — button shows "..." while listening). + small helper text "click to rebind" in gray 10px.
+- Row: Label "Delay (ms):" + QSpinBox (width 56px, range 50-2000).
+- Row: Label "Window:" + QLineEdit (stretches) with placeholder text "e.g. World of Warcraft".
+
+#### 6. Calibration
+- Section container with title "Calibration".
+- Full-width button: "Calibrate All Baselines". Same behavior as the existing calibrate button.
+- Below the button: small helper text "Tip: individual slots can be calibrated via right-click on Slot States" in monospace 10px, color `#555`.
+
+#### 7. Save (at bottom, separated)
+- A horizontal row separated from the sections above by a subtle top border (`#3a3a4a`), 4px padding-top.
+- Full-width button "Save Config" in green primary style (`#2d5a2d`).
+
+### Settings labels
+All row labels in the settings window should be right-aligned with a consistent min-width of 70px so the controls line up vertically. This creates a clean form layout.
+
+---
+
+## DATA / CONFIG CHANGES
+
+### New config field:
+- `history_rows: int = 3` — Added to AppConfig, from_dict, to_dict. Controls how many entries show in both Last Action and Next Intention (though Next Intention currently only ever shows 1 entry — the config is there for future use, and it controls Last Action's visible count).
+
+### Moved controls (no logic changes, just UI relocation):
+All the controls that move to the settings window should continue to emit the same signals and update the same config values. The settings window needs access to the same AppConfig instance and should emit `config_changed` when values change. The easiest approach:
+- Pass the AppConfig reference to the SettingsDialog.
+- Have the SettingsDialog emit a signal (e.g. `config_updated = pyqtSignal(object)`) whenever any value changes.
+- Connect that signal in main.py the same way the existing `config_changed` is connected — update the worker, overlay, etc.
+- The main window's `config_changed` signal should still exist for things the main window controls (like automation enable/disable).
+
+### Settings window lifecycle:
+- The Settings button (and ⚙ icon if you add one to the title bar) calls a method that creates the SettingsDialog if it doesn't exist, or brings it to front if it does. Use a single instance pattern — don't create a new dialog every time.
+- When the settings window is opened, populate all fields from the current AppConfig.
+- Changes in settings should take effect immediately (not just on save). Save Config persists to disk.
+- Closing the settings window just hides it — doesn't destroy it.
+
+---
+
+## WHAT TO MOVE vs WHAT STAYS
+
+### Stays on Main Window:
+- Enable/Disable automation button
+- Bind display (read-only, shows current toggle bind)
+- Start/Stop Capture button
+- Live Preview
+- Slot States row (with right-click context menu)
+- Last Action display (now with history)
+- Next Intention display
+- Priority list (drag to reorder, drag from slots to add, drag out to remove)
+- Status bar (profile name, GCD estimate)
+- Settings button (opens settings window)
+
+### Moves to Settings Window:
+- Profile name, export, import
+- Monitor selector dropdown
+- Show Region Overlay checkbox
+- Always on Top checkbox
+- Capture Region controls (top, left, width, height, slots, gap, padding)
+- Detection controls (darken threshold, trigger fraction)
+- Toggle bind button (the rebind interaction)
+- Delay (ms) spinbox
+- Window title text input
+- Calibrate All Baselines button
+- Save Config button
+
+### New:
+- History rows setting (in Settings > Display)
+- Last Action history log with multiple fading entries (replaces single "Last Action" label)
+- Settings button on main window
+- ⚙ icon in main window title bar (optional, the bottom button is sufficient)
+
+---
+
+## STYLING REFERENCE
+
+All styling values are consistent with the existing app theme. Key values for reference:
+
+```
+Section background:     #252535  (or #1e1e2e for darker sections like action log, priority)
+Section border:         #3a3a4a
+Section title:          monospace, 10px, uppercase, #666666, letter-spacing 1.5px
+Input background:       #1a1a2a
+Input border:           #555555
+Input text:             #cccccc
+Button default:         bg #333345, border #555, text #ccc
+Button primary (green): bg #2d5a2d, border #3a7a3a, text #88ff88
+Button danger (red):    bg #5a2d2d, border #7a3a3a, text #ff8888
+Slot ready:             bg #2d5a2d, border #3a7a3a, text #88ff88
+Slot cooldown:          bg #5a2d2d, border #7a3a3a, text #ff8888
+Cyan accent:            #66eeff (used for key indicators, bind display)
+Green accent:           #88ff88 (used for next intention, ready states)
+Yellow accent:          #eecc55 (used for blocked/paused states)
+Faded text:             #555555 or #666666
+Body/window background: #2a2a3a (main areas), #1e1e2e (darker panels)
+Status bar:             bg #1e1e2e, border-top #333, text #555
+Label text:             #999999, 11px
+Helper text:            #555555 or #666666, 10px
+Monospace font:         'JetBrains Mono' or system monospace fallback
+Body font:              system default (the app uses whatever PyQt6 defaults to)
+```
+
+---
+
+## IMPLEMENTATION ORDER
+
+1. Create `src/ui/settings_dialog.py` with the SettingsDialog class containing all settings sections.
+2. Refactor `src/ui/main_window.py` — remove the controls that moved to settings, restructure the layout to match the mockup. Add the Last Action history widget, the bind display, the settings button.
+3. Update `src/ui/priority_panel.py` if needed — the priority panel is now embedded directly in the main window's right column rather than being a separate panel class (or keep it as a separate widget class, just reparented).
+4. Update `src/main.py` — wire the settings dialog signals, handle the settings button click, pass config to both windows.
+5. Add `history_rows` to AppConfig, from_dict, to_dict.
+6. Test: both windows open simultaneously, changing capture region in settings immediately updates the live preview in main window, save config persists everything, automation still works.
+
+---
+
+## REFERENCE
+
+Visual mockup: `./mockup/cooldown-reader-mockup-v2.html`
+Open in browser for pixel-accurate reference of both windows side by side.

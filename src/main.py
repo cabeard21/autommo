@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QRect, QThread, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from src.automation.global_hotkey import GlobalToggleListener
@@ -52,7 +53,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent.parent / "config" / "default_config.json"
+_SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = _SCRIPT_DIR.parent
+# When frozen (e.g. PyInstaller), bundle root is sys._MEIPASS; include cocktus.ico via --add-data
+_BASE_PATH = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
+CONFIG_PATH = PROJECT_ROOT / "config" / "default_config.json"
+ICON_PATH = _BASE_PATH / "cocktus.ico"
 
 
 class CaptureWorker(QThread):
@@ -169,6 +175,8 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    if ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(ICON_PATH)))
 
     # --- Initialize components ---
     analyzer = SlotAnalyzer(config)
