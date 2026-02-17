@@ -174,6 +174,18 @@ QFrame#priorityItem[state="cooldown"] {
     background: #5a2d2d;
     border-color: #7a3a3a;
 }
+QFrame#priorityItem[state="casting"] {
+    background: #2a3f66;
+    border-color: #3f5f92;
+}
+QFrame#priorityItem[state="channeling"] {
+    background: #5a4a1f;
+    border-color: #8d7130;
+}
+QFrame#priorityItem[state="locked"] {
+    background: #3f3f3f;
+    border-color: #5a5a5a;
+}
 QLabel#priorityHandle {
     color: #444;
     font-size: 11px;
@@ -197,6 +209,9 @@ QLabel#priorityName {
 }
 QFrame#priorityItem[state="ready"] QLabel#priorityName { color: #88ff88; }
 QFrame#priorityItem[state="cooldown"] QLabel#priorityName { color: #ff8888; }
+QFrame#priorityItem[state="casting"] QLabel#priorityName { color: #a0c7ff; }
+QFrame#priorityItem[state="channeling"] QLabel#priorityName { color: #ffd37a; }
+QFrame#priorityItem[state="locked"] QLabel#priorityName { color: #cccccc; }
 QLabel#priorityRemove {
     color: #555;
     font-size: 12px;

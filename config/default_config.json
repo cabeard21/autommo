@@ -37,6 +37,26 @@
     "brightness_drop_threshold": 30,
     "cooldown_pixel_fraction": 0.1,
     "cooldown_min_duration_ms": 2000,
+    "cast_detection_enabled": true,
+    "cast_candidate_min_fraction": 0.05,
+    "cast_candidate_max_fraction": 0.22,
+    "cast_confirm_frames": 2,
+    "cast_min_duration_ms": 150,
+    "cast_max_duration_ms": 3000,
+    "cast_cancel_grace_ms": 120,
+    "channeling_enabled": true,
+    "queue_window_ms": 120,
+    "allow_cast_while_casting": false,
+    "lock_ready_while_cast_bar_active": false,
+    "cast_bar_region": {
+      "enabled": false,
+      "left": 0,
+      "top": 0,
+      "width": 0,
+      "height": 0
+    },
+    "cast_bar_activity_threshold": 12.0,
+    "cast_bar_history_frames": 8,
     "ocr_enabled": true
   },
   "overlay": {

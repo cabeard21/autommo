@@ -122,6 +122,10 @@ class CaptureWorker(QThread):
                                 else None
                             ),
                             "cooldown_remaining": s.cooldown_remaining,
+                            "cast_progress": s.cast_progress,
+                            "cast_ends_at": s.cast_ends_at,
+                            "last_cast_start_at": s.last_cast_start_at,
+                            "last_cast_success_at": s.last_cast_success_at,
                             "brightness": s.brightness,
                         }
                         for s in state.slots
@@ -286,6 +290,11 @@ def main() -> None:
             )
         elif result.get("action") == "blocked" and result.get("reason") == "window":
             window.set_next_intention_blocked(result["keybind"], display_name)
+        elif result.get("action") == "blocked" and result.get("reason") == "casting":
+            window.set_next_intention_casting_wait(
+                slot_index=result.get("slot_index"),
+                cast_ends_at=result.get("cast_ends_at"),
+            )
 
     worker.key_action.connect(on_key_action)
 

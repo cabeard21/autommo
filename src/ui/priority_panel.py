@@ -101,6 +101,8 @@ class PriorityItemWidget(QFrame):
         self._display_name = display_name or "Unidentified"
         self._state = "unknown"
         self._cooldown_remaining: Optional[float] = None
+        self._cast_progress: Optional[float] = None
+        self._cast_ends_at: Optional[float] = None
         self._drag_start: Optional[QPoint] = None
         self.setAcceptDrops(False)
         self.setObjectName("priorityItem")
@@ -172,20 +174,50 @@ class PriorityItemWidget(QFrame):
         super().resizeEvent(event)
         self._update_name_elided()
 
-    def set_state(self, state: str, cooldown_remaining: Optional[float] = None) -> None:
+    def set_state(
+        self,
+        state: str,
+        cooldown_remaining: Optional[float] = None,
+        cast_progress: Optional[float] = None,
+        cast_ends_at: Optional[float] = None,
+    ) -> None:
         self._state = state
         self._cooldown_remaining = cooldown_remaining
-        self._countdown_label.setText(_format_countdown(cooldown_remaining))
+        self._cast_progress = cast_progress
+        self._cast_ends_at = cast_ends_at
+        if state == "casting":
+            pct = int(round(max(0.0, min(1.0, cast_progress or 0.0)) * 100))
+            self._countdown_label.setText(f"{pct}%")
+        elif state == "channeling":
+            if cast_ends_at:
+                rem = max(0.0, cast_ends_at - time.time())
+                self._countdown_label.setText(f"{rem:.1f}s")
+            else:
+                self._countdown_label.setText("chan")
+        else:
+            self._countdown_label.setText(_format_countdown(cooldown_remaining))
         self._update_style()
 
     def _update_style(self) -> None:
-        state = "ready" if self._state == "ready" else "cooldown"
+        if self._state == "ready":
+            state = "ready"
+        elif self._state == "casting":
+            state = "casting"
+        elif self._state == "channeling":
+            state = "channeling"
+        elif self._state == "locked":
+            state = "locked"
+        else:
+            state = "cooldown"
         self.setProperty("state", state)
         self.style().unpolish(self)
         self.style().polish(self)
-        text_ready = "#88ff88"
-        text_not_ready = "#ff8888"
-        text_color = text_ready if self._state == "ready" else text_not_ready
+        text_color = {
+            "ready": "#88ff88",
+            "casting": "#a0c7ff",
+            "channeling": "#ffd37a",
+            "locked": "#cccccc",
+        }.get(self._state, "#ff8888")
         self._key_label.setStyleSheet(f"color: {text_color};")
         self._name_label.setStyleSheet(f"color: {text_color};")
         self._countdown_label.setStyleSheet(f"color: {text_color};")
@@ -227,7 +259,7 @@ class PriorityListWidget(QWidget):
         self._order: list[int] = []
         self._keybinds: list[str] = []
         self._display_names: list[str] = []
-        self._states_by_index: dict[int, tuple[str, Optional[float]]] = {}
+        self._states_by_index: dict[int, tuple[str, Optional[float], Optional[float], Optional[float]]] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._scroll = QScrollArea()
@@ -268,11 +300,22 @@ class PriorityListWidget(QWidget):
 
     def update_states(self, states: list[dict]) -> None:
         """Update status (READY/cooldown) for each item from state_updated."""
-        by_index = {s["index"]: (s.get("state", "unknown"), s.get("cooldown_remaining")) for s in states}
+        by_index = {
+            s["index"]: (
+                s.get("state", "unknown"),
+                s.get("cooldown_remaining"),
+                s.get("cast_progress"),
+                s.get("cast_ends_at"),
+            )
+            for s in states
+        }
         self._states_by_index = by_index
         for w in self._item_widgets:
-            state, cd = by_index.get(w.slot_index, ("unknown", None))
-            w.set_state(state, cd)
+            state, cd, cast_progress, cast_ends_at = by_index.get(
+                w.slot_index,
+                ("unknown", None, None, None),
+            )
+            w.set_state(state, cd, cast_progress, cast_ends_at)
 
     def _rebuild_items(self) -> None:
         for w in self._item_widgets:
@@ -286,8 +329,11 @@ class PriorityListWidget(QWidget):
                 else "Unidentified"
             )
             w = PriorityItemWidget(slot_index, rank, keybind or "?", name, self._list_container)
-            state, cd = self._states_by_index.get(slot_index, ("unknown", None))
-            w.set_state(state, cd)
+            state, cd, cast_progress, cast_ends_at = self._states_by_index.get(
+                slot_index,
+                ("unknown", None, None, None),
+            )
+            w.set_state(state, cd, cast_progress, cast_ends_at)
             self._list_layout.insertWidget(self._list_layout.count() - 1, w)
             self._item_widgets.append(w)
 
