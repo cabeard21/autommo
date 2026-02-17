@@ -58,8 +58,15 @@ class SlotAnalyzer:
         self._cast_bar_last_threshold: float = float(
             getattr(config, "cast_bar_activity_threshold", 12.0) or 12.0
         )
+        self._cast_bar_last_deactivate_threshold: float = self._cast_bar_last_threshold * 0.6
         self._cast_bar_last_active: bool = False
         self._cast_bar_last_status: str = "off"
+        self._cast_bar_last_present: bool = False
+        self._cast_bar_last_directional: bool = False
+        self._cast_bar_last_front: float = 0.0
+        self._cast_bar_active_state: bool = False
+        self._cast_bar_front_prev: Optional[float] = None
+        self._cast_bar_quiet_frames: int = 0
         self._cast_gate_active: bool = False
         self._frame_action_origin_x: int = 0
         self._frame_action_origin_y: int = 0
@@ -175,10 +182,17 @@ class SlotAnalyzer:
         self._cast_bar_last_threshold = float(
             getattr(self._config, "cast_bar_activity_threshold", 12.0) or 12.0
         )
+        self._cast_bar_last_deactivate_threshold = self._cast_bar_last_threshold * 0.6
         self._cast_bar_last_active = False
+        self._cast_bar_last_present = False
+        self._cast_bar_last_directional = False
+        self._cast_bar_last_front = 0.0
         if not region or not bool(region.get("enabled", False)):
             self._cast_bar_motion.clear()
             self._cast_bar_prev_gray = None
+            self._cast_bar_front_prev = None
+            self._cast_bar_quiet_frames = 0
+            self._cast_bar_active_state = False
             self._cast_bar_last_status = "off"
             return False
 
@@ -190,6 +204,9 @@ class SlotAnalyzer:
         if w <= 1 or h <= 1:
             self._cast_bar_motion.clear()
             self._cast_bar_prev_gray = None
+            self._cast_bar_front_prev = None
+            self._cast_bar_quiet_frames = 0
+            self._cast_bar_active_state = False
             self._cast_bar_last_status = "invalid-roi"
             return False
 
@@ -200,22 +217,77 @@ class SlotAnalyzer:
         if x2 <= x1 or y2 <= y1:
             self._cast_bar_motion.clear()
             self._cast_bar_prev_gray = None
+            self._cast_bar_front_prev = None
+            self._cast_bar_quiet_frames = 0
+            self._cast_bar_active_state = False
             self._cast_bar_last_status = "out-of-frame"
             return False
 
         crop = frame[y1:y2, x1:x2]
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        sat = hsv[:, :, 1]
+        val = hsv[:, :, 2]
+        # Color-based presence (kept permissive for low-saturation UI themes).
+        color_mask = (sat >= 28) & (val >= 28)
+        color_cov = float(np.mean(color_mask)) if color_mask.size else 0.0
+        row_cov = np.mean(color_mask, axis=1) if color_mask.size else np.array([0.0], dtype=np.float32)
+        row_peak = float(np.max(row_cov)) if row_cov.size else 0.0
+        band_rows = float(np.mean(row_cov > 0.12)) if row_cov.size else 0.0
+        color_present = (color_cov >= 0.02) and (row_peak >= 0.20) and (band_rows <= 0.95)
+
+        # Structure-based presence fallback (for bars that are dim/desaturated).
+        gray_present = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        row_means = np.mean(gray_present, axis=1) if gray_present.size else np.array([0.0], dtype=np.float32)
+        row_variation = float(np.std(row_means)) if row_means.size else 0.0
+        gy = cv2.Sobel(gray_present, cv2.CV_32F, 0, 1, ksize=3)
+        h_edges = np.abs(gy) > 18.0
+        row_edge_cov = np.mean(h_edges, axis=1) if h_edges.size else np.array([0.0], dtype=np.float32)
+        edge_peak = float(np.max(row_edge_cov)) if row_edge_cov.size else 0.0
+        edge_band = float(np.mean(row_edge_cov > 0.06)) if row_edge_cov.size else 0.0
+        structure_present = (row_variation >= 2.0) and (edge_peak >= 0.08) and (edge_band <= 0.70)
+
+        bar_present = color_present or structure_present
+        self._cast_bar_last_present = bar_present
+
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         prev = self._cast_bar_prev_gray
         if prev is None or prev.shape != gray.shape:
             self._cast_bar_prev_gray = gray
             self._cast_bar_motion.clear()
+            self._cast_bar_front_prev = None
+            self._cast_bar_quiet_frames = 0
+            self._cast_bar_active_state = False
             self._cast_bar_last_status = "priming"
             return False
 
-        motion = float(np.mean(cv2.absdiff(gray, prev)))
+        diff = cv2.absdiff(gray, prev)
+        motion = float(np.mean(diff))
         self._cast_bar_prev_gray = gray
         self._cast_bar_motion.append(motion)
         self._cast_bar_last_motion = motion
+
+        motion_mask = diff > 12
+        col_cov = np.mean(motion_mask, axis=0) if motion_mask.size else np.array([0.0], dtype=np.float32)
+        active_cols = np.where(col_cov > 0.10)[0]
+        directional_ok = False
+        front = self._cast_bar_front_prev if self._cast_bar_front_prev is not None else 0.0
+        if active_cols.size > 0 and col_cov.size > 1:
+            cmin = int(active_cols.min())
+            cmax = int(active_cols.max())
+            span = (cmax - cmin + 1) / float(col_cov.size)
+            front = float(cmax) / float(col_cov.size - 1)
+            prev_front = self._cast_bar_front_prev
+            forward_ok = prev_front is None or front >= (prev_front - 0.08)
+            directional_ok = forward_ok and (span <= 0.75)
+            if directional_ok:
+                self._cast_bar_front_prev = front
+            self._cast_bar_quiet_frames = 0
+        else:
+            self._cast_bar_quiet_frames += 1
+            if self._cast_bar_quiet_frames >= 3:
+                self._cast_bar_front_prev = None
+        self._cast_bar_last_directional = directional_ok
+        self._cast_bar_last_front = float(front or 0.0)
 
         history_frames = max(3, int(getattr(self._config, "cast_bar_history_frames", 8) or 8))
         if self._cast_bar_motion.maxlen != history_frames:
@@ -224,11 +296,23 @@ class SlotAnalyzer:
             self._cast_bar_last_status = "priming"
             return False
         activity = max(self._cast_bar_motion)
-        threshold = self._cast_bar_last_threshold
-        active = activity >= threshold
+        activate_threshold = self._cast_bar_last_threshold
+        deactivate_threshold = self._cast_bar_last_deactivate_threshold
+        if self._cast_bar_active_state:
+            active = activity >= deactivate_threshold and bar_present and directional_ok
+        else:
+            active = activity >= activate_threshold and bar_present and directional_ok
+        self._cast_bar_active_state = active
         self._cast_bar_last_activity = activity
         self._cast_bar_last_active = active
-        self._cast_bar_last_status = "active" if active else "idle"
+        if active:
+            self._cast_bar_last_status = "active"
+        elif not bar_present:
+            self._cast_bar_last_status = "no-bar"
+        elif not directional_ok:
+            self._cast_bar_last_status = "not-directional"
+        else:
+            self._cast_bar_last_status = "idle"
         return active
 
     def cast_bar_debug(self) -> dict:
@@ -238,7 +322,11 @@ class SlotAnalyzer:
             "motion": float(self._cast_bar_last_motion),
             "activity": float(self._cast_bar_last_activity),
             "threshold": float(self._cast_bar_last_threshold),
+            "deactivate_threshold": float(self._cast_bar_last_deactivate_threshold),
             "active": bool(self._cast_bar_last_active),
+            "present": bool(self._cast_bar_last_present),
+            "directional": bool(self._cast_bar_last_directional),
+            "front": float(self._cast_bar_last_front),
             "gate_active": bool(self._cast_gate_active),
         }
 
