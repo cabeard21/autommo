@@ -59,6 +59,12 @@ class CalibrationOverlay(QWidget):
         self._slot_padding = slot_padding
         self.update()
 
+    def update_monitor_geometry(self, monitor_geometry: QRect) -> None:
+        """Move/resize overlay to fully cover the selected monitor."""
+        self._monitor_geometry = monitor_geometry
+        self.setGeometry(self._monitor_geometry)
+        self.update()
+
     def update_border_color(self, color: str) -> None:
         """Update the overlay border color."""
         self._border_color = QColor(color)

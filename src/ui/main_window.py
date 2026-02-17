@@ -90,12 +90,14 @@ class MainWindow(QMainWindow):
     slot_layout_changed = pyqtSignal(int, int, int)  # slot_count, slot_gap_pixels, slot_padding
     # Emitted when overlay visibility is toggled (True = show, False = hide)
     overlay_visibility_changed = pyqtSignal(bool)
+    monitor_changed = pyqtSignal(int)
     # Emitted when user chooses "Calibrate This Slot" for a slot index
     calibrate_slot_requested = pyqtSignal(int)
 
     def __init__(self, config: AppConfig, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._config = config
+        self._monitors: list[dict] = []
         self._key_sender: Optional["KeySender"] = None
         self._listening_slot_index: Optional[int] = None
         # Slots whose baseline was set by "Calibrate This Slot" (show bold; persisted in config)
@@ -310,6 +312,7 @@ class MainWindow(QMainWindow):
         self._spin_gap.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_padding.valueChanged.connect(self._on_slot_layout_changed)
         self._check_overlay.toggled.connect(self._on_overlay_toggled)
+        self._monitor_combo.currentIndexChanged.connect(self._on_monitor_changed)
         self._check_always_on_top.toggled.connect(self._on_always_on_top_toggled)
         self._spin_brightness_drop.valueChanged.connect(self._on_detection_changed)
         self._slider_pixel_fraction.valueChanged.connect(self._on_detection_changed)
@@ -436,6 +439,18 @@ class MainWindow(QMainWindow):
     def _on_overlay_toggled(self, checked: bool) -> None:
         self._config.overlay_enabled = checked
         self.overlay_visibility_changed.emit(checked)
+        self._update_save_button_state()
+
+    def _on_monitor_changed(self, index: int) -> None:
+        monitor_index = self._monitor_combo.itemData(index)
+        if monitor_index is None:
+            return
+        monitor_index = int(monitor_index)
+        if self._config.monitor_index == monitor_index:
+            return
+        self._config.monitor_index = monitor_index
+        self.monitor_changed.emit(monitor_index)
+        self.config_changed.emit(self._config)
         self._update_save_button_state()
 
     def _on_always_on_top_toggled(self, checked: bool) -> None:
@@ -799,8 +814,19 @@ class MainWindow(QMainWindow):
 
     def populate_monitors(self, monitors: list[dict]) -> None:
         """Fill the monitor dropdown with available monitors."""
-        self._monitor_combo.clear()
-        for i, m in enumerate(monitors):
-            self._monitor_combo.addItem(
-                f"Monitor {i + 1}: {m['width']}x{m['height']}", i + 1
-            )
+        self._monitors = list(monitors)
+        self._monitor_combo.blockSignals(True)
+        try:
+            self._monitor_combo.clear()
+            for i, m in enumerate(monitors):
+                self._monitor_combo.addItem(
+                    f"Monitor {i + 1}: {m['width']}x{m['height']}", i + 1
+                )
+            if monitors:
+                clamped_index = min(max(1, self._config.monitor_index), len(monitors))
+                if self._config.monitor_index != clamped_index:
+                    self._config.monitor_index = clamped_index
+                self._monitor_combo.setCurrentIndex(clamped_index - 1)
+        finally:
+            self._monitor_combo.blockSignals(False)
+        self._update_save_button_state()

@@ -2,6 +2,7 @@
 
 Wires together: screen capture → slot analysis → UI + overlay.
 """
+
 from __future__ import annotations
 
 import base64
@@ -44,6 +45,7 @@ def decode_baselines(data: list[dict]) -> dict[int, np.ndarray]:
             result[i] = arr.reshape(shape).copy()
     return result
 
+
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -56,9 +58,11 @@ CONFIG_PATH = Path(__file__).parent.parent / "config" / "default_config.json"
 class CaptureWorker(QThread):
     """Worker thread that captures frames and analyzes them at the configured FPS."""
 
-    frame_captured = pyqtSignal(np.ndarray)          # Raw frame for preview
-    state_updated = pyqtSignal(list)                  # List of slot state dicts
-    key_action = pyqtSignal(object)                   # Dict when a key was sent or blocked (action, keybind, etc.)
+    frame_captured = pyqtSignal(np.ndarray)  # Raw frame for preview
+    state_updated = pyqtSignal(list)  # List of slot state dicts
+    key_action = pyqtSignal(
+        object
+    )  # Dict when a key was sent or blocked (action, keybind, etc.)
 
     def __init__(self, analyzer: SlotAnalyzer, config: AppConfig, key_sender=None):
         super().__init__()
@@ -66,17 +70,31 @@ class CaptureWorker(QThread):
         self._config = config
         self._key_sender = key_sender
         self._running = False
+        self._capture: ScreenCapture | None = None
+        self._active_monitor_index: int | None = None
+
+    def _start_capture(self, monitor_index: int) -> None:
+        self._capture = ScreenCapture(monitor_index=monitor_index)
+        self._capture.start()
+        self._active_monitor_index = monitor_index
+
+    def _restart_capture(self, monitor_index: int) -> None:
+        if self._capture is not None:
+            self._capture.stop()
+        self._start_capture(monitor_index)
+        logger.info(f"Capture worker switched to monitor {monitor_index}")
 
     def run(self) -> None:
         self._running = True
-        self._capture = ScreenCapture(monitor_index=self._config.monitor_index)
-        self._capture.start()
+        self._start_capture(self._config.monitor_index)
         try:
             interval = 1.0 / max(1, self._config.polling_fps)
             logger.info(f"Capture worker started at {self._config.polling_fps} FPS")
 
             while self._running:
                 try:
+                    if self._active_monitor_index != self._config.monitor_index:
+                        self._restart_capture(self._config.monitor_index)
                     frame = self._capture.grab_region(self._config.bounding_box)
                     self.frame_captured.emit(frame)
 
@@ -111,7 +129,8 @@ class CaptureWorker(QThread):
 
                 self.msleep(int(interval * 1000))
         finally:
-            self._capture.stop()
+            if self._capture is not None:
+                self._capture.stop()
 
     def stop(self) -> None:
         self._running = False
@@ -133,6 +152,15 @@ def load_config() -> AppConfig:
         return AppConfig.from_dict(data)
     logger.warning(f"Config not found at {CONFIG_PATH}, using defaults")
     return AppConfig()
+
+
+def monitor_rect_for_index(monitor_index: int, monitors: list[dict]) -> QRect:
+    """Resolve a monitor index (1-based) to a QRect, with safe fallback."""
+    if monitors:
+        idx = min(max(1, monitor_index), len(monitors)) - 1
+        m = monitors[idx]
+        return QRect(m["left"], m["top"], m["width"], m["height"])
+    return QRect(0, 0, 1920, 1080)
 
 
 def main() -> None:
@@ -168,11 +196,7 @@ def main() -> None:
     # --- Calibration overlay ---
     # Get the monitor geometry for overlay positioning
     monitors = capture.list_monitors()
-    if monitors:
-        m = monitors[min(config.monitor_index - 1, len(monitors) - 1)]
-        monitor_rect = QRect(m["left"], m["top"], m["width"], m["height"])
-    else:
-        monitor_rect = QRect(0, 0, 1920, 1080)
+    monitor_rect = monitor_rect_for_index(config.monitor_index, monitors)
 
     overlay = CalibrationOverlay(monitor_geometry=monitor_rect)
     overlay.update_bounding_box(config.bounding_box)
@@ -196,6 +220,11 @@ def main() -> None:
     window.overlay_visibility_changed.connect(
         lambda visible: overlay.show() if visible else overlay.hide()
     )
+    window.monitor_changed.connect(
+        lambda monitor_index: overlay.update_monitor_geometry(
+            monitor_rect_for_index(monitor_index, monitors)
+        )
+    )
     window.config_changed.connect(on_config_changed)
     worker.frame_captured.connect(window.update_preview)
     worker.state_updated.connect(window.update_slot_states)
@@ -204,14 +233,20 @@ def main() -> None:
         slot_index = result.get("slot_index")
         names = getattr(config, "slot_display_names", [])
         display_name = "Unidentified"
-        if slot_index is not None and slot_index < len(names) and (names[slot_index] or "").strip():
+        if (
+            slot_index is not None
+            and slot_index < len(names)
+            and (names[slot_index] or "").strip()
+        ):
             display_name = (names[slot_index] or "").strip()
         if result.get("action") == "sent":
             window._priority_panel.update_last_action_sent(
                 result["keybind"], result.get("timestamp", 0.0), display_name
             )
         elif result.get("action") == "blocked" and result.get("reason") == "window":
-            window._priority_panel.update_next_intention_blocked(result["keybind"], display_name)
+            window._priority_panel.update_next_intention_blocked(
+                result["keybind"], display_name
+            )
 
     worker.key_action.connect(on_key_action)
 
@@ -239,7 +274,9 @@ def main() -> None:
     def on_global_toggle():
         window.toggle_automation()
 
-    hotkey_listener = GlobalToggleListener(get_bind=lambda: config.automation_toggle_bind)
+    hotkey_listener = GlobalToggleListener(
+        get_bind=lambda: config.automation_toggle_bind
+    )
     hotkey_listener.triggered.connect(on_global_toggle)
     hotkey_listener.start()
 
