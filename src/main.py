@@ -68,6 +68,7 @@ class CaptureWorker(QThread):
 
     frame_captured = pyqtSignal(np.ndarray)  # Raw frame for preview
     state_updated = pyqtSignal(list)  # List of slot state dicts
+    cast_bar_debug = pyqtSignal(object)  # Live cast-bar ROI motion/status info
     key_action = pyqtSignal(
         object
     )  # Dict when a key was sent or blocked (action, keybind, etc.)
@@ -97,6 +98,43 @@ class CaptureWorker(QThread):
         self._start_capture(monitor_index)
         logger.info(f"Capture worker switched to monitor {monitor_index}")
 
+    def _capture_plan(self, monitor_width: int, monitor_height: int) -> tuple[BoundingBox, tuple[int, int]]:
+        """Return capture bbox (possibly expanded for cast ROI) and action origin inside it."""
+        action_bbox = self._config.bounding_box
+        left = int(action_bbox.left)
+        top = int(action_bbox.top)
+        right = left + int(action_bbox.width)
+        bottom = top + int(action_bbox.height)
+
+        cast_region = getattr(self._config, "cast_bar_region", {}) or {}
+        if bool(cast_region.get("enabled", False)):
+            cast_w = int(cast_region.get("width", 0))
+            cast_h = int(cast_region.get("height", 0))
+            if cast_w > 1 and cast_h > 1:
+                cast_left = left + int(cast_region.get("left", 0))
+                cast_top = top + int(cast_region.get("top", 0))
+                cast_right = cast_left + cast_w
+                cast_bottom = cast_top + cast_h
+                left = min(left, cast_left)
+                top = min(top, cast_top)
+                right = max(right, cast_right)
+                bottom = max(bottom, cast_bottom)
+
+        # Clamp to selected monitor bounds (coords are monitor-relative).
+        left = max(0, min(left, monitor_width - 1))
+        top = max(0, min(top, monitor_height - 1))
+        right = max(left + 1, min(right, monitor_width))
+        bottom = max(top + 1, min(bottom, monitor_height))
+
+        capture_bbox = BoundingBox(
+            top=top,
+            left=left,
+            width=max(1, right - left),
+            height=max(1, bottom - top),
+        )
+        action_origin = (action_bbox.left - capture_bbox.left, action_bbox.top - capture_bbox.top)
+        return capture_bbox, action_origin
+
     def run(self) -> None:
         self._running = True
         self._start_capture(self._config.monitor_index)
@@ -108,10 +146,21 @@ class CaptureWorker(QThread):
                 try:
                     if self._active_monitor_index != self._config.monitor_index:
                         self._restart_capture(self._config.monitor_index)
-                    frame = self._capture.grab_region(self._config.bounding_box)
-                    self.frame_captured.emit(frame)
+                    monitor = self._capture.monitor_info
+                    capture_bbox, action_origin = self._capture_plan(
+                        monitor_width=int(monitor["width"]),
+                        monitor_height=int(monitor["height"]),
+                    )
+                    frame = self._capture.grab_region(capture_bbox)
+                    ax, ay = action_origin
+                    aw = int(self._config.bounding_box.width)
+                    ah = int(self._config.bounding_box.height)
+                    action_frame = frame[ay:ay + ah, ax:ax + aw]
+                    if action_frame.size == 0:
+                        action_frame = frame
+                    self.frame_captured.emit(action_frame)
 
-                    state = self._analyzer.analyze_frame(frame)
+                    state = self._analyzer.analyze_frame(frame, action_origin=action_origin)
                     slot_dicts = [
                         {
                             "index": s.index,
@@ -133,6 +182,7 @@ class CaptureWorker(QThread):
                     # Snapshot queue at start of tick so priority never replaces it this tick.
                     queued = self._queue_listener.get_queue() if self._queue_listener else None
                     self.state_updated.emit(slot_dicts)
+                    self.cast_bar_debug.emit(self._analyzer.cast_bar_debug())
                     if self._key_sender is not None:
                         on_queued_sent = (
                             self._queue_listener.clear_queue if self._queue_listener else None
@@ -234,6 +284,7 @@ def main() -> None:
 
     overlay = CalibrationOverlay(monitor_geometry=monitor_rect)
     overlay.update_bounding_box(config.bounding_box)
+    overlay.update_cast_bar_region(getattr(config, "cast_bar_region", {}))
     if config.overlay_enabled:
         overlay.show()
 
@@ -249,6 +300,7 @@ def main() -> None:
         config = new_config
         worker.update_config(new_config)
         key_sender.update_config(new_config)
+        overlay.update_cast_bar_region(getattr(new_config, "cast_bar_region", {}))
         window.refresh_from_config()
         # Apply always-on-top to main window when changed from Settings
         flags = window.windowFlags()
@@ -274,6 +326,7 @@ def main() -> None:
     window.config_changed.connect(on_config_changed)
     worker.frame_captured.connect(window.update_preview)
     worker.state_updated.connect(window.update_slot_states)
+    worker.cast_bar_debug.connect(window.update_cast_bar_debug)
 
     def on_key_action(result: dict) -> None:
         slot_index = result.get("slot_index")

@@ -50,7 +50,19 @@ class SlotAnalyzer:
         self._ocr_engine: Optional[object] = None  # Lazy-loaded OCREngine
         self._runtime: dict[int, _SlotRuntime] = {}
         self._analyze_frame_count = 0
-        self._cast_bar_means: deque[float] = deque(maxlen=8)
+        self._cast_bar_motion: deque[float] = deque(maxlen=8)
+        self._cast_bar_prev_gray: Optional[np.ndarray] = None
+        self._cast_bar_active_until: float = 0.0
+        self._cast_bar_last_motion: float = 0.0
+        self._cast_bar_last_activity: float = 0.0
+        self._cast_bar_last_threshold: float = float(
+            getattr(config, "cast_bar_activity_threshold", 12.0) or 12.0
+        )
+        self._cast_bar_last_active: bool = False
+        self._cast_bar_last_status: str = "off"
+        self._cast_gate_active: bool = False
+        self._frame_action_origin_x: int = 0
+        self._frame_action_origin_y: int = 0
         self._recompute_slot_layout()
 
     def _recompute_slot_layout(self) -> None:
@@ -99,8 +111,8 @@ class SlotAnalyzer:
         region excludes gap pixels and icon borders.
         """
         pad = self._config.slot_padding
-        x1 = slot.x_offset + pad
-        y1 = slot.y_offset + pad
+        x1 = self._frame_action_origin_x + slot.x_offset + pad
+        y1 = self._frame_action_origin_y + slot.y_offset + pad
         w = max(1, slot.width - 2 * pad)
         h = max(1, slot.height - 2 * pad)
         x2 = x1 + w
@@ -125,6 +137,8 @@ class SlotAnalyzer:
         Stores the full grayscale (2D array) per slot for pixel-wise comparison.
         Call when all abilities are off cooldown.
         """
+        self._frame_action_origin_x = 0
+        self._frame_action_origin_y = 0
         for slot_cfg in self._slot_configs:
             slot_img = self.crop_slot(frame, slot_cfg)
             self._baselines[slot_cfg.index] = self._get_brightness_channel(slot_img).copy()
@@ -136,6 +150,8 @@ class SlotAnalyzer:
         if slot_index < 0 or slot_index >= len(self._slot_configs):
             logger.warning(f"calibrate_single_slot: invalid slot_index {slot_index}")
             return
+        self._frame_action_origin_x = 0
+        self._frame_action_origin_y = 0
         slot_cfg = self._slot_configs[slot_index]
         slot_img = self.crop_slot(frame, slot_cfg)
         self._baselines[slot_index] = self._get_brightness_channel(slot_img).copy()
@@ -151,18 +167,30 @@ class SlotAnalyzer:
         self._baselines = {k: v.copy() for k, v in baselines.items()}
         logger.info(f"Loaded {len(self._baselines)} slot baselines from config")
 
-    def _cast_bar_active(self, frame: np.ndarray) -> bool:
-        """Optional cast-bar activity detector using a bounded rolling mean range."""
+    def _cast_bar_active(self, frame: np.ndarray, action_x: int, action_y: int) -> bool:
+        """Optional cast-bar activity detector using frame-to-frame ROI motion."""
         region = getattr(self._config, "cast_bar_region", {}) or {}
+        self._cast_bar_last_motion = 0.0
+        self._cast_bar_last_activity = 0.0
+        self._cast_bar_last_threshold = float(
+            getattr(self._config, "cast_bar_activity_threshold", 12.0) or 12.0
+        )
+        self._cast_bar_last_active = False
         if not region or not bool(region.get("enabled", False)):
-            self._cast_bar_means.clear()
+            self._cast_bar_motion.clear()
+            self._cast_bar_prev_gray = None
+            self._cast_bar_last_status = "off"
             return False
 
-        x = int(region.get("left", 0))
-        y = int(region.get("top", 0))
+        # Cast-bar ROI is configured relative to the action-bar bbox.
+        x = action_x + int(region.get("left", 0))
+        y = action_y + int(region.get("top", 0))
         w = int(region.get("width", 0))
         h = int(region.get("height", 0))
         if w <= 1 or h <= 1:
+            self._cast_bar_motion.clear()
+            self._cast_bar_prev_gray = None
+            self._cast_bar_last_status = "invalid-roi"
             return False
 
         x1 = max(0, x)
@@ -170,19 +198,49 @@ class SlotAnalyzer:
         x2 = min(frame.shape[1], x1 + w)
         y2 = min(frame.shape[0], y1 + h)
         if x2 <= x1 or y2 <= y1:
+            self._cast_bar_motion.clear()
+            self._cast_bar_prev_gray = None
+            self._cast_bar_last_status = "out-of-frame"
             return False
 
         crop = frame[y1:y2, x1:x2]
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        self._cast_bar_means.append(float(np.mean(gray)))
-        history_frames = max(3, int(getattr(self._config, "cast_bar_history_frames", 8) or 8))
-        if self._cast_bar_means.maxlen != history_frames:
-            self._cast_bar_means = deque(list(self._cast_bar_means), maxlen=history_frames)
-        if len(self._cast_bar_means) < 3:
+        prev = self._cast_bar_prev_gray
+        if prev is None or prev.shape != gray.shape:
+            self._cast_bar_prev_gray = gray
+            self._cast_bar_motion.clear()
+            self._cast_bar_last_status = "priming"
             return False
-        activity = max(self._cast_bar_means) - min(self._cast_bar_means)
-        threshold = float(getattr(self._config, "cast_bar_activity_threshold", 12.0) or 12.0)
-        return activity >= threshold
+
+        motion = float(np.mean(cv2.absdiff(gray, prev)))
+        self._cast_bar_prev_gray = gray
+        self._cast_bar_motion.append(motion)
+        self._cast_bar_last_motion = motion
+
+        history_frames = max(3, int(getattr(self._config, "cast_bar_history_frames", 8) or 8))
+        if self._cast_bar_motion.maxlen != history_frames:
+            self._cast_bar_motion = deque(list(self._cast_bar_motion), maxlen=history_frames)
+        if len(self._cast_bar_motion) < 2:
+            self._cast_bar_last_status = "priming"
+            return False
+        activity = max(self._cast_bar_motion)
+        threshold = self._cast_bar_last_threshold
+        active = activity >= threshold
+        self._cast_bar_last_activity = activity
+        self._cast_bar_last_active = active
+        self._cast_bar_last_status = "active" if active else "idle"
+        return active
+
+    def cast_bar_debug(self) -> dict:
+        """Latest cast-bar ROI motion debug info for UI."""
+        return {
+            "status": self._cast_bar_last_status,
+            "motion": float(self._cast_bar_last_motion),
+            "activity": float(self._cast_bar_last_activity),
+            "threshold": float(self._cast_bar_last_threshold),
+            "active": bool(self._cast_bar_last_active),
+            "gate_active": bool(self._cast_gate_active),
+        }
 
     def _next_state_with_cast_logic(
         self,
@@ -190,6 +248,7 @@ class SlotAnalyzer:
         darkened_fraction: float,
         is_raw_cooldown: bool,
         now: float,
+        cast_gate_active: bool = True,
     ) -> tuple[SlotState, Optional[float], Optional[float], Optional[float], Optional[float]]:
         """Return cast-aware state and timing metadata for one slot."""
         runtime = self._runtime.setdefault(slot_index, _SlotRuntime())
@@ -281,6 +340,20 @@ class SlotAnalyzer:
             )
 
         if cast_candidate:
+            if not cast_gate_active:
+                # If cast-bar ROI gating is enabled and inactive, suppress entering cast state.
+                runtime.cast_candidate_frames = 0
+                runtime.state = SlotState.READY
+                runtime.cast_started_at = None
+                runtime.cast_ends_at = None
+                runtime.last_darkened_fraction = darkened_fraction
+                return (
+                    runtime.state,
+                    None,
+                    None,
+                    runtime.last_cast_start_at,
+                    runtime.last_cast_success_at,
+                )
             runtime.cast_candidate_frames += 1
             if runtime.cast_candidate_frames >= confirm_frames:
                 runtime.state = SlotState.CASTING
@@ -318,21 +391,39 @@ class SlotAnalyzer:
             runtime.last_cast_success_at,
         )
 
-    def analyze_frame(self, frame: np.ndarray) -> ActionBarState:
+    def analyze_frame(
+        self,
+        frame: np.ndarray,
+        action_origin: tuple[int, int] = (0, 0),
+    ) -> ActionBarState:
         """Analyze a full action bar frame and return state for all slots.
 
         Args:
-            frame: BGR numpy array of the captured action bar region.
+            frame: BGR numpy array of the captured region.
+            action_origin: top-left (x, y) of the action-bar bbox within frame.
 
         Returns:
             ActionBarState with a SlotSnapshot per slot.
         """
         now = time.time()
         snapshots: list[SlotSnapshot] = []
+        self._frame_action_origin_x = int(action_origin[0])
+        self._frame_action_origin_y = int(action_origin[1])
 
         thresh = self._config.brightness_drop_threshold
         frac_thresh = self._config.cooldown_pixel_fraction
-        cast_bar_active = self._cast_bar_active(frame)
+        cast_bar_active = self._cast_bar_active(
+            frame,
+            self._frame_action_origin_x,
+            self._frame_action_origin_y,
+        )
+        cast_bar_region = getattr(self._config, "cast_bar_region", {}) or {}
+        cast_roi_enabled = bool(cast_bar_region.get("enabled", False))
+        if cast_bar_active:
+            # Keep gate active briefly to absorb frame ordering jitter between ROI motion and icon darkening.
+            self._cast_bar_active_until = now + 0.25
+        cast_gate_active = (not cast_roi_enabled) or cast_bar_active or (now < self._cast_bar_active_until)
+        self._cast_gate_active = cast_gate_active
 
         for slot_cfg in self._slot_configs:
             slot_img = self.crop_slot(frame, slot_cfg)
@@ -364,6 +455,7 @@ class SlotAnalyzer:
                     darkened_fraction,
                     raw_cooldown,
                     now,
+                    cast_gate_active=cast_gate_active,
                 )
                 if cast_bar_active and bool(
                     getattr(self._config, "lock_ready_while_cast_bar_active", False)
