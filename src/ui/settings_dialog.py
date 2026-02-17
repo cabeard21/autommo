@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 
 from src.models import AppConfig, BoundingBox
 from src.automation.global_hotkey import CaptureOneKeyThread, format_bind_for_display
+from src.automation.binds import normalize_bind
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +333,7 @@ class SettingsDialog(QDialog):
         self._btn_toggle_bind.setStyleSheet("font-family: monospace;")
         self._btn_toggle_bind.setMinimumWidth(72)
         self._btn_toggle_bind.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        toggle_help = QLabel("click to bind toggle, right-click to clear")
+        toggle_help = QLabel("click to bind combo, right-click to clear")
         toggle_help.setStyleSheet("font-size: 10px; color: #666;")
         toggle_row = QHBoxLayout()
         toggle_row.addWidget(self._btn_toggle_bind)
@@ -342,7 +343,7 @@ class SettingsDialog(QDialog):
         self._btn_single_fire_bind.setStyleSheet("font-family: monospace;")
         self._btn_single_fire_bind.setMinimumWidth(72)
         self._btn_single_fire_bind.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        single_help = QLabel("click to bind single fire, right-click to clear")
+        single_help = QLabel("click to bind combo, right-click to clear")
         single_help.setStyleSheet("font-size: 10px; color: #666;")
         single_row = QHBoxLayout()
         single_row.addWidget(self._btn_single_fire_bind)
@@ -571,8 +572,8 @@ class SettingsDialog(QDialog):
         self._edit_automation_profile_name.blockSignals(True)
         self._edit_automation_profile_name.setText(str(active.get("name", "") or ""))
         self._edit_automation_profile_name.blockSignals(False)
-        toggle_bind = str(active.get("toggle_bind", "") or "")
-        single_fire_bind = str(active.get("single_fire_bind", "") or "")
+        toggle_bind = normalize_bind(str(active.get("toggle_bind", "") or ""))
+        single_fire_bind = normalize_bind(str(active.get("single_fire_bind", "") or ""))
         capture_active = (
             self._capture_bind_thread is not None and self._capture_bind_thread.isRunning()
         )
@@ -595,8 +596,8 @@ class SettingsDialog(QDialog):
         active = self._config.get_active_priority_profile()
         active_id = str(active.get("id", "") or "")
         active_name = str(active.get("name", "") or "Active").strip() or "Active"
-        active_toggle = str(active.get("toggle_bind", "") or "").strip().lower()
-        active_single = str(active.get("single_fire_bind", "") or "").strip().lower()
+        active_toggle = normalize_bind(str(active.get("toggle_bind", "") or ""))
+        active_single = normalize_bind(str(active.get("single_fire_bind", "") or ""))
         conflicts: list[str] = []
         if active_toggle and active_toggle == active_single:
             conflicts.append(
@@ -607,8 +608,8 @@ class SettingsDialog(QDialog):
             if pid == active_id:
                 continue
             pname = str(p.get("name", "") or pid or "Profile").strip() or "Profile"
-            other_toggle = str(p.get("toggle_bind", "") or "").strip().lower()
-            other_single = str(p.get("single_fire_bind", "") or "").strip().lower()
+            other_toggle = normalize_bind(str(p.get("toggle_bind", "") or ""))
+            other_single = normalize_bind(str(p.get("single_fire_bind", "") or ""))
             if active_toggle:
                 if active_toggle == other_toggle:
                     conflicts.append(
@@ -842,24 +843,30 @@ class SettingsDialog(QDialog):
         self._clear_rebind("single_fire_bind")
 
     def _is_bind_in_use_elsewhere(self, bind: str, field_name: str) -> bool:
+        bind = normalize_bind(bind)
+        if not bind:
+            return False
         active_id = self._config.active_priority_profile_id
         for p in self._config.priority_profiles:
             if str(p.get("id", "") or "") == active_id:
                 continue
-            if bind and bind == str(p.get("toggle_bind", "") or "").strip().lower():
+            if bind == normalize_bind(str(p.get("toggle_bind", "") or "")):
                 return True
-            if bind and bind == str(p.get("single_fire_bind", "") or "").strip().lower():
+            if bind == normalize_bind(str(p.get("single_fire_bind", "") or "")):
                 return True
         active = self._config.get_active_priority_profile()
-        if field_name == "toggle_bind" and bind and bind == str(active.get("single_fire_bind", "") or "").strip().lower():
+        if field_name == "toggle_bind" and bind == normalize_bind(str(active.get("single_fire_bind", "") or "")):
             return True
-        if field_name == "single_fire_bind" and bind and bind == str(active.get("toggle_bind", "") or "").strip().lower():
+        if field_name == "single_fire_bind" and bind == normalize_bind(str(active.get("toggle_bind", "") or "")):
             return True
         return False
 
     def _on_rebind_captured(self, bind_str: str) -> None:
-        key = (bind_str or "").strip().lower()
-        if key in ("esc", "escape"):
+        key = normalize_bind(bind_str)
+        if not key:
+            self._on_rebind_cancelled()
+            return
+        if key == "escape":
             self._on_rebind_cancelled()
             return
         target = self._capture_bind_target
