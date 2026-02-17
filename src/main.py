@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from src.automation.global_hotkey import GlobalToggleListener
 from src.automation.key_sender import KeySender
+from src.automation.queue_listener import QueueListener
 from src.capture import ScreenCapture
 from src.analysis import SlotAnalyzer
 from src.models import AppConfig, BoundingBox
@@ -76,9 +77,14 @@ class CaptureWorker(QThread):
         self._analyzer = analyzer
         self._config = config
         self._key_sender = key_sender
+        self._queue_listener = None
         self._running = False
         self._capture: ScreenCapture | None = None
         self._active_monitor_index: int | None = None
+
+    def set_queue_listener(self, listener) -> None:
+        """Set the spell queue listener so the worker can pass queued override and clear on send."""
+        self._queue_listener = listener
 
     def _start_capture(self, monitor_index: int) -> None:
         self._capture = ScreenCapture(monitor_index=monitor_index)
@@ -120,13 +126,20 @@ class CaptureWorker(QThread):
                         }
                         for s in state.slots
                     ]
+                    # Snapshot queue at start of tick so priority never replaces it this tick.
+                    queued = self._queue_listener.get_queue() if self._queue_listener else None
                     self.state_updated.emit(slot_dicts)
                     if self._key_sender is not None:
+                        on_queued_sent = (
+                            self._queue_listener.clear_queue if self._queue_listener else None
+                        )
                         result = self._key_sender.evaluate_and_send(
                             state,
                             getattr(self._config, "priority_order", []),
                             self._config.keybinds,
                             getattr(self._config, "automation_enabled", False),
+                            queued_override=queued,
+                            on_queued_sent=on_queued_sent,
                         )
                         if result is not None:
                             self.key_action.emit(result)
@@ -227,6 +240,8 @@ def main() -> None:
     window.set_key_sender(key_sender)
 
     def on_config_changed(new_config: AppConfig) -> None:
+        nonlocal config
+        config = new_config
         worker.update_config(new_config)
         key_sender.update_config(new_config)
         window.refresh_from_config()
@@ -313,6 +328,12 @@ def main() -> None:
     hotkey_listener.triggered.connect(on_global_toggle)
     hotkey_listener.start()
 
+    queue_listener = QueueListener(get_config=lambda: config)
+    queue_listener.queue_updated.connect(window.set_queued_override)
+    queue_listener.start()
+    worker.set_queue_listener(queue_listener)
+    window.set_queue_listener(queue_listener)
+
     # Calibrate baselines: grab one frame on main thread with short-lived mss
     def revert_calibrate_button(btn):
         btn.setText("Calibrate All Baselines")
@@ -374,6 +395,7 @@ def main() -> None:
 
     # Cleanup
     hotkey_listener.stop()
+    queue_listener.stop()
     if is_running[0]:
         worker.stop()
     sys.exit(exit_code)

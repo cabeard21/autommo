@@ -132,13 +132,17 @@
   "priority_order": [
     0,
     1,
-    2,
-    3
+    2
   ],
   "automation_enabled": false,
   "automation_toggle_bind": "f24",
   "min_press_interval_ms": 150,
   "target_window_title": "",
   "profile_name": "Teglaan",
-  "history_rows": 3
+  "history_rows": 3,
+  "queue_whitelist": [
+    "v"
+  ],
+  "queue_timeout_ms": 5000,
+  "queue_fire_delay_ms": 100
 }

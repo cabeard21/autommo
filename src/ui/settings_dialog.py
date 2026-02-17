@@ -106,6 +106,7 @@ class SettingsDialog(QDialog):
         content_layout.addWidget(self._capture_section())
         content_layout.addWidget(self._detection_section())
         content_layout.addWidget(self._automation_section())
+        content_layout.addWidget(self._spell_queue_section())
         content_layout.addWidget(self._calibration_section())
         content_layout.addStretch()
         self._scroll_area.setWidget(content)
@@ -248,6 +249,33 @@ class SettingsDialog(QDialog):
         fl.addRow(_row_label("Window:"), self._edit_window_title)
         return g
 
+    def _spell_queue_section(self) -> QGroupBox:
+        g = QGroupBox("Spell Queue")
+        g.setStyleSheet("QGroupBox { font-weight: bold; }")
+        fl = QFormLayout(g)
+        self._edit_queue_keys = QLineEdit()
+        self._edit_queue_keys.setPlaceholderText("e.g. R, T, V")
+        self._edit_queue_keys.setClearButtonEnabled(True)
+        fl.addRow(_row_label("Queue keys:"), self._edit_queue_keys)
+        queue_help = QLabel(
+            "Manual presses of these keys (or bound keys not in priority) will queue to fire at next GCD"
+        )
+        queue_help.setStyleSheet("font-size: 10px; color: #666;")
+        queue_help.setWordWrap(True)
+        fl.addRow("", queue_help)
+        self._spin_queue_timeout = QSpinBox()
+        self._spin_queue_timeout.setRange(1000, 30000)
+        self._spin_queue_timeout.setSuffix(" ms")
+        self._spin_queue_timeout.setMaximumWidth(80)
+        fl.addRow(_row_label("Queue timeout:"), self._spin_queue_timeout)
+        self._spin_queue_fire_delay = QSpinBox()
+        self._spin_queue_fire_delay.setRange(0, 300)
+        self._spin_queue_fire_delay.setSuffix(" ms")
+        self._spin_queue_fire_delay.setMaximumWidth(80)
+        self._spin_queue_fire_delay.setToolTip("Delay after GCD ready before sending queued key (avoids firing too early)")
+        fl.addRow(_row_label("Fire delay:"), self._spin_queue_fire_delay)
+        return g
+
     def _calibration_section(self) -> QGroupBox:
         g = QGroupBox("Calibration")
         g.setStyleSheet("QGroupBox { font-weight: bold; }")
@@ -291,6 +319,9 @@ class SettingsDialog(QDialog):
         self._btn_rebind.clicked.connect(self._on_rebind_clicked)
         self._spin_min_delay.valueChanged.connect(self._on_min_delay_changed)
         self._edit_window_title.textChanged.connect(self._on_window_title_changed)
+        self._edit_queue_keys.textChanged.connect(self._on_queue_keys_changed)
+        self._spin_queue_timeout.valueChanged.connect(self._on_queue_timeout_changed)
+        self._spin_queue_fire_delay.valueChanged.connect(self._on_queue_fire_delay_changed)
         self._btn_calibrate.clicked.connect(self._on_calibrate_clicked)
 
     def sync_from_config(self) -> None:
@@ -344,6 +375,16 @@ class SettingsDialog(QDialog):
         self._edit_window_title.blockSignals(True)
         self._edit_window_title.setText(getattr(self._config, "target_window_title", "") or "")
         self._edit_window_title.blockSignals(False)
+        whitelist = getattr(self._config, "queue_whitelist", []) or []
+        self._edit_queue_keys.blockSignals(True)
+        self._edit_queue_keys.setText(", ".join(k for k in whitelist))
+        self._edit_queue_keys.blockSignals(False)
+        self._spin_queue_timeout.blockSignals(True)
+        self._spin_queue_timeout.setValue(getattr(self._config, "queue_timeout_ms", 5000))
+        self._spin_queue_timeout.blockSignals(False)
+        self._spin_queue_fire_delay.blockSignals(True)
+        self._spin_queue_fire_delay.setValue(getattr(self._config, "queue_fire_delay_ms", 100))
+        self._spin_queue_fire_delay.blockSignals(False)
         self._update_monitor_combo()
 
     def _update_monitor_combo(self) -> None:
@@ -529,6 +570,19 @@ class SettingsDialog(QDialog):
 
     def _on_window_title_changed(self) -> None:
         self._config.target_window_title = (self._edit_window_title.text() or "").strip()
+        self._emit_config()
+
+    def _on_queue_keys_changed(self) -> None:
+        raw = (self._edit_queue_keys.text() or "").strip()
+        keys = [k.strip().lower() for k in raw.split(",") if k.strip()]
+        self._config.queue_whitelist = keys
+        self._emit_config()
+
+    def _on_queue_timeout_changed(self, value: int) -> None:
+        self._config.queue_timeout_ms = max(1000, min(30000, value))
+
+    def _on_queue_fire_delay_changed(self, value: int) -> None:
+        self._config.queue_fire_delay_ms = max(0, min(300, value))
         self._emit_config()
 
     def _on_calibrate_clicked(self) -> None:
