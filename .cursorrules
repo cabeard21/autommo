@@ -80,6 +80,7 @@ Screen Capture (mss, small region only)
 - Core capture/analyze/UI/automation flow is implemented and in use.
 - Legacy config fields (`priority_order`, `automation_toggle_bind`, `automation_hotkey_mode`) are still serialized for compatibility.
 - Preferred runtime model is `priority_profiles` + `active_priority_profile_id`.
+- Settings automation section supports add/copy/remove profile actions and per-profile toggle/single-fire binds.
 
 ## Important Gotchas
 - EasyOCR downloads models on first run (~100MB). Handle gracefully.

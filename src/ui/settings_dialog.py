@@ -312,12 +312,15 @@ class SettingsDialog(QDialog):
         fl = QFormLayout(g)
         self._combo_automation_profile = QComboBox()
         self._btn_add_automation_profile = QPushButton("+")
+        self._btn_copy_automation_profile = QPushButton("Copy")
         self._btn_remove_automation_profile = QPushButton("−")
         self._btn_add_automation_profile.setFixedWidth(28)
+        self._btn_copy_automation_profile.setMinimumWidth(54)
         self._btn_remove_automation_profile.setFixedWidth(28)
         profile_row = QHBoxLayout()
         profile_row.addWidget(self._combo_automation_profile, 1)
         profile_row.addWidget(self._btn_add_automation_profile)
+        profile_row.addWidget(self._btn_copy_automation_profile)
         profile_row.addWidget(self._btn_remove_automation_profile)
         fl.addRow(_row_label("List profile:"), profile_row)
         self._edit_automation_profile_name = QLineEdit()
@@ -415,6 +418,7 @@ class SettingsDialog(QDialog):
         self._spin_cast_bar_activity.valueChanged.connect(self._on_detection_changed)
         self._combo_automation_profile.currentIndexChanged.connect(self._on_automation_profile_selected)
         self._btn_add_automation_profile.clicked.connect(self._on_add_automation_profile)
+        self._btn_copy_automation_profile.clicked.connect(self._on_copy_automation_profile)
         self._btn_remove_automation_profile.clicked.connect(self._on_remove_automation_profile)
         self._edit_automation_profile_name.textChanged.connect(self._on_automation_profile_name_changed)
         self._btn_toggle_bind.clicked.connect(self._on_rebind_toggle_clicked)
@@ -847,6 +851,36 @@ class SettingsDialog(QDialog):
             p for p in self._config.priority_profiles if str(p.get("id", "") or "") != active_id
         ]
         self._config.ensure_priority_profiles()
+        self._sync_automation_profile_controls()
+        self._emit_config()
+
+    def _on_copy_automation_profile(self) -> None:
+        self._config.ensure_priority_profiles()
+        source = self._config.get_active_priority_profile()
+        existing_ids = {str(p.get("id", "") or "") for p in self._config.priority_profiles}
+        i = 1
+        while f"profile_{i}" in existing_ids:
+            i += 1
+        new_id = f"profile_{i}"
+        base_name = str(source.get("name", "") or "Profile").strip() or "Profile"
+        existing_names = {
+            (str(p.get("name", "") or "").strip().lower()) for p in self._config.priority_profiles
+        }
+        new_name = f"{base_name} Copy"
+        suffix = 2
+        while new_name.strip().lower() in existing_names:
+            new_name = f"{base_name} Copy {suffix}"
+            suffix += 1
+        self._config.priority_profiles.append(
+            {
+                "id": new_id,
+                "name": new_name,
+                "priority_order": list(source.get("priority_order", [])),
+                "toggle_bind": str(source.get("toggle_bind", "") or ""),
+                "single_fire_bind": str(source.get("single_fire_bind", "") or ""),
+            }
+        )
+        self._config.set_active_priority_profile(new_id)
         self._sync_automation_profile_controls()
         self._emit_config()
 

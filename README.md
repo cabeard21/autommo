@@ -70,7 +70,7 @@ The right panel also shows:
 ### Automation (Left Panel)
 
 - **Enable / Disable** — Green **Enable** turns automation on (sends keys in priority order); red **Disable** turns it off. Automation always starts **off** when you launch the app.
-- **List profiles** — In **Settings → Automation**, create multiple list profiles (for example: Single Target, AoE, Utility). Each profile stores its own priority list.
+- **List profiles** — In **Settings → Automation**, use **+ / Copy / −** to create, duplicate, or remove list profiles (for example: Single Target, AoE, Utility). Each profile stores its own priority list.
 - **Per-profile hotkeys** — Each list profile has two optional global binds:
   - **Toggle bind** — Switches to that profile and toggles continuous automation on/off.
   - **Single bind** — Switches to that profile and arms exactly one next action (single fire) without enabling continuous automation.
