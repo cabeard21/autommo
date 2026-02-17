@@ -151,6 +151,55 @@ class AppConfig:
     # Ms to wait after detecting GCD ready before sending queued key (avoids firing too early)
     queue_fire_delay_ms: int = 100
 
+    @staticmethod
+    def _normalize_manual_actions(raw_actions: object) -> list[dict]:
+        """Normalize profile manual actions to [{id, name, keybind}] with unique ids."""
+        normalized: list[dict] = []
+        seen_ids: set[str] = set()
+        for raw in list(raw_actions or []):
+            if not isinstance(raw, dict):
+                continue
+            aid = str(raw.get("id", "") or "").strip().lower()
+            if not aid:
+                aid = f"manual_{len(normalized) + 1}"
+            if aid in seen_ids:
+                continue
+            seen_ids.add(aid)
+            name = str(raw.get("name", "") or "").strip() or aid.replace("_", " ").title()
+            keybind = str(raw.get("keybind", "") or "").strip()
+            normalized.append({"id": aid, "name": name, "keybind": keybind})
+        return normalized
+
+    @staticmethod
+    def _normalize_priority_items(raw_items: object, fallback_order: object) -> list[dict]:
+        """
+        Normalize profile priority items to:
+        [{type:'slot', slot_index:int} | {type:'manual', action_id:str}]
+        """
+        normalized: list[dict] = []
+        for raw in list(raw_items or []):
+            if isinstance(raw, int):
+                normalized.append({"type": "slot", "slot_index": raw})
+                continue
+            if not isinstance(raw, dict):
+                continue
+            itype = str(raw.get("type", "") or "").strip().lower()
+            if itype == "slot":
+                slot_index = raw.get("slot_index")
+                if isinstance(slot_index, int):
+                    normalized.append({"type": "slot", "slot_index": slot_index})
+            elif itype == "manual":
+                action_id = str(raw.get("action_id", "") or "").strip().lower()
+                if action_id:
+                    normalized.append({"type": "manual", "action_id": action_id})
+        if normalized:
+            return normalized
+        return [
+            {"type": "slot", "slot_index": i}
+            for i in list(fallback_order or [])
+            if isinstance(i, int)
+        ]
+
     def _normalize_profiles(self) -> None:
         """Ensure automation profiles are valid and there is always an active profile."""
         normalized: list[dict] = []
@@ -168,13 +217,30 @@ class AppConfig:
             order = p.get("priority_order", [])
             if not isinstance(order, list):
                 order = []
+            manual_actions = self._normalize_manual_actions(p.get("manual_actions", []))
+            manual_action_ids = {str(a.get("id", "") or "") for a in manual_actions}
+            priority_items = [
+                item
+                for item in self._normalize_priority_items(p.get("priority_items", []), order)
+                if (
+                    item.get("type") == "slot"
+                    or str(item.get("action_id", "") or "") in manual_action_ids
+                )
+            ]
+            slot_order = [
+                int(item["slot_index"])
+                for item in priority_items
+                if item.get("type") == "slot" and isinstance(item.get("slot_index"), int)
+            ]
             toggle_bind = str(p.get("toggle_bind", "") or "").strip().lower()
             single_fire_bind = str(p.get("single_fire_bind", "") or "").strip().lower()
             normalized.append(
                 {
                     "id": pid,
                     "name": name,
-                    "priority_order": [int(i) for i in order if isinstance(i, int)],
+                    "priority_order": slot_order,
+                    "priority_items": priority_items,
+                    "manual_actions": manual_actions,
                     "toggle_bind": toggle_bind,
                     "single_fire_bind": single_fire_bind,
                 }
@@ -186,6 +252,12 @@ class AppConfig:
                     "id": "default",
                     "name": "Default",
                     "priority_order": [int(i) for i in self.priority_order if isinstance(i, int)],
+                    "priority_items": [
+                        {"type": "slot", "slot_index": int(i)}
+                        for i in self.priority_order
+                        if isinstance(i, int)
+                    ],
+                    "manual_actions": [],
                     "toggle_bind": str(self.automation_toggle_bind or "").strip().lower(),
                     "single_fire_bind": (
                         str(self.automation_toggle_bind or "").strip().lower()
@@ -235,6 +307,12 @@ class AppConfig:
 
     def active_priority_order(self) -> list[int]:
         return list(self.get_active_priority_profile().get("priority_order", []))
+
+    def active_priority_items(self) -> list[dict]:
+        return list(self.get_active_priority_profile().get("priority_items", []))
+
+    def active_manual_actions(self) -> list[dict]:
+        return list(self.get_active_priority_profile().get("manual_actions", []))
 
     @classmethod
     def from_dict(cls, data: dict) -> AppConfig:
@@ -311,6 +389,12 @@ class AppConfig:
                     "id": "default",
                     "name": "Default",
                     "priority_order": list(data.get("priority_order", [])),
+                    "priority_items": [
+                        {"type": "slot", "slot_index": int(i)}
+                        for i in list(data.get("priority_order", []))
+                        if isinstance(i, int)
+                    ],
+                    "manual_actions": [],
                     "toggle_bind": legacy_toggle_bind if legacy_mode == "toggle" else "",
                     "single_fire_bind": legacy_toggle_bind if legacy_mode == "single_fire" else "",
                 }

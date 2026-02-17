@@ -122,3 +122,17 @@ autowow/
 - Python 3.11+
 - Game in **borderless windowed** (or windowed) mode so the overlay can be drawn and the target window title can be read
 - Windows recommended for the “target window” check (uses Win32 API); key sending works with the `keyboard` library on supported platforms
+
+## Manual Actions (Not Tied to Slots)
+
+You can now add priority entries that are not linked to a monitored icon slot.
+
+- In the **Priority** panel, click **+ manual**.
+- Enter an action name and keybind.
+- The manual action is added to the current profile's priority list.
+- Right-click a manual item in the priority list to **Rename**, **Rebind**, or **Remove**.
+
+Behavior in v1:
+- Manual actions are treated as eligible whenever they have a keybind.
+- They still respect automation safety gates (minimum delay, casting/channel blocking, target-window check).
+- If a manual action is placed above monitored slots, it may be selected repeatedly.

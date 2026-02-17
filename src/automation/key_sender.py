@@ -66,7 +66,9 @@ class KeySender:
             getattr(self._config, "target_window_title", "") or ""
         )
 
-    def _find_blocking_cast(self, state: ActionBarState) -> Optional[tuple[int, object]]:
+    def _find_blocking_cast(
+        self, state: ActionBarState
+    ) -> Optional[tuple[int, object]]:
         """Return first slot currently casting/channeling, if any."""
         for slot in state.slots:
             if slot.state in (SlotState.CASTING, SlotState.CHANNELING):
@@ -76,8 +78,9 @@ class KeySender:
     def evaluate_and_send(
         self,
         state: ActionBarState,
-        priority_order: list[int],
+        priority_items: list[dict],
         keybinds: list[str],
+        manual_actions: list[dict],
         automation_enabled: bool,
         queued_override: Optional[dict] = None,
         on_queued_sent: Optional[Callable[[], None]] = None,
@@ -98,12 +101,16 @@ class KeySender:
         min_interval_ok = (now - self._last_send_time) >= min_interval_sec
         window_ok = self.is_target_window_active()
 
-        allow_while_casting = bool(getattr(self._config, "allow_cast_while_casting", False))
+        allow_while_casting = bool(
+            getattr(self._config, "allow_cast_while_casting", False)
+        )
         if not allow_while_casting:
             blocking = self._find_blocking_cast(state)
             if blocking is not None:
                 blocking_index, blocking_slot = blocking
-                queue_window_sec = (getattr(self._config, "queue_window_ms", 120) or 120) / 1000.0
+                queue_window_sec = (
+                    getattr(self._config, "queue_window_ms", 120) or 120
+                ) / 1000.0
                 cast_ends_at = getattr(blocking_slot, "cast_ends_at", None)
                 if cast_ends_at is None or now < (cast_ends_at + queue_window_sec):
                     return {
@@ -117,7 +124,7 @@ class KeySender:
         # Queued key fires only when at least one priority slot is READY (GCD over; game accepts input).
         any_priority_ready = any(
             slots_by_index.get(i) and slots_by_index[i].state == SlotState.READY
-            for i in priority_order
+            for i in priority_items
         )
 
         if queued_override:
@@ -205,11 +212,40 @@ class KeySender:
         if now < self._suppress_priority_until:
             return None
 
-        for slot_index in priority_order:
-            slot = slots_by_index.get(slot_index)
-            if not slot or slot.state != SlotState.READY:
+        manual_by_id = {
+            str(a.get("id", "") or "").strip().lower(): a
+            for a in (manual_actions or [])
+        }
+        for item in priority_items:
+            if not isinstance(item, dict):
                 continue
-            keybind = keybinds[slot_index] if slot_index < len(keybinds) else None
+            item_type = str(item.get("type", "") or "").strip().lower()
+            slot_index: Optional[int] = None
+            display_name = "Unidentified"
+            keybind: Optional[str] = None
+
+            if item_type == "slot":
+                slot_index = item.get("slot_index")
+                if not isinstance(slot_index, int):
+                    continue
+                slot = slots_by_index.get(slot_index)
+                if not slot or slot.state != SlotState.READY:
+                    continue
+                keybind = keybinds[slot_index] if slot_index < len(keybinds) else None
+            elif item_type == "manual":
+                action_id = str(item.get("action_id", "") or "").strip().lower()
+                if not action_id:
+                    continue
+                action = manual_by_id.get(action_id)
+                if not isinstance(action, dict):
+                    continue
+                keybind = str(action.get("keybind", "") or "").strip()
+                display_name = (
+                    str(action.get("name", "") or "").strip() or "Manual Action"
+                )
+            else:
+                continue
+
             if not (keybind or "").strip():
                 continue
             keybind = keybind.strip()
@@ -217,6 +253,8 @@ class KeySender:
             if not self.is_target_window_active():
                 return {
                     "keybind": keybind,
+                    "display_name": display_name,
+                    "item_type": item_type,
                     "action": "blocked",
                     "reason": "window",
                     "slot_index": slot_index,
@@ -236,6 +274,8 @@ class KeySender:
             logger.info("Sent key: %s", keybind)
             return {
                 "keybind": keybind,
+                "display_name": display_name,
+                "item_type": item_type,
                 "action": "sent",
                 "timestamp": now,
                 "slot_index": slot_index,

@@ -118,9 +118,9 @@ class _LeftPanel(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self._on_priority_drop_remove: Callable[[int], None] = lambda _: None
+        self._on_priority_drop_remove: Callable[[str], None] = lambda _: None
 
-    def set_drop_remove_callback(self, callback: Callable[[int], None]) -> None:
+    def set_drop_remove_callback(self, callback: Callable[[str], None]) -> None:
         self._on_priority_drop_remove = callback
 
     def dragEnterEvent(self, event) -> None:
@@ -130,11 +130,12 @@ class _LeftPanel(QWidget):
     def dropEvent(self, event) -> None:
         if event.mimeData().hasFormat(MIME_PRIORITY_ITEM):
             try:
-                slot_index = int(
-                    event.mimeData().data(MIME_PRIORITY_ITEM).data().decode()
+                item_key = str(
+                    event.mimeData().data(MIME_PRIORITY_ITEM).data().decode() or ""
                 )
-                self._on_priority_drop_remove(slot_index)
-            except (ValueError, TypeError):
+                if item_key:
+                    self._on_priority_drop_remove(item_key)
+            except (ValueError, TypeError, UnicodeDecodeError):
                 pass
         event.acceptProposedAction()
 
@@ -582,8 +583,20 @@ class MainWindow(QMainWindow):
         top_layout.addLayout(content_split, 1)
 
     def _connect_signals(self) -> None:
-        self._priority_panel.priority_list.order_changed.connect(
-            self._on_priority_order_changed
+        self._priority_panel.priority_list.items_changed.connect(
+            self._on_priority_items_changed
+        )
+        self._priority_panel.priority_list.manual_action_rename_requested.connect(
+            self._on_rename_manual_action
+        )
+        self._priority_panel.priority_list.manual_action_rebind_requested.connect(
+            self._on_rebind_manual_action
+        )
+        self._priority_panel.priority_list.manual_action_remove_requested.connect(
+            self._on_remove_manual_action
+        )
+        self._priority_panel.add_manual_action_requested.connect(
+            self._on_add_manual_action
         )
         self._priority_panel.gcd_updated.connect(self._on_gcd_updated)
 
@@ -593,10 +606,40 @@ class MainWindow(QMainWindow):
     def _active_priority_order(self) -> list[int]:
         return list(self._active_priority_profile().get("priority_order", []))
 
+    def _active_priority_items(self) -> list[dict]:
+        profile = self._active_priority_profile()
+        items = profile.get("priority_items", [])
+        if isinstance(items, list) and items:
+            return [dict(i) for i in items if isinstance(i, dict)]
+        return [
+            {"type": "slot", "slot_index": i} for i in self._active_priority_order()
+        ]
+
+    def _active_manual_actions(self) -> list[dict]:
+        profile = self._active_priority_profile()
+        actions = profile.get("manual_actions", [])
+        if not isinstance(actions, list):
+            actions = []
+            profile["manual_actions"] = actions
+        return [a for a in actions if isinstance(a, dict)]
+
+    @staticmethod
+    def _slot_order_from_priority_items(items: list[dict]) -> list[int]:
+        return [
+            int(i["slot_index"])
+            for i in list(items or [])
+            if isinstance(i, dict)
+            and str(i.get("type", "") or "").strip().lower() == "slot"
+            and isinstance(i.get("slot_index"), int)
+        ]
+
     def _set_priority_list_from_active_profile(self) -> None:
         self._priority_panel.priority_list.blockSignals(True)
         try:
-            self._priority_panel.priority_list.set_order(self._active_priority_order())
+            self._priority_panel.priority_list.set_manual_actions(
+                self._active_manual_actions()
+            )
+            self._priority_panel.priority_list.set_items(self._active_priority_items())
         finally:
             self._priority_panel.priority_list.blockSignals(False)
 
@@ -634,13 +677,10 @@ class MainWindow(QMainWindow):
         self._priority_panel.priority_list.set_display_names(
             getattr(self._config, "slot_display_names", [])
         )
-        self._priority_panel.priority_list.blockSignals(True)
-        try:
-            self._priority_panel.priority_list.set_order(
-                getattr(self._config, "priority_order", [])
-            )
-        finally:
-            self._priority_panel.priority_list.blockSignals(False)
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
+        self._set_priority_list_from_active_profile()
         self._prepopulate_slot_buttons()
         self._last_action_history.set_max_rows(getattr(self._config, "history_rows", 3))
         if CONFIG_PATH.exists():
@@ -662,13 +702,10 @@ class MainWindow(QMainWindow):
         self._priority_panel.priority_list.set_display_names(
             getattr(self._config, "slot_display_names", [])
         )
-        self._priority_panel.priority_list.blockSignals(True)
-        try:
-            self._priority_panel.priority_list.set_order(
-                getattr(self._config, "priority_order", [])
-            )
-        finally:
-            self._priority_panel.priority_list.blockSignals(False)
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
+        self._set_priority_list_from_active_profile()
 
     def _maybe_auto_save(self) -> None:
         """If there are unsaved changes (compared to _last_saved_config, excluding automation_enabled), save and show status."""
@@ -785,10 +822,13 @@ class MainWindow(QMainWindow):
     def set_key_sender(self, key_sender: Optional["KeySender"]) -> None:
         self._key_sender = key_sender
 
-    def _on_priority_order_changed(self, order: list) -> None:
+    def _on_priority_items_changed(self, items: list) -> None:
         profile = self._active_priority_profile()
-        profile["priority_order"] = list(order)
-        self._config.priority_order = list(order)
+        normalized_items = [dict(i) for i in list(items or []) if isinstance(i, dict)]
+        slot_order = self._slot_order_from_priority_items(normalized_items)
+        profile["priority_items"] = normalized_items
+        profile["priority_order"] = slot_order
+        self._config.priority_order = list(slot_order)
         self.config_changed.emit(self._config)
         self._maybe_auto_save()
 
@@ -851,15 +891,9 @@ class MainWindow(QMainWindow):
             status = "waiting: channeling"
         self._next_intention_row.set_content("…", name, status, KEY_BLUE)
 
-    def _on_priority_drop_remove(self, slot_index: int) -> None:
+    def _on_priority_drop_remove(self, item_key: str) -> None:
         """Called when a priority item is dropped on the left panel (remove from list)."""
-        self._priority_panel.priority_list.remove_slot(slot_index)
-        order = self._priority_panel.priority_list.get_order()
-        profile = self._active_priority_profile()
-        profile["priority_order"] = list(order)
-        self._config.priority_order = list(order)
-        self.config_changed.emit(self._config)
-        self._maybe_auto_save()
+        self._priority_panel.priority_list.remove_item_by_key(item_key)
 
     # Padding (px) around the preview image inside the Live Preview panel
     PREVIEW_PADDING = 12
@@ -938,12 +972,53 @@ class MainWindow(QMainWindow):
         font.setBold(idx >= 0 and idx in self._slots_recalibrated)
         btn.setFont(font)
 
-    def _next_ready_priority_slot(self, states: list[dict]) -> Optional[int]:
-        """First slot in priority_order that is READY; None if none or automation off."""
-        by_index = {s["index"]: s.get("state") for s in states}
-        for slot_index in self._active_priority_order():
-            if by_index.get(slot_index) == "ready":
-                return slot_index
+    def _next_priority_candidate(self, states: list[dict]) -> Optional[dict]:
+        """Return first eligible priority item with display fields for Next Intention."""
+        by_index = {s["index"]: s for s in states}
+        manual_by_id = {
+            str(a.get("id", "") or "").strip().lower(): a
+            for a in self._active_manual_actions()
+        }
+        for item in self._active_priority_items():
+            item_type = str(item.get("type", "") or "").strip().lower()
+            if item_type == "slot":
+                slot_index = item.get("slot_index")
+                if not isinstance(slot_index, int):
+                    continue
+                slot = by_index.get(slot_index)
+                if not slot or slot.get("state") != "ready":
+                    continue
+                keybind = (
+                    self._config.keybinds[slot_index]
+                    if slot_index < len(self._config.keybinds)
+                    else "?"
+                )
+                keybind = keybind or "?"
+                names = getattr(self._config, "slot_display_names", [])
+                name = "Unidentified"
+                if slot_index < len(names) and (names[slot_index] or "").strip():
+                    name = (names[slot_index] or "").strip()
+                return {
+                    "item_type": "slot",
+                    "slot_index": slot_index,
+                    "keybind": keybind,
+                    "display_name": name,
+                }
+            if item_type == "manual":
+                action_id = str(item.get("action_id", "") or "").strip().lower()
+                action = manual_by_id.get(action_id)
+                if not isinstance(action, dict):
+                    continue
+                keybind = str(action.get("keybind", "") or "").strip()
+                if not keybind:
+                    continue
+                name = str(action.get("name", "") or "").strip() or "Manual Action"
+                return {
+                    "item_type": "manual",
+                    "slot_index": None,
+                    "keybind": keybind,
+                    "display_name": name,
+                }
         return None
 
     def _next_casting_priority_slot(
@@ -951,7 +1026,12 @@ class MainWindow(QMainWindow):
     ) -> tuple[Optional[int], Optional[float]]:
         """First slot in priority order currently casting/channeling and its cast_ends_at."""
         by_index = {s["index"]: s for s in states}
-        for slot_index in self._active_priority_order():
+        for item in self._active_priority_items():
+            if str(item.get("type", "") or "").strip().lower() != "slot":
+                continue
+            slot_index = item.get("slot_index")
+            if not isinstance(slot_index, int):
+                continue
             slot = by_index.get(slot_index)
             if not slot:
                 continue
@@ -995,6 +1075,129 @@ class MainWindow(QMainWindow):
             )
             self.config_changed.emit(self._config)
             self._maybe_auto_save()
+
+    def _find_manual_action(self, action_id: str) -> Optional[dict]:
+        aid = (action_id or "").strip().lower()
+        if not aid:
+            return None
+        for action in self._active_manual_actions():
+            if str(action.get("id", "") or "").strip().lower() == aid:
+                return action
+        return None
+
+    def _on_add_manual_action(self) -> None:
+        name, ok = QInputDialog.getText(self, "Add Manual Action", "Action name:")
+        if not ok:
+            return
+        name = (name or "").strip() or "Manual Action"
+        keybind, ok = QInputDialog.getText(
+            self, "Add Manual Action", "Keybind to send:"
+        )
+        if not ok:
+            return
+        keybind = (keybind or "").strip()
+        if not keybind:
+            self._show_status_message("Manual action requires a keybind.", 2000)
+            return
+        self._config.ensure_priority_profiles()
+        profile = self._config.get_active_priority_profile()
+        actions = [
+            a for a in list(profile.get("manual_actions", [])) if isinstance(a, dict)
+        ]
+        existing_ids = {
+            str(a.get("id", "") or "").strip().lower()
+            for a in actions
+            if isinstance(a, dict)
+        }
+        i = 1
+        while f"manual_{i}" in existing_ids:
+            i += 1
+        action_id = f"manual_{i}"
+        actions.append({"id": action_id, "name": name, "keybind": keybind})
+        profile["manual_actions"] = actions
+        items = [
+            i for i in list(profile.get("priority_items", [])) if isinstance(i, dict)
+        ]
+        if not items:
+            items = [
+                {"type": "slot", "slot_index": i}
+                for i in list(profile.get("priority_order", []))
+            ]
+        items.append({"type": "manual", "action_id": action_id})
+        profile["priority_items"] = items
+        profile["priority_order"] = self._slot_order_from_priority_items(items)
+        self._config.priority_order = list(profile["priority_order"])
+        self._priority_panel.priority_list.set_manual_actions(actions)
+        self._priority_panel.priority_list.set_items(items)
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
+
+    def _on_rename_manual_action(self, action_id: str) -> None:
+        action = self._find_manual_action(action_id)
+        if not isinstance(action, dict):
+            return
+        current = str(action.get("name", "") or "").strip() or "Manual Action"
+        name, ok = QInputDialog.getText(
+            self, "Rename Manual Action", "Action name:", text=current
+        )
+        if not ok:
+            return
+        action["name"] = (name or "").strip() or "Manual Action"
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
+
+    def _on_rebind_manual_action(self, action_id: str) -> None:
+        action = self._find_manual_action(action_id)
+        if not isinstance(action, dict):
+            return
+        current = str(action.get("keybind", "") or "").strip()
+        keybind, ok = QInputDialog.getText(
+            self, "Rebind Manual Action", "Keybind to send:", text=current
+        )
+        if not ok:
+            return
+        keybind = (keybind or "").strip()
+        if not keybind:
+            self._show_status_message("Manual action requires a keybind.", 2000)
+            return
+        action["keybind"] = keybind
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
+
+    def _on_remove_manual_action(self, action_id: str) -> None:
+        aid = (action_id or "").strip().lower()
+        if not aid:
+            return
+        self._config.ensure_priority_profiles()
+        profile = self._config.get_active_priority_profile()
+        actions = [
+            a
+            for a in list(profile.get("manual_actions", []))
+            if str(a.get("id", "") or "").strip().lower() != aid
+        ]
+        items = [
+            i
+            for i in list(profile.get("priority_items", []))
+            if not (
+                str(i.get("type", "") or "").strip().lower() == "manual"
+                and str(i.get("action_id", "") or "").strip().lower() == aid
+            )
+        ]
+        profile["manual_actions"] = actions
+        profile["priority_items"] = items
+        slot_order = self._slot_order_from_priority_items(items)
+        profile["priority_order"] = slot_order
+        self._config.priority_order = list(slot_order)
+        self._priority_panel.priority_list.set_manual_actions(actions)
+        self._priority_panel.priority_list.set_items(items)
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
 
     def _start_listening_for_key(self, slot_index: int) -> None:
         """Turn slot button blue and show status; next keypress will bind (or Esc cancel)."""
@@ -1089,6 +1292,9 @@ class MainWindow(QMainWindow):
             )
 
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
         self._priority_panel.priority_list.update_states(states)
         if self._queued_override:
             keybind = (self._queued_override.get("key") or "?").strip() or "?"
