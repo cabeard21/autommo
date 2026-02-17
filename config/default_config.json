@@ -129,11 +129,10 @@
   "priority_order": [
     0,
     1,
-    2,
-    3
+    2
   ],
-  "automation_enabled": true,
+  "automation_enabled": false,
   "automation_toggle_bind": "f24",
-  "min_press_interval_ms": 150,
+  "min_press_interval_ms": 50,
   "target_window_title": ""
 }
