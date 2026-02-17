@@ -10,6 +10,9 @@ import numpy as np
 class SlotState(Enum):
     READY = "ready"
     ON_COOLDOWN = "on_cooldown"
+    CASTING = "casting"
+    CHANNELING = "channeling"
+    LOCKED = "locked"
     GCD = "gcd"
     UNKNOWN = "unknown"
 
@@ -32,12 +35,20 @@ class SlotSnapshot:
     state: SlotState = SlotState.UNKNOWN
     keybind: Optional[str] = None
     cooldown_remaining: Optional[float] = None
+    cast_progress: Optional[float] = None
+    cast_ends_at: Optional[float] = None
+    last_cast_start_at: Optional[float] = None
+    last_cast_success_at: Optional[float] = None
     brightness: float = 0.0
     timestamp: float = 0.0
 
     @property
     def is_ready(self) -> bool:
         return self.state == SlotState.READY
+
+    @property
+    def is_casting(self) -> bool:
+        return self.state in (SlotState.CASTING, SlotState.CHANNELING)
 
 
 @dataclass
@@ -51,6 +62,9 @@ class ActionBarState:
 
     def cooldown_slots(self) -> list[SlotSnapshot]:
         return [s for s in self.slots if s.state == SlotState.ON_COOLDOWN]
+
+    def casting_slots(self) -> list[SlotSnapshot]:
+        return [s for s in self.slots if s.is_casting]
 
 
 @dataclass
@@ -88,6 +102,20 @@ class AppConfig:
     brightness_drop_threshold: int = 40  # 0-255; pixel counts as darkened if brightness dropped by more
     cooldown_pixel_fraction: float = 0.30  # ON_COOLDOWN if this fraction of pixels darkened
     cooldown_min_duration_ms: int = 2000
+    cast_detection_enabled: bool = True
+    cast_candidate_min_fraction: float = 0.05
+    cast_candidate_max_fraction: float = 0.22
+    cast_confirm_frames: int = 2
+    cast_min_duration_ms: int = 150
+    cast_max_duration_ms: int = 3000
+    cast_cancel_grace_ms: int = 120
+    channeling_enabled: bool = True
+    queue_window_ms: int = 120
+    allow_cast_while_casting: bool = False
+    lock_ready_while_cast_bar_active: bool = False
+    cast_bar_region: dict = field(default_factory=dict)
+    cast_bar_activity_threshold: float = 12.0
+    cast_bar_history_frames: int = 8
     ocr_enabled: bool = True
     overlay_enabled: bool = True
     overlay_border_color: str = "#00FF00"
@@ -135,6 +163,26 @@ class AppConfig:
             ),
             cooldown_pixel_fraction=data.get("detection", {}).get("cooldown_pixel_fraction", 0.30),
             cooldown_min_duration_ms=data.get("detection", {}).get("cooldown_min_duration_ms", 2000),
+            cast_detection_enabled=data.get("detection", {}).get("cast_detection_enabled", True),
+            cast_candidate_min_fraction=data.get("detection", {}).get("cast_candidate_min_fraction", 0.05),
+            cast_candidate_max_fraction=data.get("detection", {}).get("cast_candidate_max_fraction", 0.22),
+            cast_confirm_frames=data.get("detection", {}).get("cast_confirm_frames", 2),
+            cast_min_duration_ms=data.get("detection", {}).get("cast_min_duration_ms", 150),
+            cast_max_duration_ms=data.get("detection", {}).get("cast_max_duration_ms", 3000),
+            cast_cancel_grace_ms=data.get("detection", {}).get("cast_cancel_grace_ms", 120),
+            channeling_enabled=data.get("detection", {}).get("channeling_enabled", True),
+            queue_window_ms=data.get("detection", {}).get("queue_window_ms", 120),
+            allow_cast_while_casting=data.get("detection", {}).get("allow_cast_while_casting", False),
+            lock_ready_while_cast_bar_active=data.get("detection", {}).get(
+                "lock_ready_while_cast_bar_active",
+                False,
+            ),
+            cast_bar_region=data.get("detection", {}).get("cast_bar_region", {}),
+            cast_bar_activity_threshold=data.get("detection", {}).get(
+                "cast_bar_activity_threshold",
+                12.0,
+            ),
+            cast_bar_history_frames=data.get("detection", {}).get("cast_bar_history_frames", 8),
             ocr_enabled=data.get("detection", {}).get("ocr_enabled", True),
             overlay_enabled=data.get("overlay", {}).get("enabled", True),
             overlay_border_color=data.get("overlay", {}).get("border_color", "#00FF00"),
@@ -171,6 +219,20 @@ class AppConfig:
                 "brightness_drop_threshold": self.brightness_drop_threshold,
                 "cooldown_pixel_fraction": self.cooldown_pixel_fraction,
                 "cooldown_min_duration_ms": self.cooldown_min_duration_ms,
+                "cast_detection_enabled": self.cast_detection_enabled,
+                "cast_candidate_min_fraction": self.cast_candidate_min_fraction,
+                "cast_candidate_max_fraction": self.cast_candidate_max_fraction,
+                "cast_confirm_frames": self.cast_confirm_frames,
+                "cast_min_duration_ms": self.cast_min_duration_ms,
+                "cast_max_duration_ms": self.cast_max_duration_ms,
+                "cast_cancel_grace_ms": self.cast_cancel_grace_ms,
+                "channeling_enabled": self.channeling_enabled,
+                "queue_window_ms": self.queue_window_ms,
+                "allow_cast_while_casting": self.allow_cast_while_casting,
+                "lock_ready_while_cast_bar_active": self.lock_ready_while_cast_bar_active,
+                "cast_bar_region": self.cast_bar_region,
+                "cast_bar_activity_threshold": self.cast_bar_activity_threshold,
+                "cast_bar_history_frames": self.cast_bar_history_frames,
                 "ocr_enabled": self.ocr_enabled,
             },
             "overlay": {

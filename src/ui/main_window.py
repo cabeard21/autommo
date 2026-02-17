@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 KEY_CYAN = "#66eeff"
 KEY_GREEN = "#88ff88"
 KEY_YELLOW = "#eecc55"
+KEY_BLUE = "#7db5ff"
 
 SECTION_BG = "#252535"
 SECTION_BG_DARK = "#1e1e2e"
@@ -616,6 +617,26 @@ class MainWindow(QMainWindow):
         """Show next intention as blocked (wrong window)."""
         self._next_intention_row.set_content(keybind, display_name or "Unidentified", "ready (window)", KEY_YELLOW)
 
+    def set_next_intention_casting_wait(
+        self,
+        slot_index: Optional[int],
+        cast_ends_at: Optional[float],
+    ) -> None:
+        """Show next intention as waiting for a current cast/channel to finish."""
+        name = "cast/channel"
+        if slot_index is not None:
+            names = getattr(self._config, "slot_display_names", [])
+            if slot_index < len(names) and (names[slot_index] or "").strip():
+                name = (names[slot_index] or "").strip()
+            else:
+                name = f"slot {slot_index + 1}"
+        if cast_ends_at:
+            remaining = max(0.0, cast_ends_at - time.time())
+            status = f"waiting: casting ({remaining:.1f}s)"
+        else:
+            status = "waiting: channeling"
+        self._next_intention_row.set_content("…", name, status, KEY_BLUE)
+
     def _on_priority_drop_remove(self, slot_index: int) -> None:
         """Called when a priority item is dropped on the left panel (remove from list)."""
         self._priority_panel.priority_list.remove_slot(slot_index)
@@ -685,6 +706,9 @@ class MainWindow(QMainWindow):
         color = {
             "ready": "#2d5a2d",
             "on_cooldown": "#5a2d2d",
+            "casting": "#2a3f66",
+            "channeling": "#5a4a1f",
+            "locked": "#3f3f3f",
             "gcd": "#5a5a2d",
             "unknown": "#333333",
         }.get(state, "#333333")
@@ -702,6 +726,17 @@ class MainWindow(QMainWindow):
             if by_index.get(slot_index) == "ready":
                 return slot_index
         return None
+
+    def _next_casting_priority_slot(self, states: list[dict]) -> tuple[Optional[int], Optional[float]]:
+        """First slot in priority order currently casting/channeling and its cast_ends_at."""
+        by_index = {s["index"]: s for s in states}
+        for slot_index in getattr(self._config, "priority_order", []):
+            slot = by_index.get(slot_index)
+            if not slot:
+                continue
+            if slot.get("state") in ("casting", "channeling"):
+                return slot_index, slot.get("cast_ends_at")
+        return None, None
 
     def _show_slot_menu(self, slot_index: int) -> None:
         """Show context menu: Bind Key, Calibrate This Slot, Rename (identify skill)."""
@@ -823,6 +858,11 @@ class MainWindow(QMainWindow):
 
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
         self._priority_panel.priority_list.update_states(states)
+        casting_slot, cast_ends_at = self._next_casting_priority_slot(states)
+        if casting_slot is not None:
+            self.set_next_intention_casting_wait(casting_slot, cast_ends_at)
+            return
+
         next_slot = self._next_ready_priority_slot(states)
         if next_slot is not None:
             keybind = (

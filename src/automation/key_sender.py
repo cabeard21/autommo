@@ -60,6 +60,13 @@ class KeySender:
         """True if foreground window matches target_window_title, or target is empty."""
         return is_target_window_active(getattr(self._config, "target_window_title", "") or "")
 
+    def _find_blocking_cast(self, state: ActionBarState) -> Optional[tuple[int, object]]:
+        """Return first slot currently casting/channeling, if any."""
+        for slot in state.slots:
+            if slot.state in (SlotState.CASTING, SlotState.CHANNELING):
+                return slot.index, slot
+        return None
+
     def evaluate_and_send(
         self,
         state: ActionBarState,
@@ -79,6 +86,21 @@ class KeySender:
         now = time.time()
         if now - self._last_send_time < min_interval_sec:
             return None
+
+        allow_while_casting = bool(getattr(self._config, "allow_cast_while_casting", False))
+        if not allow_while_casting:
+            blocking = self._find_blocking_cast(state)
+            if blocking is not None:
+                blocking_index, blocking_slot = blocking
+                queue_window_sec = (getattr(self._config, "queue_window_ms", 120) or 120) / 1000.0
+                cast_ends_at = getattr(blocking_slot, "cast_ends_at", None)
+                if cast_ends_at is None or now < (cast_ends_at + queue_window_sec):
+                    return {
+                        "action": "blocked",
+                        "reason": "casting",
+                        "slot_index": blocking_index,
+                        "cast_ends_at": cast_ends_at,
+                    }
 
         slots_by_index = {s.index: s for s in state.slots}
         for slot_index in priority_order:
