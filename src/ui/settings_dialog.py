@@ -1,4 +1,4 @@
-"""Settings window — non-modal dialog for all configuration (Profile, Display, Capture, Detection, Automation, Calibration)."""
+"""Settings window - non-modal dialog for all configuration (Profile, Display, Capture, Detection, Automation, Calibration)."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -80,6 +80,7 @@ class SettingsDialog(QDialog):
         self._monitors: list[dict] = []
         self._capture_bind_thread: Optional[CaptureOneKeyThread] = None
         self._capture_bind_target: Optional[str] = None
+        self._rebind_event_filter_installed = False
         self._last_auto_saved: Optional[datetime] = None
         self._auto_save_timer = QTimer(self)
         self._auto_save_timer.setSingleShot(True)
@@ -295,7 +296,7 @@ class SettingsDialog(QDialog):
         self._spin_cast_bar_height.setMaximumWidth(74)
         self._spin_cast_bar_activity = QSpinBox()
         self._spin_cast_bar_activity.setRange(1, 80)
-        self._spin_cast_bar_activity.setPrefix("Δ ")
+        self._spin_cast_bar_activity.setPrefix("d ")
         self._spin_cast_bar_activity.setMaximumWidth(68)
         cast_bar_row.addWidget(self._check_cast_bar_enabled)
         cast_bar_row.addWidget(self._spin_cast_bar_left)
@@ -314,7 +315,7 @@ class SettingsDialog(QDialog):
         self._combo_automation_profile = QComboBox()
         self._btn_add_automation_profile = QPushButton("+")
         self._btn_copy_automation_profile = QPushButton("Copy")
-        self._btn_remove_automation_profile = QPushButton("−")
+        self._btn_remove_automation_profile = QPushButton("-")
         self._btn_add_automation_profile.setFixedWidth(28)
         self._btn_copy_automation_profile.setMinimumWidth(54)
         self._btn_remove_automation_profile.setFixedWidth(28)
@@ -328,19 +329,21 @@ class SettingsDialog(QDialog):
         self._edit_automation_profile_name.setPlaceholderText("e.g. Single Target")
         self._edit_automation_profile_name.setClearButtonEnabled(True)
         fl.addRow(_row_label("List name:"), self._edit_automation_profile_name)
-        self._btn_toggle_bind = QPushButton("—")
+        self._btn_toggle_bind = QPushButton("-")
         self._btn_toggle_bind.setStyleSheet("font-family: monospace;")
         self._btn_toggle_bind.setMinimumWidth(72)
-        toggle_help = QLabel("click to bind toggle")
+        self._btn_toggle_bind.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        toggle_help = QLabel("click to bind toggle, right-click to clear")
         toggle_help.setStyleSheet("font-size: 10px; color: #666;")
         toggle_row = QHBoxLayout()
         toggle_row.addWidget(self._btn_toggle_bind)
         toggle_row.addWidget(toggle_help)
         fl.addRow(_row_label("Toggle bind:"), toggle_row)
-        self._btn_single_fire_bind = QPushButton("—")
+        self._btn_single_fire_bind = QPushButton("-")
         self._btn_single_fire_bind.setStyleSheet("font-family: monospace;")
         self._btn_single_fire_bind.setMinimumWidth(72)
-        single_help = QLabel("click to bind single fire")
+        self._btn_single_fire_bind.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        single_help = QLabel("click to bind single fire, right-click to clear")
         single_help.setStyleSheet("font-size: 10px; color: #666;")
         single_row = QHBoxLayout()
         single_row.addWidget(self._btn_single_fire_bind)
@@ -413,7 +416,7 @@ class SettingsDialog(QDialog):
 
     def _status_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
-        self._auto_save_status_label = QLabel("Last auto-saved: —")
+        self._auto_save_status_label = QLabel("Last auto-saved: -")
         self._auto_save_status_label.setStyleSheet("font-size: 10px; color: #666;")
         row.addWidget(self._auto_save_status_label)
         row.addStretch()
@@ -457,7 +460,9 @@ class SettingsDialog(QDialog):
         self._btn_remove_automation_profile.clicked.connect(self._on_remove_automation_profile)
         self._edit_automation_profile_name.textChanged.connect(self._on_automation_profile_name_changed)
         self._btn_toggle_bind.clicked.connect(self._on_rebind_toggle_clicked)
+        self._btn_toggle_bind.customContextMenuRequested.connect(self._on_rebind_toggle_cleared)
         self._btn_single_fire_bind.clicked.connect(self._on_rebind_single_fire_clicked)
+        self._btn_single_fire_bind.customContextMenuRequested.connect(self._on_rebind_single_fire_cleared)
         self._spin_min_delay.valueChanged.connect(self._on_min_delay_changed)
         self._spin_queue_window.valueChanged.connect(self._on_queue_window_changed)
         self._check_allow_cast_while_casting.toggled.connect(self._on_allow_cast_while_casting_changed)
@@ -609,9 +614,20 @@ class SettingsDialog(QDialog):
         self._edit_automation_profile_name.blockSignals(False)
         toggle_bind = str(active.get("toggle_bind", "") or "")
         single_fire_bind = str(active.get("single_fire_bind", "") or "")
-        self._btn_toggle_bind.setText(format_bind_for_display(toggle_bind) if toggle_bind else "—")
+        capture_active = (
+            self._capture_bind_thread is not None and self._capture_bind_thread.isRunning()
+        )
+        self._btn_toggle_bind.setEnabled(not capture_active)
+        self._btn_single_fire_bind.setEnabled(not capture_active)
+        self._btn_toggle_bind.setText(
+            "..."
+            if capture_active and self._capture_bind_target == "toggle_bind"
+            else (format_bind_for_display(toggle_bind) if toggle_bind else "-")
+        )
         self._btn_single_fire_bind.setText(
-            format_bind_for_display(single_fire_bind) if single_fire_bind else "—"
+            "..."
+            if capture_active and self._capture_bind_target == "single_fire_bind"
+            else (format_bind_for_display(single_fire_bind) if single_fire_bind else "-")
         )
         self._update_automation_bind_conflict_badge()
         self._btn_remove_automation_profile.setEnabled(len(self._config.priority_profiles) > 1)
@@ -679,7 +695,7 @@ class SettingsDialog(QDialog):
             self._monitor_combo.clear()
             for i, m in enumerate(monitors):
                 self._monitor_combo.addItem(
-                    f"Monitor {i + 1}: {m['width']}×{m['height']}", i + 1
+                    f"Monitor {i + 1}: {m['width']}x{m['height']}", i + 1
                 )
             if monitors:
                 clamped = min(max(1, self._config.monitor_index), len(monitors))
@@ -709,7 +725,7 @@ class SettingsDialog(QDialog):
 
     def _update_auto_save_status(self) -> None:
         if self._last_auto_saved is None:
-            self._auto_save_status_label.setText("Last auto-saved: —")
+            self._auto_save_status_label.setText("Last auto-saved: -")
         else:
             self._auto_save_status_label.setText(
                 self._last_auto_saved.strftime("Last auto-saved: %b %d, %H:%M")
@@ -835,12 +851,13 @@ class SettingsDialog(QDialog):
         if self._capture_bind_thread is not None and self._capture_bind_thread.isRunning():
             return
         self._capture_bind_target = target
-        button.setText("...")
-        button.setEnabled(False)
+        button.setFocus(Qt.FocusReason.OtherFocusReason)
         self._capture_bind_thread = CaptureOneKeyThread(self)
         self._capture_bind_thread.captured.connect(self._on_rebind_captured)
         self._capture_bind_thread.cancelled.connect(self._on_rebind_cancelled)
         self._capture_bind_thread.finished.connect(self._on_rebind_finished)
+        self._install_rebind_event_filter()
+        self._sync_automation_profile_controls()
         self._capture_bind_thread.start()
 
     def _on_rebind_toggle_clicked(self) -> None:
@@ -848,6 +865,22 @@ class SettingsDialog(QDialog):
 
     def _on_rebind_single_fire_clicked(self) -> None:
         self._start_rebind_capture("single_fire_bind", self._btn_single_fire_bind)
+
+    def _clear_rebind(self, target: str) -> None:
+        if target not in ("toggle_bind", "single_fire_bind"):
+            return
+        active = self._config.get_active_priority_profile()
+        if str(active.get(target, "") or "") == "":
+            return
+        active[target] = ""
+        self._sync_automation_profile_controls()
+        self._emit_config()
+
+    def _on_rebind_toggle_cleared(self, _pos) -> None:
+        self._clear_rebind("toggle_bind")
+
+    def _on_rebind_single_fire_cleared(self, _pos) -> None:
+        self._clear_rebind("single_fire_bind")
 
     def _is_bind_in_use_elsewhere(self, bind: str, field_name: str) -> bool:
         active_id = self._config.active_priority_profile_id
@@ -891,9 +924,39 @@ class SettingsDialog(QDialog):
         self._sync_automation_profile_controls()
 
     def _on_rebind_finished(self) -> None:
+        self._remove_rebind_event_filter()
         self._capture_bind_thread = None
         self._capture_bind_target = None
         self._sync_automation_profile_controls()
+
+    def _install_rebind_event_filter(self) -> None:
+        if self._rebind_event_filter_installed:
+            return
+        app = QApplication.instance()
+        if app is None:
+            return
+        app.installEventFilter(self)
+        self._rebind_event_filter_installed = True
+
+    def _remove_rebind_event_filter(self) -> None:
+        if not self._rebind_event_filter_installed:
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+        self._rebind_event_filter_installed = False
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        capture_active = self._capture_bind_thread is not None and self._capture_bind_thread.isRunning()
+        if capture_active:
+            etype = event.type()
+            if etype in (
+                QEvent.Type.ShortcutOverride,
+                QEvent.Type.KeyPress,
+                QEvent.Type.KeyRelease,
+            ):
+                return True
+        return super().eventFilter(watched, event)
 
     def _on_min_delay_changed(self, value: int) -> None:
         self._config.min_press_interval_ms = max(50, min(2000, value))
@@ -1011,6 +1074,7 @@ class SettingsDialog(QDialog):
         self.calibrate_requested.emit()
 
     def closeEvent(self, event) -> None:
+        self._remove_rebind_event_filter()
         event.accept()
         self.hide()
 
