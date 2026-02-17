@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
@@ -317,6 +318,7 @@ class MainWindow(QMainWindow):
         finally:
             self._priority_panel.automation_check.blockSignals(False)
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
+        self._priority_panel.priority_list.set_display_names(getattr(self._config, "slot_display_names", []))
         self._priority_panel.priority_list.blockSignals(True)
         try:
             self._priority_panel.priority_list.set_order(getattr(self._config, "priority_order", []))
@@ -492,16 +494,36 @@ class MainWindow(QMainWindow):
         return None
 
     def _show_slot_menu(self, slot_index: int) -> None:
-        """Show context menu above the slot button with Bind Key and Calibrate This Slot."""
+        """Show context menu: Bind Key, Calibrate This Slot, Rename (identify skill)."""
         if slot_index < 0 or slot_index >= len(self._slot_buttons):
             return
         btn = self._slot_buttons[slot_index]
         menu = QMenu(self)
         menu.addAction("Bind Key", lambda: self._start_listening_for_key(slot_index))
         menu.addAction("Calibrate This Slot", lambda: self.calibrate_slot_requested.emit(slot_index))
-        # Show menu above the button (slots at bottom of window)
+        menu.addAction("Rename...", lambda: self._rename_slot(slot_index))
         pos = btn.mapToGlobal(QPoint(0, 0)) - QPoint(0, menu.sizeHint().height())
         menu.popup(pos)
+
+    def _rename_slot(self, slot_index: int) -> None:
+        """Open modal to set display name for this slot (e.g. skill name)."""
+        names = getattr(self._config, "slot_display_names", [])
+        while len(names) <= slot_index:
+            names.append("")
+        current = names[slot_index].strip() or "Unidentified"
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Slot",
+            "Skill / action name:",
+            text=current if current != "Unidentified" else "",
+        )
+        if ok and new_name is not None:
+            while len(self._config.slot_display_names) <= slot_index:
+                self._config.slot_display_names.append("")
+            self._config.slot_display_names[slot_index] = new_name.strip()
+            self._priority_panel.priority_list.set_display_names(self._config.slot_display_names)
+            self.config_changed.emit(self._config)
+            self._update_save_button_state()
 
     def _start_listening_for_key(self, slot_index: int) -> None:
         """Turn slot button blue and show status; next keypress will bind (or Esc cancel)."""

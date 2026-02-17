@@ -92,6 +92,8 @@ class AppConfig:
     overlay_enabled: bool = True
     overlay_border_color: str = "#00FF00"
     keybinds: list[str] = field(default_factory=list)  # keybinds[slot_index] = key string, e.g. "5", "F"
+    # User-defined display names per slot (e.g. "Fireball"); empty/missing = "Unidentified"
+    slot_display_names: list[str] = field(default_factory=list)
     # Persisted baselines: list of {"shape": [h, w], "data": base64} per slot (decoded at runtime in analyzer)
     slot_baselines: list = field(default_factory=list)
     # Slot indices that had their baseline set by "Calibrate This Slot" (show bold in UI)
@@ -123,6 +125,7 @@ class AppConfig:
             overlay_enabled=data.get("overlay", {}).get("enabled", True),
             overlay_border_color=data.get("overlay", {}).get("border_color", "#00FF00"),
             keybinds=data.get("slots", {}).get("keybinds", []),
+            slot_display_names=data.get("slot_display_names", []),
             slot_baselines=data.get("slot_baselines", []),
             overwritten_baseline_slots=data.get("overwritten_baseline_slots", []),
             priority_order=data.get("priority_order", []),
@@ -141,6 +144,7 @@ class AppConfig:
                 "padding": self.slot_padding,
                 "keybinds": self.keybinds,
             },
+            "slot_display_names": self.slot_display_names,
             "detection": {
                 "polling_fps": self.polling_fps,
                 "brightness_threshold": self.brightness_threshold,

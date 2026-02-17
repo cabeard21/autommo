@@ -24,6 +24,11 @@
       "T"
     ]
   },
+  "slot_display_names": [
+    "Judgement",
+    "Consecration",
+    "Deconstruct"
+  ],
   "detection": {
     "polling_fps": 20,
     "brightness_threshold": 0.95,

@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QMimeData, QPoint, pyqtSignal
-from PyQt6.QtGui import QDrag
+from PyQt6.QtGui import QDrag, QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -76,31 +76,74 @@ class SlotButton(QPushButton):
         super().mouseReleaseEvent(event)
 
 
-class PriorityItemWidget(QFrame):
-    """One row in the priority list: handle, [key], status. Draggable for reorder; drag out to remove."""
+def _format_countdown(seconds: Optional[float]) -> str:
+    """Format cooldown for display: no decimals, e.g. 12s or 1m."""
+    if seconds is None or seconds <= 0:
+        return "—"
+    secs = int(seconds)
+    if secs >= 60:
+        return f"{secs // 60}m"
+    return f"{secs}s"
 
-    def __init__(self, slot_index: int, rank: int, keybind: str, parent: Optional[QWidget] = None):
+
+class PriorityItemWidget(QFrame):
+    """One row: handle + [key] (small), display name, countdown area (fixed width). Draggable for reorder."""
+
+    def __init__(
+        self,
+        slot_index: int,
+        rank: int,
+        keybind: str,
+        display_name: str,
+        parent: Optional[QWidget] = None,
+    ):
         super().__init__(parent)
         self._slot_index = slot_index
         self._rank = rank
         self._keybind = keybind
+        self._display_name = display_name or "Unidentified"
         self._state = "unknown"
         self._cooldown_remaining: Optional[float] = None
         self._drag_start: Optional[QPoint] = None
         self.setAcceptDrops(False)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
-        self._handle_label = QLabel("\u28FF")  # Braille pattern for "handle"
+        layout.setSpacing(6)
+        handle_key = QWidget()
+        handle_key_layout = QHBoxLayout(handle_key)
+        handle_key_layout.setContentsMargins(0, 0, 0, 0)
+        handle_key_layout.setSpacing(2)
+        self._handle_label = QLabel("\u28FF")
         self._handle_label.setStyleSheet("color: #666;")
-        layout.addWidget(self._handle_label)
-        layout.addStretch(1)
+        handle_key_layout.addWidget(self._handle_label)
         self._key_label = QLabel("[?]")
-        self._key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._key_label, 0, Qt.AlignmentFlag.AlignCenter)
+        self._key_label.setStyleSheet("font-size: 8px;")
+        handle_key_layout.addWidget(self._key_label)
+        layout.addWidget(handle_key)
         layout.addStretch(1)
-        self._status_label = QLabel("—")
-        self._status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        layout.addWidget(self._status_label)
+        name_container = QWidget()
+        name_container.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        name_container_layout = QHBoxLayout(name_container)
+        name_container_layout.setContentsMargins(0, 0, 0, 0)
+        name_container_layout.setSpacing(0)
+        name_container_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._name_label = QLabel(self._display_name)
+        self._name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._name_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._name_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        name_container_layout.addWidget(self._name_label, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(name_container, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addStretch(1)
+        self._countdown_label = QLabel("—")
+        self._countdown_label.setMinimumWidth(36)
+        self._countdown_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        font = QFont("Consolas")
+        if not font.exactMatch():
+            font = QFont("Courier New")
+        font.setPointSize(10)
+        self._countdown_label.setFont(font)
+        self._countdown_label.setStyleSheet("font-size: 11px;")
+        layout.addWidget(self._countdown_label)
         self.setFixedHeight(44)
         self._update_style()
 
@@ -115,15 +158,17 @@ class PriorityItemWidget(QFrame):
         self._keybind = keybind
         self._key_label.setText(f"[{keybind}]")
 
+    def set_display_name(self, name: str) -> None:
+        self._display_name = name or "Unidentified"
+        self._name_label.setText(self._display_name)
+        self._name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._name_label.setMinimumWidth(0)
+        self._name_label.adjustSize()
+
     def set_state(self, state: str, cooldown_remaining: Optional[float] = None) -> None:
         self._state = state
         self._cooldown_remaining = cooldown_remaining
-        if state == "ready":
-            self._status_label.setText("READY")
-        elif cooldown_remaining is not None:
-            self._status_label.setText(f"{cooldown_remaining:.1f}s")
-        else:
-            self._status_label.setText("NOT READY")
+        self._countdown_label.setText(_format_countdown(cooldown_remaining))
         self._update_style()
 
     def _update_style(self) -> None:
@@ -137,12 +182,15 @@ class PriorityItemWidget(QFrame):
         else:
             bg = bg_not_ready
             text_color = text_not_ready
-        self._status_label.setStyleSheet(f"color: {text_color}; font-size: 10px;")
         self.setStyleSheet(
             f"PriorityItemWidget {{ background: {bg}; border: 1px solid #444; }}"
         )
         self._handle_label.setStyleSheet("color: #888;")
-        self._key_label.setStyleSheet(f"color: {text_color}; font-weight: bold; font-size: 14px;")
+        self._key_label.setStyleSheet(f"color: {text_color}; font-size: 8px;")
+        self._name_label.setStyleSheet(
+            f"color: {text_color}; font-size: 12px; font-weight: bold;"
+        )
+        self._countdown_label.setStyleSheet(f"color: {text_color}; font-size: 11px;")
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -179,7 +227,8 @@ class PriorityListWidget(QWidget):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._order: list[int] = []
-        self._keybinds: list[str] = []  # keybinds[slot_index]
+        self._keybinds: list[str] = []
+        self._display_names: list[str] = []
         self._states_by_index: dict[int, tuple[str, Optional[float]]] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -203,6 +252,14 @@ class PriorityListWidget(QWidget):
             if w.slot_index < len(keybinds):
                 w.set_keybind(keybinds[w.slot_index] or "?")
 
+    def set_display_names(self, names: list[str]) -> None:
+        self._display_names = list(names)
+        for w in self._item_widgets:
+            if w.slot_index < len(names) and names[w.slot_index].strip():
+                w.set_display_name(names[w.slot_index].strip())
+            else:
+                w.set_display_name("Unidentified")
+
     def set_order(self, order: list[int]) -> None:
         """Replace the list with the given slot indices and refresh widgets."""
         self._order = list(order)
@@ -225,7 +282,12 @@ class PriorityListWidget(QWidget):
         self._item_widgets.clear()
         for rank, slot_index in enumerate(self._order, 1):
             keybind = self._keybinds[slot_index] if slot_index < len(self._keybinds) else "?"
-            w = PriorityItemWidget(slot_index, rank, keybind or "?", self._list_container)
+            name = (
+                self._display_names[slot_index].strip()
+                if slot_index < len(self._display_names) and self._display_names[slot_index].strip()
+                else "Unidentified"
+            )
+            w = PriorityItemWidget(slot_index, rank, keybind or "?", name, self._list_container)
             state, cd = self._states_by_index.get(slot_index, ("unknown", None))
             w.set_state(state, cd)
             self._list_layout.insertWidget(self._list_layout.count() - 1, w)
