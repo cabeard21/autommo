@@ -139,7 +139,7 @@ class CaptureWorker(QThread):
                         )
                         result = self._key_sender.evaluate_and_send(
                             state,
-                            getattr(self._config, "priority_order", []),
+                            self._config.active_priority_order(),
                             self._config.keybinds,
                             getattr(self._config, "automation_enabled", False),
                             queued_override=queued,
@@ -328,18 +328,48 @@ def main() -> None:
     window.start_capture_requested.connect(on_start_capture_requested)
 
     # Global hotkey action (works when app does not have focus)
-    def on_global_toggle():
-        mode = (getattr(config, "automation_hotkey_mode", "toggle") or "toggle").strip().lower()
-        if mode == "single_fire":
+    def all_profile_binds() -> list[str]:
+        binds: list[str] = []
+        for p in getattr(config, "priority_profiles", []) or []:
+            toggle_bind = str(p.get("toggle_bind", "") or "").strip().lower()
+            single_fire_bind = str(p.get("single_fire_bind", "") or "").strip().lower()
+            if toggle_bind:
+                binds.append(toggle_bind)
+            if single_fire_bind:
+                binds.append(single_fire_bind)
+        return binds
+
+    def on_hotkey_triggered(triggered_bind: str):
+        bind = (triggered_bind or "").strip().lower()
+        if not bind:
+            return
+        matched_profile = None
+        matched_action = None
+        for p in getattr(config, "priority_profiles", []) or []:
+            if bind == str(p.get("toggle_bind", "") or "").strip().lower():
+                matched_profile = p
+                matched_action = "toggle"
+                break
+            if bind == str(p.get("single_fire_bind", "") or "").strip().lower():
+                matched_profile = p
+                matched_action = "single_fire"
+                break
+        if not matched_profile or not matched_action:
+            return
+        profile_id = str(matched_profile.get("id", "") or "").strip().lower()
+        profile_name = str(matched_profile.get("name", "") or "").strip() or "Profile"
+        switched = config.set_active_priority_profile(profile_id)
+        if switched:
+            window.set_active_priority_profile(profile_id, persist=True)
+            window.show_status_message(f"Profile: {profile_name}", 1200)
+        if matched_action == "single_fire":
             key_sender.request_single_fire()
-            window.show_status_message("Single-fire armed", 1000)
+            window.show_status_message(f"Single-fire armed ({profile_name})", 1200)
             return
         window.toggle_automation()
 
-    hotkey_listener = GlobalToggleListener(
-        get_bind=lambda: config.automation_toggle_bind
-    )
-    hotkey_listener.triggered.connect(on_global_toggle)
+    hotkey_listener = GlobalToggleListener(get_binds=all_profile_binds)
+    hotkey_listener.triggered.connect(on_hotkey_triggered)
     hotkey_listener.start()
 
     queue_listener = QueueListener(get_config=lambda: config)

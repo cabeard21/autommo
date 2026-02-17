@@ -587,6 +587,37 @@ class MainWindow(QMainWindow):
         )
         self._priority_panel.gcd_updated.connect(self._on_gcd_updated)
 
+    def _active_priority_profile(self) -> dict:
+        return self._config.get_active_priority_profile()
+
+    def _active_priority_order(self) -> list[int]:
+        return list(self._active_priority_profile().get("priority_order", []))
+
+    def _set_priority_list_from_active_profile(self) -> None:
+        self._priority_panel.priority_list.blockSignals(True)
+        try:
+            self._priority_panel.priority_list.set_order(self._active_priority_order())
+        finally:
+            self._priority_panel.priority_list.blockSignals(False)
+
+    def set_active_priority_profile(
+        self, profile_id: str, persist: bool = False
+    ) -> None:
+        changed = self._config.set_active_priority_profile(profile_id)
+        if (
+            not changed
+            and self._config.active_priority_profile_id
+            != (profile_id or "").strip().lower()
+        ):
+            return
+        profile = self._active_priority_profile()
+        profile_name = str(profile.get("name", "") or "").strip() or "Default"
+        self._profile_status_label.setText(f"Automation: {profile_name}")
+        self._set_priority_list_from_active_profile()
+        self._update_bind_display()
+        if persist:
+            self._save_config()
+
     def _sync_ui_from_config(self) -> None:
         """Set UI to match current config (main window only owns enable, bind display, priority, slots)."""
         while len(self._config.keybinds) < self._config.slot_count:
@@ -594,8 +625,11 @@ class MainWindow(QMainWindow):
         self._config.automation_enabled = False
         self._update_automation_button_text()
         self._update_bind_display()
-        name = (getattr(self._config, "profile_name", "") or "").strip() or "—"
-        self._profile_status_label.setText(f"Profile: {name}")
+        profile_name = (
+            str(self._active_priority_profile().get("name", "") or "").strip()
+            or "Default"
+        )
+        self._profile_status_label.setText(f"Automation: {profile_name}")
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
         self._priority_panel.priority_list.set_display_names(
             getattr(self._config, "slot_display_names", [])
@@ -619,8 +653,11 @@ class MainWindow(QMainWindow):
         self._update_automation_button_text()
         self._update_bind_display()
         self._last_action_history.set_max_rows(getattr(self._config, "history_rows", 3))
-        name = (getattr(self._config, "profile_name", "") or "").strip() or "—"
-        self._profile_status_label.setText(f"Profile: {name}")
+        profile_name = (
+            str(self._active_priority_profile().get("name", "") or "").strip()
+            or "Default"
+        )
+        self._profile_status_label.setText(f"Automation: {profile_name}")
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
         self._priority_panel.priority_list.set_display_names(
             getattr(self._config, "slot_display_names", [])
@@ -709,17 +746,17 @@ class MainWindow(QMainWindow):
         self._update_bind_display()
 
     def _update_bind_display(self) -> None:
-        key = getattr(self._config, "automation_toggle_bind", "") or ""
-        display_key = format_bind_for_display(key) if key else "—"
-        mode = (
-            (getattr(self._config, "automation_hotkey_mode", "toggle") or "toggle")
-            .strip()
-            .lower()
+        profile = self._active_priority_profile()
+        toggle_bind = str(profile.get("toggle_bind", "") or "").strip()
+        single_fire_bind = str(profile.get("single_fire_bind", "") or "").strip()
+        display_toggle = format_bind_for_display(toggle_bind) if toggle_bind else "—"
+        display_single = (
+            format_bind_for_display(single_fire_bind) if single_fire_bind else "—"
         )
-        mode_label = "Toggle" if mode == "toggle" else "Single"
         self._bind_display.setTextFormat(Qt.TextFormat.RichText)
         self._bind_display.setText(
-            f"Hotkey ({mode_label}): <span style='color:{KEY_CYAN}'>{display_key}</span>"
+            f"Toggle: <span style='color:{KEY_CYAN}'>{display_toggle}</span>"
+            f" | Single: <span style='color:{KEY_CYAN}'>{display_single}</span>"
         )
 
     def _on_automation_toggle_clicked(self) -> None:
@@ -749,6 +786,8 @@ class MainWindow(QMainWindow):
         self._key_sender = key_sender
 
     def _on_priority_order_changed(self, order: list) -> None:
+        profile = self._active_priority_profile()
+        profile["priority_order"] = list(order)
         self._config.priority_order = list(order)
         self.config_changed.emit(self._config)
         self._maybe_auto_save()
@@ -815,7 +854,10 @@ class MainWindow(QMainWindow):
     def _on_priority_drop_remove(self, slot_index: int) -> None:
         """Called when a priority item is dropped on the left panel (remove from list)."""
         self._priority_panel.priority_list.remove_slot(slot_index)
-        self._config.priority_order = self._priority_panel.priority_list.get_order()
+        order = self._priority_panel.priority_list.get_order()
+        profile = self._active_priority_profile()
+        profile["priority_order"] = list(order)
+        self._config.priority_order = list(order)
         self.config_changed.emit(self._config)
         self._maybe_auto_save()
 
@@ -899,7 +941,7 @@ class MainWindow(QMainWindow):
     def _next_ready_priority_slot(self, states: list[dict]) -> Optional[int]:
         """First slot in priority_order that is READY; None if none or automation off."""
         by_index = {s["index"]: s.get("state") for s in states}
-        for slot_index in getattr(self._config, "priority_order", []):
+        for slot_index in self._active_priority_order():
             if by_index.get(slot_index) == "ready":
                 return slot_index
         return None
@@ -909,7 +951,7 @@ class MainWindow(QMainWindow):
     ) -> tuple[Optional[int], Optional[float]]:
         """First slot in priority order currently casting/channeling and its cast_ends_at."""
         by_index = {s["index"]: s for s in states}
-        for slot_index in getattr(self._config, "priority_order", []):
+        for slot_index in self._active_priority_order():
             slot = by_index.get(slot_index)
             if not slot:
                 continue

@@ -2,7 +2,7 @@
 
 ## Project Overview
 A Python desktop app that reads MMO action bar cooldowns via screen capture and image analysis.
-It detects which abilities are ready, which are on cooldown, and (future) presses keys based on priority rules.
+It detects which abilities are ready/on cooldown/casting and can send keys based on configurable priority profiles.
 
 ## Architecture
 
@@ -12,10 +12,9 @@ Screen Capture (mss, small region only)
   → Slot Segmentation (crop each icon by computed pixel offsets from calibration)
     → Per-slot analysis:
         - Brightness/histogram delta vs baseline → cooldown yes/no
-        - Center region OCR (EasyOCR) → countdown timer number (if present)
-        - Top-right crop OCR → keybind label (one-time read)
-    → State dict per slot: { keybind, is_ready, cooldown_remaining, slot_index }
-      → UI visualization + (future) automation engine
+        - Optional OCR (EasyOCR) for countdown text
+    → State dict per slot: { keybind, state, cooldown_remaining, slot_index }
+      → UI visualization + automation engine (active priority profile)
 ```
 
 ### Module Responsibilities
@@ -29,17 +28,18 @@ Screen Capture (mss, small region only)
 - **src/overlay/calibration_overlay.py** — A transparent, always-on-top, click-through window (PyQt6) that draws a colored rectangle showing the current capture bounding box. Updates in real-time as the user adjusts values in the main UI. Must work over borderless-windowed games.
 
 - **src/ui/main_window.py** — PyQt6 main control panel. Contains:
-  - Monitor selector dropdown
-  - Bounding box controls (top/left/width/height spinboxes, or bottom/right)
+  - Start/stop capture + settings access
   - Live preview of what's being captured
-  - Per-slot state visualization (icon + ready/cooldown indicator + timer)
-  - (Future) Priority rule editor
+  - Per-slot state visualization + keybind/context actions
+  - Priority list editor (drag/drop) for the active automation profile
+  - Last Action / Next Intention rows
 
-- **src/automation/key_sender.py** — (Future scope) Sends keypresses based on slot states and priority rules. Will use pynput or similar. Keep the interface clean so rules can be plugged in later.
+- **src/automation/key_sender.py** — Sends keypresses based on slot states and priority order, with delay control, cast-aware blocking, queue timing, and optional target-window gating.
+- **src/automation/global_hotkey.py** — Global bind listener and one-key capture helpers. Supports per-profile toggle/single-fire binds.
 
-- **src/models/slot.py** — Dataclass for slot state: slot_index, keybind, is_ready, cooldown_remaining, last_updated, baseline_histogram.
+- **src/models/slot.py** — Dataclasses/enums for slot state and app config, including automation priority profiles and migration from legacy single-hotkey config.
 
-- **config/default_config.json** — Persisted calibration: monitor index, bounding box, slot count, slot gap pixels, polling rate.
+- **config/default_config.json** — Persisted runtime defaults: capture/analysis settings, keybinds, baselines, and automation priority profiles.
 
 ### Key Technical Decisions
 
@@ -65,7 +65,7 @@ Screen Capture (mss, small region only)
 - opencv-python (image processing)
 - numpy (pixel math)
 - easyocr (OCR, lazy-loaded)
-- pynput (future, key sending)
+- keyboard (global bind capture + key sending)
 - dataclasses + json for config
 
 ## Coding Conventions
@@ -76,9 +76,10 @@ Screen Capture (mss, small region only)
 - Signals/slots for all cross-thread communication (no shared mutable state)
 - Keep analysis pure-functional where possible: frame in → state out
 
-## What's Scaffolded vs TODO
-Scaffolded: Project structure, all module stubs, dataclasses, config schema, main entry point, requirements.
-TODO: All actual implementation. Start with screen_capture → slot_analyzer (brightness only) → main_window (basic controls + preview) → calibration_overlay. Add OCR second. Automation last.
+## Current State
+- Core capture/analyze/UI/automation flow is implemented and in use.
+- Legacy config fields (`priority_order`, `automation_toggle_bind`, `automation_hotkey_mode`) are still serialized for compatibility.
+- Preferred runtime model is `priority_profiles` + `active_priority_profile_id`.
 
 ## Important Gotchas
 - EasyOCR downloads models on first run (~100MB). Handle gracefully.

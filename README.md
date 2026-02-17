@@ -52,7 +52,7 @@ Each slot is a button showing `[key]` and state:
 
 ### Priority List (Right Panel)
 
-The order here is the **priority order** for automation: the app will press the key of the **first** slot in the list that is **ready**.
+The order here is the **priority order** for the currently active automation profile: the app will press the key of the **first** slot in the list that is **ready**.
 
 - **Add slots** — Drag slot buttons from the left (Slot States) and drop them onto the Priority list.
 - **Reorder** — Drag a priority item up or down within the list to change order.
@@ -70,10 +70,10 @@ The right panel also shows:
 ### Automation (Left Panel)
 
 - **Enable / Disable** — Green **Enable** turns automation on (sends keys in priority order); red **Disable** turns it off. Automation always starts **off** when you launch the app.
-- **Hotkey bind [key]** — Click to set the **global hotkey** used from anywhere (e.g. in-game). Press the key you want (e.g. F24, often bound to a mouse button).
-- **Hotkey mode** — Choose what the global hotkey does:
-  - **Toggle automation** — Press once to enable continuous automation, press again to disable.
-  - **Single fire next action** — Press once to arm exactly one action; the app will execute the next valid ready action (respecting priority, delay, and window title check) without turning continuous automation on.
+- **List profiles** — In **Settings → Automation**, create multiple list profiles (for example: Single Target, AoE, Utility). Each profile stores its own priority list.
+- **Per-profile hotkeys** — Each list profile has two optional global binds:
+  - **Toggle bind** — Switches to that profile and toggles continuous automation on/off.
+  - **Single bind** — Switches to that profile and arms exactly one next action (single fire) without enabling continuous automation.
 - **Delay (ms)** — Minimum time in milliseconds between any two keypresses (50–2000). Helps avoid spamming faster than the game’s GCD.
 - **Queue (ms)** — Extra wait after detected cast end before sending the next key (default 120 ms).
 - **Allow sends while casting/channeling** — If off (default), automation waits until cast/channel completes.
@@ -85,7 +85,7 @@ The right panel also shows:
 - **Detection** — **Darken** and **Trigger** control cooldown detection sensitivity.
 - **Cast detection** — Configure cast band %, confirmation frames, min/max cast duration, cancel grace, and channeling mode.
 - **Cast bar ROI (optional)** — Define a region inside the capture box to detect active cast-bar motion; optionally mark ready slots as `locked` while active.
-- **Save Settings** — Saves the current config (region, slots, keybinds, priority order, detection, overlay, automation bind, delay, window title, etc.) to `config/default_config.json`.
+- **Save Settings** — Saves the current config (region, slots, keybinds, priority profiles + binds, detection, overlay, delay, window title, etc.) to `config/default_config.json`.
 
 ---
 
@@ -94,7 +94,7 @@ The right panel also shows:
 | What to rebind | How |
 |----------------|-----|
 | **Slot key** (which key the app presses for that slot) | Right-click the slot → **Bind Key** → press the key |
-| **Automation hotkey** (global hotkey action) | In Automation: set **Hotkey bind**, then choose **Hotkey mode** (`Toggle automation` or `Single fire next action`) |
+| **Automation list hotkeys** (global actions per profile) | In **Settings → Automation**: pick the list profile, then set **Toggle bind** and/or **Single bind** |
 
 ---
 
