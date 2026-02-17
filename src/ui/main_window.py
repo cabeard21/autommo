@@ -570,8 +570,12 @@ class MainWindow(QMainWindow):
     def _update_bind_display(self) -> None:
         key = getattr(self._config, "automation_toggle_bind", "") or ""
         display_key = format_bind_for_display(key) if key else "—"
+        mode = (getattr(self._config, "automation_hotkey_mode", "toggle") or "toggle").strip().lower()
+        mode_label = "Toggle" if mode == "toggle" else "Single"
         self._bind_display.setTextFormat(Qt.TextFormat.RichText)
-        self._bind_display.setText(f"Toggle: <span style='color:{KEY_CYAN}'>{display_key}</span>")
+        self._bind_display.setText(
+            f"Hotkey ({mode_label}): <span style='color:{KEY_CYAN}'>{display_key}</span>"
+        )
 
     def _on_automation_toggle_clicked(self) -> None:
         self._config.automation_enabled = not self._config.automation_enabled

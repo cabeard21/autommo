@@ -47,9 +47,14 @@ class KeySender:
     def __init__(self, config: "AppConfig"):
         self._config = config
         self._last_send_time = 0.0
+        self._single_fire_pending = False
 
     def update_config(self, config: "AppConfig") -> None:
         self._config = config
+
+    def request_single_fire(self) -> None:
+        """Arm one key send for the next valid ready action."""
+        self._single_fire_pending = True
 
     def is_target_window_active(self) -> bool:
         """True if foreground window matches target_window_title, or target is empty."""
@@ -66,7 +71,8 @@ class KeySender:
         If automation enabled, find first READY slot in priority_order and send its keybind (subject to
         min delay and target window). Returns None if nothing sent/blocked; otherwise a dict for the UI.
         """
-        if not automation_enabled:
+        single_fire_pending = self._single_fire_pending
+        if not automation_enabled and not single_fire_pending:
             return None
 
         min_interval_sec = (getattr(self._config, "min_press_interval_ms", 150) or 150) / 1000.0
@@ -95,6 +101,8 @@ class KeySender:
                 return None
 
             self._last_send_time = now
+            if single_fire_pending:
+                self._single_fire_pending = False
             logger.info("Sent key: %s", keybind)
             return {"keybind": keybind, "action": "sent", "timestamp": now, "slot_index": slot_index}
 

@@ -64,7 +64,10 @@ The right panel also shows:
 ### Automation (Left Panel)
 
 - **Enable / Disable** — Green **Enable** turns automation on (sends keys in priority order); red **Disable** turns it off. Automation always starts **off** when you launch the app.
-- **Bind Toggle [key]** — Click to set the **global hotkey** that toggles automation on/off from anywhere (e.g. in-game). Press the key you want (e.g. F24, often bound to a mouse button). The button label shows the current bind, e.g. `Bind Toggle [F24]`.
+- **Hotkey bind [key]** — Click to set the **global hotkey** used from anywhere (e.g. in-game). Press the key you want (e.g. F24, often bound to a mouse button).
+- **Hotkey mode** — Choose what the global hotkey does:
+  - **Toggle automation** — Press once to enable continuous automation, press again to disable.
+  - **Single fire next action** — Press once to arm exactly one action; the app will execute the next valid ready action (respecting priority, delay, and window title check) without turning continuous automation on.
 - **Delay (ms)** — Minimum time in milliseconds between any two keypresses (50–2000). Helps avoid spamming faster than the game’s GCD.
 - **Window title** — If you type part of the game window title here (e.g. `World of Warcraft`), keypresses are **only** sent when a window whose title contains this text (case-insensitive) is in the foreground. Leave blank to send keys regardless of focus.
 
@@ -81,7 +84,7 @@ The right panel also shows:
 | What to rebind | How |
 |----------------|-----|
 | **Slot key** (which key the app presses for that slot) | Right-click the slot → **Bind Key** → press the key |
-| **Automation toggle** (global hotkey to enable/disable automation) | Click **Bind Toggle [key]** in the Automation panel → press the key (e.g. F24) |
+| **Automation hotkey** (global hotkey action) | In Automation: set **Hotkey bind**, then choose **Hotkey mode** (`Toggle automation` or `Single fire next action`) |
 
 ---
 
