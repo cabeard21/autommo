@@ -1,7 +1,8 @@
 """Global hotkey listener for automation toggle (works when app does not have focus).
 
-Uses the 'keyboard' library so the hotkey is detected even when a game has focus
-(games often consume input via DirectInput/Raw Input and block pynput-style hooks).
+Uses the 'keyboard' library with a low-level hook (keyboard.hook) instead of add_hotkey,
+so the toggle key is detected even when other keys (e.g. W) or mouse buttons (e.g. right-click)
+are held. add_hotkey can miss the key in those cases; the raw hook sees every key down/up.
 Only keyboard keys are supported for the toggle bind (e.g. F24 from a mouse key).
 """
 from __future__ import annotations
@@ -44,7 +45,8 @@ def _is_keyboard_bind(bind: str) -> bool:
 
 
 class _ListenerThread(QThread):
-    """Thread that uses the keyboard library to listen for the configured key and emit when pressed."""
+    """Uses a low-level keyboard.hook to listen for the toggle key. Fires once per key press
+    (ignores repeat) and works when other keys or mouse buttons are held."""
 
     triggered = pyqtSignal()
 
@@ -52,7 +54,7 @@ class _ListenerThread(QThread):
         super().__init__(parent)
         self._get_bind = get_bind
         self._running = True
-        self._hotkey_handler = None
+        self._hook = None
 
     def run(self) -> None:
         try:
@@ -70,30 +72,45 @@ class _ListenerThread(QThread):
                 self.msleep(500)
                 continue
             try:
-                if self._hotkey_handler is not None:
+                if self._hook is not None:
                     try:
-                        keyboard.remove_hotkey(self._hotkey_handler)
+                        keyboard.unhook(self._hook)
                     except Exception:
                         pass
-                    self._hotkey_handler = None
+                    self._hook = None
 
-                def on_trigger():
-                    if self._running:
-                        self.triggered.emit()
+                # Track key-down state so we trigger only on press, not on key repeat
+                key_held = [False]
 
-                self._hotkey_handler = keyboard.add_hotkey(bind, on_trigger)
+                def on_event(event):
+                    if not self._running:
+                        return
+                    name = getattr(event, "name", None)
+                    if not name:
+                        return
+                    key_normalized = str(name).strip().lower()
+                    if key_normalized != bind:
+                        return
+                    if event.event_type == keyboard.KEY_DOWN:
+                        if not key_held[0]:
+                            key_held[0] = True
+                            self.triggered.emit()
+                    elif event.event_type == keyboard.KEY_UP:
+                        key_held[0] = False
+
+                self._hook = keyboard.hook(on_event)
             except Exception as e:
-                logger.debug("keyboard add_hotkey failed for %r: %s", bind, e)
+                logger.debug("keyboard hook failed for %r: %s", bind, e)
 
             while self._running and normalize_bind(self._get_bind()) == bind and _is_keyboard_bind(bind):
                 self.msleep(200)
 
-        if self._hotkey_handler is not None:
+        if self._hook is not None:
             try:
-                keyboard.remove_hotkey(self._hotkey_handler)
+                keyboard.unhook(self._hook)
             except Exception:
                 pass
-            self._hotkey_handler = None
+            self._hook = None
 
     def stop(self) -> None:
         self._running = False
