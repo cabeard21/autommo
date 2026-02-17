@@ -308,6 +308,9 @@ class MainWindow(QMainWindow):
         self._gcd_label = QLabel("Est. GCD: —")
         self._gcd_label.setStyleSheet("font-size: 10px; font-family: monospace; color: #555;")
         self.statusBar().addPermanentWidget(self._gcd_label)
+        self._cast_bar_debug_label = QLabel("Cast ROI: off")
+        self._cast_bar_debug_label.setStyleSheet("font-size: 10px; font-family: monospace; color: #666;")
+        self.statusBar().addPermanentWidget(self._cast_bar_debug_label)
         self._next_intention_timer = QTimer(self)
         self._next_intention_timer.setInterval(100)
         self._next_intention_timer.timeout.connect(self._update_next_intention_time)
@@ -1123,6 +1126,34 @@ class MainWindow(QMainWindow):
     def _show_status_message(self, text: str, timeout_ms: int = 0) -> None:
         """Internal alias for show_status_message."""
         self.show_status_message(text, timeout_ms)
+
+    def update_cast_bar_debug(self, debug: dict) -> None:
+        """Update live cast-bar ROI motion/status debug in the status bar."""
+        if not isinstance(debug, dict):
+            return
+        status = str(debug.get("status", "off") or "off")
+        motion = float(debug.get("motion", 0.0) or 0.0)
+        activity = float(debug.get("activity", 0.0) or 0.0)
+        threshold = float(debug.get("threshold", 0.0) or 0.0)
+        active = bool(debug.get("active", False))
+        gate_active = bool(debug.get("gate_active", False))
+        self._cast_bar_debug_label.setText(
+            f"Cast ROI: {status} | m {motion:.1f} a {activity:.1f}/{threshold:.1f} | "
+            f"{'ON' if active else 'OFF'} gate {'ON' if gate_active else 'OFF'}"
+        )
+        if status in ("off", "invalid-roi", "out-of-frame"):
+            color = "#777"
+        elif active:
+            color = "#88ff88"
+        elif status == "priming":
+            color = "#eecc55"
+        elif gate_active:
+            color = "#ffcc66"
+        else:
+            color = "#9aa0a6"
+        self._cast_bar_debug_label.setStyleSheet(
+            f"font-size: 10px; font-family: monospace; color: {color};"
+        )
 
     def _on_settings_clicked(self) -> None:
         """No-op; main.py connects _btn_settings to settings_dialog.show_or_raise."""
