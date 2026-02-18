@@ -191,10 +191,13 @@ class SlotAnalyzer:
         yellow_fraction = float(np.mean(yellow_cond[ring])) if np.any(ring) else 0.0
         red_fraction = float(np.mean(red_cond[ring])) if np.any(ring) else 0.0
         glow_frac_thresh = float(getattr(self._config, "glow_ring_fraction", 0.18) or 0.18)
+        red_glow_frac_thresh = float(
+            getattr(self._config, "glow_red_ring_fraction", glow_frac_thresh) or glow_frac_thresh
+        )
         return (
             yellow_fraction >= glow_frac_thresh,
             yellow_fraction,
-            red_fraction >= glow_frac_thresh,
+            red_fraction >= red_glow_frac_thresh,
             red_fraction,
         )
 
@@ -672,10 +675,9 @@ class SlotAnalyzer:
                 glow_ready = runtime.glow_candidate_frames >= glow_confirm_frames
                 yellow_glow_ready = runtime.yellow_glow_candidate_frames >= glow_confirm_frames
                 red_glow_ready = runtime.red_glow_candidate_frames >= glow_confirm_frames
-                # Glow is a strong "usable now" cue for many MMOs. Only let it
-                # override cooldown when cooldown came from generic change-delta
-                # and not from strong darkening.
-                if red_glow_ready and state == SlotState.ON_COOLDOWN and (not raw_dark_cooldown):
+                # Red glow is an explicit "refresh now" cue for DoT-style rules.
+                # Allow it to override ON_COOLDOWN regardless of darkening source.
+                if red_glow_ready and state == SlotState.ON_COOLDOWN:
                     state = SlotState.READY
                 if cast_bar_active and bool(
                     getattr(self._config, "lock_ready_while_cast_bar_active", False)

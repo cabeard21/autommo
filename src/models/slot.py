@@ -134,6 +134,7 @@ class AppConfig:
     glow_value_delta: int = 35
     glow_saturation_min: int = 80
     glow_ring_fraction: float = 0.18
+    glow_red_ring_fraction: float = 0.18
     glow_confirm_frames: int = 2
     glow_yellow_hue_min: int = 18
     glow_yellow_hue_max: int = 42
@@ -415,6 +416,12 @@ class AppConfig:
             glow_value_delta=int(data.get("detection", {}).get("glow_value_delta", 35)),
             glow_saturation_min=int(data.get("detection", {}).get("glow_saturation_min", 80)),
             glow_ring_fraction=float(data.get("detection", {}).get("glow_ring_fraction", 0.18)),
+            glow_red_ring_fraction=float(
+                data.get("detection", {}).get(
+                    "glow_red_ring_fraction",
+                    data.get("detection", {}).get("glow_ring_fraction", 0.18),
+                )
+            ),
             glow_confirm_frames=int(data.get("detection", {}).get("glow_confirm_frames", 2)),
             glow_yellow_hue_min=int(data.get("detection", {}).get("glow_yellow_hue_min", 18)),
             glow_yellow_hue_max=int(data.get("detection", {}).get("glow_yellow_hue_max", 42)),
@@ -507,6 +514,7 @@ class AppConfig:
                 "glow_value_delta": self.glow_value_delta,
                 "glow_saturation_min": self.glow_saturation_min,
                 "glow_ring_fraction": self.glow_ring_fraction,
+                "glow_red_ring_fraction": self.glow_red_ring_fraction,
                 "glow_confirm_frames": self.glow_confirm_frames,
                 "glow_yellow_hue_min": self.glow_yellow_hue_min,
                 "glow_yellow_hue_max": self.glow_yellow_hue_max,

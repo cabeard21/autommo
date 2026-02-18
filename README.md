@@ -87,7 +87,8 @@ The right panel also shows:
 ### Other Settings
 
 - **Always on top** — Check to keep the app window above other windows.
-- **Detection** — **Darken** and **Trigger** control cooldown detection sensitivity.
+- **Detection** — **Darken**, **Trigger**, **Yellow frac**, and **Red frac** control cooldown/glow detection sensitivity.
+- **Red glow threshold** — Tune **Red frac** if DoT-refresh slots are triggering too early or too late on red-glow windows.
 - **Cast detection** — Configure cast band %, confirmation frames, min/max cast duration, cancel grace, and channeling mode.
 - **Cast bar ROI (optional)** — Define a region inside the capture box to detect active cast-bar motion; optionally mark ready slots as `locked` while active.
 - **Save Settings** — Saves the current config (region, slots, keybinds, priority profiles + binds, detection, overlay, delay, window title, etc.) to `config/default_config.json`.

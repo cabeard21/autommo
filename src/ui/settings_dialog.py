@@ -288,21 +288,40 @@ class SettingsDialog(QDialog):
         self._slider_glow_ring_fraction.setRange(5, 60)
         self._slider_glow_ring_fraction.setSingleStep(1)
         self._slider_glow_ring_fraction.setToolTip(
-            "Minimum fraction of ring pixels that must meet glow criteria."
+            "Minimum fraction of ring pixels that must meet yellow glow criteria."
         )
         self._glow_ring_fraction_label = QLabel("0.18")
         self._glow_ring_fraction_label.setMinimumWidth(32)
         self._glow_ring_fraction_label.setStyleSheet("font-family: monospace; font-size: 11px;")
         glow_frac_help = QLabel("(?)")
         glow_frac_help.setToolTip(
-            "Minimum fraction of ring pixels matching glow color/brightness criteria."
+            "Minimum fraction of ring pixels matching yellow glow color/brightness criteria."
         )
         glow_frac_help.setStyleSheet("color: #666; font-size: 11px;")
         glow_frac_row = QHBoxLayout()
         glow_frac_row.addWidget(self._slider_glow_ring_fraction)
         glow_frac_row.addWidget(self._glow_ring_fraction_label)
         glow_frac_row.addWidget(glow_frac_help)
-        fl.addRow(_row_label("Glow frac:"), glow_frac_row)
+        fl.addRow(_row_label("Yellow frac:"), glow_frac_row)
+        self._slider_glow_red_ring_fraction = QSlider(Qt.Orientation.Horizontal)
+        self._slider_glow_red_ring_fraction.setRange(5, 60)
+        self._slider_glow_red_ring_fraction.setSingleStep(1)
+        self._slider_glow_red_ring_fraction.setToolTip(
+            "Minimum fraction of ring pixels that must meet red glow criteria."
+        )
+        self._glow_red_ring_fraction_label = QLabel("0.18")
+        self._glow_red_ring_fraction_label.setMinimumWidth(32)
+        self._glow_red_ring_fraction_label.setStyleSheet("font-family: monospace; font-size: 11px;")
+        glow_red_frac_help = QLabel("(?)")
+        glow_red_frac_help.setToolTip(
+            "Minimum fraction of ring pixels matching red glow color/brightness criteria."
+        )
+        glow_red_frac_help.setStyleSheet("color: #666; font-size: 11px;")
+        glow_red_frac_row = QHBoxLayout()
+        glow_red_frac_row.addWidget(self._slider_glow_red_ring_fraction)
+        glow_red_frac_row.addWidget(self._glow_red_ring_fraction_label)
+        glow_red_frac_row.addWidget(glow_red_frac_help)
+        fl.addRow(_row_label("Red frac:"), glow_red_frac_row)
         glow_hue_row = QHBoxLayout()
         self._spin_glow_yellow_hue_min = QSpinBox()
         self._spin_glow_yellow_hue_min.setRange(0, 179)
@@ -545,6 +564,7 @@ class SettingsDialog(QDialog):
         self._spin_glow_saturation_min.valueChanged.connect(self._on_detection_changed)
         self._spin_glow_confirm_frames.valueChanged.connect(self._on_detection_changed)
         self._slider_glow_ring_fraction.valueChanged.connect(self._on_detection_changed)
+        self._slider_glow_red_ring_fraction.valueChanged.connect(self._on_detection_changed)
         self._spin_glow_yellow_hue_min.valueChanged.connect(self._on_detection_changed)
         self._spin_glow_yellow_hue_max.valueChanged.connect(self._on_detection_changed)
         self._spin_glow_red_hue_max_low.valueChanged.connect(self._on_detection_changed)
@@ -628,6 +648,7 @@ class SettingsDialog(QDialog):
         self._spin_glow_saturation_min.blockSignals(True)
         self._spin_glow_confirm_frames.blockSignals(True)
         self._slider_glow_ring_fraction.blockSignals(True)
+        self._slider_glow_red_ring_fraction.blockSignals(True)
         self._spin_glow_yellow_hue_min.blockSignals(True)
         self._spin_glow_yellow_hue_max.blockSignals(True)
         self._spin_glow_red_hue_max_low.blockSignals(True)
@@ -649,11 +670,26 @@ class SettingsDialog(QDialog):
         self._slider_glow_ring_fraction.setValue(
             int(round(getattr(self._config, "glow_ring_fraction", 0.18) * 100))
         )
+        self._slider_glow_red_ring_fraction.setValue(
+            int(
+                round(
+                    getattr(
+                        self._config,
+                        "glow_red_ring_fraction",
+                        getattr(self._config, "glow_ring_fraction", 0.18),
+                    )
+                    * 100
+                )
+            )
+        )
         self._spin_glow_yellow_hue_min.setValue(int(getattr(self._config, "glow_yellow_hue_min", 18)))
         self._spin_glow_yellow_hue_max.setValue(int(getattr(self._config, "glow_yellow_hue_max", 42)))
         self._spin_glow_red_hue_max_low.setValue(int(getattr(self._config, "glow_red_hue_max_low", 12)))
         self._spin_glow_red_hue_min_high.setValue(int(getattr(self._config, "glow_red_hue_min_high", 168)))
         self._glow_ring_fraction_label.setText(f"{getattr(self._config, 'glow_ring_fraction', 0.18):.2f}")
+        self._glow_red_ring_fraction_label.setText(
+            f"{getattr(self._config, 'glow_red_ring_fraction', getattr(self._config, 'glow_ring_fraction', 0.18)):.2f}"
+        )
         self._check_cast_detection.blockSignals(True)
         self._spin_cast_min_fraction.blockSignals(True)
         self._spin_cast_max_fraction.blockSignals(True)
@@ -702,6 +738,7 @@ class SettingsDialog(QDialog):
         self._spin_glow_saturation_min.blockSignals(False)
         self._spin_glow_confirm_frames.blockSignals(False)
         self._slider_glow_ring_fraction.blockSignals(False)
+        self._slider_glow_red_ring_fraction.blockSignals(False)
         self._spin_glow_yellow_hue_min.blockSignals(False)
         self._spin_glow_yellow_hue_max.blockSignals(False)
         self._spin_glow_red_hue_max_low.blockSignals(False)
@@ -980,6 +1017,7 @@ class SettingsDialog(QDialog):
         self._config.glow_saturation_min = self._spin_glow_saturation_min.value()
         self._config.glow_confirm_frames = self._spin_glow_confirm_frames.value()
         self._config.glow_ring_fraction = self._slider_glow_ring_fraction.value() / 100.0
+        self._config.glow_red_ring_fraction = self._slider_glow_red_ring_fraction.value() / 100.0
         y_min = self._spin_glow_yellow_hue_min.value()
         y_max = self._spin_glow_yellow_hue_max.value()
         if y_min > y_max:
@@ -989,6 +1027,7 @@ class SettingsDialog(QDialog):
         self._config.glow_red_hue_max_low = self._spin_glow_red_hue_max_low.value()
         self._config.glow_red_hue_min_high = self._spin_glow_red_hue_min_high.value()
         self._glow_ring_fraction_label.setText(f"{self._config.glow_ring_fraction:.2f}")
+        self._glow_red_ring_fraction_label.setText(f"{self._config.glow_red_ring_fraction:.2f}")
         cast_min = self._spin_cast_min_fraction.value() / 100.0
         cast_max = self._spin_cast_max_fraction.value() / 100.0
         if cast_min >= cast_max:
