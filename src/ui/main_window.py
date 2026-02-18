@@ -1136,10 +1136,12 @@ class MainWindow(QMainWindow):
     def update_buff_states(self, states: dict) -> None:
         if not isinstance(states, dict):
             self._buff_states = {}
+            self._priority_panel.priority_list.set_buff_states({})
             return
         self._buff_states = {
             str(k): dict(v) for k, v in states.items() if isinstance(v, dict)
         }
+        self._priority_panel.priority_list.set_buff_states(self._buff_states)
 
     def _show_slot_menu(self, slot_index: int) -> None:
         """Show context menu: Bind Key, Calibrate This Slot, Rename (identify skill)."""
@@ -1225,7 +1227,14 @@ class MainWindow(QMainWindow):
                 {"type": "slot", "slot_index": i, "activation_rule": "always"}
                 for i in list(profile.get("priority_order", []))
             ]
-        items.append({"type": "manual", "action_id": action_id})
+        items.append(
+            {
+                "type": "manual",
+                "action_id": action_id,
+                "ready_source": "always",
+                "buff_roi_id": "",
+            }
+        )
         profile["priority_items"] = items
         profile["priority_order"] = self._slot_order_from_priority_items(items)
         self._config.priority_order = list(profile["priority_order"])

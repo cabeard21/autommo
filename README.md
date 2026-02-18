@@ -63,6 +63,9 @@ The order here is the **priority order** for the currently active automation pro
 
   - **Ready Source: Use slot icon state** â€” default behavior.
   - **Ready Source: Buff present / Buff missing** â€” uses selected Buff ROI state as an additional gate on top of slot icon readiness.
+- **Manual action ready source** Ã¢â‚¬â€ Right-click a manual item in the Priority list:
+  - **Ready Source: Always** â€” default behavior for manual actions.
+  - **Ready Source: Buff present / Buff missing** â€” sends only when the selected Buff ROI gate passes.
 
 The right panel also shows:
 
@@ -141,10 +144,11 @@ You can now add priority entries that are not linked to a monitored icon slot.
 - In the **Priority** panel, click **+ manual**.
 - Enter an action name and keybind.
 - The manual action is added to the current profile's priority list.
-- Right-click a manual item in the priority list to **Rename**, **Rebind**, or **Remove**.
+- Right-click a manual item in the priority list to **Rename**, **Rebind**, change **Ready Source**, or **Remove**.
 
 Behavior in v1:
-- Manual actions are treated as eligible whenever they have a keybind.
+- Manual actions with `Ready Source: Always` are treated as eligible whenever they have a keybind.
+- Manual actions with `Ready Source: Buff present` or `Buff missing` require a calibrated Buff ROI and a passing buff gate.
 - They still respect automation safety gates (minimum delay, casting/channel blocking, target-window check).
 - If a manual action is placed above monitored slots, it may be selected repeatedly.
 
