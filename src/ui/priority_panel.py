@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.automation.priority_rules import normalize_activation_rule
+from src.automation.priority_rules import normalize_activation_rule, normalize_ready_source
 
 
 logger = logging.getLogger(__name__)
@@ -96,6 +96,9 @@ class PriorityItemWidget(QFrame):
         slot_index: Optional[int],
         action_id: Optional[str],
         activation_rule: str,
+        ready_source: str,
+        buff_roi_id: str,
+        buff_rois: list[dict],
         rank: int,
         keybind: str,
         display_name: str,
@@ -107,6 +110,9 @@ class PriorityItemWidget(QFrame):
         self._slot_index = slot_index
         self._action_id = action_id
         self._activation_rule = normalize_activation_rule(activation_rule)
+        self._ready_source = normalize_ready_source(ready_source, item_type)
+        self._buff_roi_id = str(buff_roi_id or "").strip().lower()
+        self._buff_rois = [dict(r) for r in list(buff_rois or []) if isinstance(r, dict)]
         self._rank = rank
         self._keybind = keybind
         self._display_name = display_name or "Unidentified"
@@ -192,9 +198,29 @@ class PriorityItemWidget(QFrame):
 
     def set_activation_rule(self, activation_rule: str) -> None:
         self._activation_rule = normalize_activation_rule(activation_rule)
-        self._rule_label.setText(
-            "DOT" if self._item_type == "slot" and self._activation_rule == "dot_refresh" else ""
-        )
+        self._update_rule_label()
+
+    def set_ready_source(self, ready_source: str, buff_roi_id: str) -> None:
+        self._ready_source = normalize_ready_source(ready_source, self._item_type)
+        self._buff_roi_id = str(buff_roi_id or "").strip().lower()
+        self._update_rule_label()
+
+    def _buff_name(self, buff_id: str) -> str:
+        bid = str(buff_id or "").strip().lower()
+        for b in self._buff_rois:
+            if str(b.get("id", "") or "").strip().lower() == bid:
+                return str(b.get("name", "") or "").strip() or bid
+        return bid
+
+    def _update_rule_label(self) -> None:
+        tokens: list[str] = []
+        if self._item_type == "slot" and self._activation_rule == "dot_refresh":
+            tokens.append("DOT")
+        if self._ready_source == "buff_present":
+            tokens.append(f"B+:{self._buff_name(self._buff_roi_id)}")
+        elif self._ready_source == "buff_missing":
+            tokens.append(f"B-:{self._buff_name(self._buff_roi_id)}")
+        self._rule_label.setText(" ".join(tokens))
 
     def set_rank(self, rank: int) -> None:
         self._rank = rank
@@ -309,6 +335,8 @@ class PriorityItemWidget(QFrame):
         remove_action = None
         always_action = None
         dot_refresh_action = None
+        slot_ready_action = None
+        ready_actions: dict[object, tuple[str, str]] = {}
         if self._item_type == "manual" and self._action_id:
             rename_action = menu.addAction("Rename...")
             rebind_action = menu.addAction("Rebind...")
@@ -320,6 +348,28 @@ class PriorityItemWidget(QFrame):
             dot_refresh_action = menu.addAction("Activation: DoT refresh (no glow or red)")
             dot_refresh_action.setCheckable(True)
             dot_refresh_action.setChecked(self._activation_rule == "dot_refresh")
+            menu.addSeparator()
+            ready_menu = menu.addMenu("Ready Source")
+            slot_ready_action = ready_menu.addAction("Use slot icon state")
+            slot_ready_action.setCheckable(True)
+            slot_ready_action.setChecked(self._ready_source == "slot")
+            for buff in self._buff_rois:
+                buff_id = str(buff.get("id", "") or "").strip().lower()
+                buff_name = str(buff.get("name", "") or "").strip() or buff_id
+                if not buff_id:
+                    continue
+                a_present = ready_menu.addAction(f"Buff present: {buff_name}")
+                a_present.setCheckable(True)
+                a_present.setChecked(
+                    self._ready_source == "buff_present" and self._buff_roi_id == buff_id
+                )
+                ready_actions[a_present] = ("buff_present", buff_id)
+                a_missing = ready_menu.addAction(f"Buff missing: {buff_name}")
+                a_missing.setCheckable(True)
+                a_missing.setChecked(
+                    self._ready_source == "buff_missing" and self._buff_roi_id == buff_id
+                )
+                ready_actions[a_missing] = ("buff_missing", buff_id)
         chosen = menu.exec(event.globalPos())
         if chosen is None:
             return
@@ -341,6 +391,11 @@ class PriorityItemWidget(QFrame):
             parent._on_slot_item_activation_rule_changed(self._item_key, "always")
         elif chosen == dot_refresh_action:
             parent._on_slot_item_activation_rule_changed(self._item_key, "dot_refresh")
+        elif chosen == slot_ready_action:
+            parent._on_item_ready_source_changed(self._item_key, "slot", "")
+        elif chosen in ready_actions:
+            source, buff_id = ready_actions[chosen]
+            parent._on_item_ready_source_changed(self._item_key, source, buff_id)
 
 
 class PriorityListWidget(QWidget):
@@ -358,6 +413,7 @@ class PriorityListWidget(QWidget):
         self._keybinds: list[str] = []
         self._display_names: list[str] = []
         self._manual_actions: list[dict] = []
+        self._buff_rois: list[dict] = []
         self._states_by_index: dict[int, tuple[str, Optional[float], Optional[float], Optional[float]]] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -400,6 +456,10 @@ class PriorityListWidget(QWidget):
         self._manual_actions = list(actions)
         self._rebuild_items()
 
+    def set_buff_rois(self, rois: list[dict]) -> None:
+        self._buff_rois = [dict(r) for r in list(rois or []) if isinstance(r, dict)]
+        self._rebuild_items()
+
     def set_items(self, items: list[dict]) -> None:
         normalized: list[dict] = []
         for item in list(items or []):
@@ -410,6 +470,15 @@ class PriorityListWidget(QWidget):
                 out["activation_rule"] = normalize_activation_rule(
                     out.get("activation_rule")
                 )
+                out["ready_source"] = normalize_ready_source(
+                    out.get("ready_source"), "slot"
+                )
+                out["buff_roi_id"] = str(out.get("buff_roi_id", "") or "").strip().lower()
+            elif str(out.get("type", "") or "").strip().lower() == "manual":
+                out["ready_source"] = normalize_ready_source(
+                    out.get("ready_source"), "manual"
+                )
+                out["buff_roi_id"] = str(out.get("buff_roi_id", "") or "").strip().lower()
             normalized.append(out)
         self._items = normalized
         self._rebuild_items()
@@ -454,6 +523,8 @@ class PriorityListWidget(QWidget):
             slot_index = item.get("slot_index")
             action_id = str(item.get("action_id", "") or "").strip().lower()
             activation_rule = normalize_activation_rule(item.get("activation_rule"))
+            ready_source = normalize_ready_source(item.get("ready_source"), item_type)
+            buff_roi_id = str(item.get("buff_roi_id", "") or "").strip().lower()
             if item_type == "slot" and isinstance(slot_index, int):
                 keybind = self._keybinds[slot_index] if slot_index < len(self._keybinds) else "?"
                 name = (
@@ -476,12 +547,16 @@ class PriorityListWidget(QWidget):
                 slot_index if isinstance(slot_index, int) else None,
                 action_id if item_type == "manual" and action_id else None,
                 activation_rule,
+                ready_source,
+                buff_roi_id,
+                self._buff_rois,
                 rank,
                 keybind or "?",
                 name,
                 self._list_container,
             )
             w.set_activation_rule(activation_rule)
+            w.set_ready_source(ready_source, buff_roi_id)
             if item_type == "slot" and isinstance(slot_index, int):
                 state, cd, cast_progress, cast_ends_at = self._states_by_index.get(
                     slot_index,
@@ -566,6 +641,19 @@ class PriorityListWidget(QWidget):
             if str(item.get("type", "") or "").strip().lower() != "slot":
                 continue
             item["activation_rule"] = rule
+            self._rebuild_items()
+            self._emit_items()
+            return
+
+    def _on_item_ready_source_changed(
+        self, item_key: str, ready_source: str, buff_roi_id: str
+    ) -> None:
+        for item in self._items:
+            if self._item_key(item) != item_key:
+                continue
+            item_type = str(item.get("type", "") or "").strip().lower()
+            item["ready_source"] = normalize_ready_source(ready_source, item_type)
+            item["buff_roi_id"] = str(buff_roi_id or "").strip().lower()
             self._rebuild_items()
             self._emit_items()
             return

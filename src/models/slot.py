@@ -159,6 +159,8 @@ class AppConfig:
     slot_baselines: list = field(default_factory=list)
     # Slot indices that had their baseline set by "Calibrate This Slot" (show bold in UI)
     overwritten_baseline_slots: list[int] = field(default_factory=list)
+    # Buff ROI templates used for buff-present / buff-missing readiness rules.
+    buff_rois: list[dict] = field(default_factory=list)
     # Priority order for automation: kept for backward compatibility with older config files.
     priority_order: list[int] = field(default_factory=list)
     automation_enabled: bool = False
@@ -219,6 +221,72 @@ class AppConfig:
         return "always"
 
     @staticmethod
+    def _normalize_ready_source(raw_source: object, item_type: str) -> str:
+        source = str(raw_source or "").strip().lower()
+        if source in ("slot", "always", "buff_present", "buff_missing"):
+            return source
+        return "always" if item_type == "manual" else "slot"
+
+    @staticmethod
+    def _normalize_buff_template(raw_template: object) -> Optional[dict]:
+        if not isinstance(raw_template, dict):
+            return None
+        shape = raw_template.get("shape")
+        data = raw_template.get("data")
+        if (
+            not isinstance(shape, list)
+            or len(shape) != 2
+            or not all(isinstance(v, int) and v > 0 for v in shape)
+            or not isinstance(data, str)
+            or not data.strip()
+        ):
+            return None
+        return {"shape": [int(shape[0]), int(shape[1])], "data": str(data)}
+
+    @staticmethod
+    def _normalize_buff_rois(raw_rois: object) -> list[dict]:
+        normalized: list[dict] = []
+        seen_ids: set[str] = set()
+        for idx, raw in enumerate(list(raw_rois or []), start=1):
+            if not isinstance(raw, dict):
+                continue
+            rid = str(raw.get("id", "") or "").strip().lower()
+            if not rid:
+                rid = f"buff_{idx}"
+            if rid in seen_ids:
+                continue
+            seen_ids.add(rid)
+            calibration = raw.get("calibration", {})
+            if not isinstance(calibration, dict):
+                calibration = {}
+            present_template = AppConfig._normalize_buff_template(
+                calibration.get("present_template")
+            )
+            missing_template = AppConfig._normalize_buff_template(
+                calibration.get("missing_template")
+            )
+            normalized.append(
+                {
+                    "id": rid,
+                    "name": str(raw.get("name", "") or "").strip() or rid.replace("_", " ").title(),
+                    "enabled": bool(raw.get("enabled", True)),
+                    "left": int(raw.get("left", 0)),
+                    "top": int(raw.get("top", 0)),
+                    "width": max(0, int(raw.get("width", 0))),
+                    "height": max(0, int(raw.get("height", 0))),
+                    "match_threshold": max(
+                        0.0, min(1.0, float(raw.get("match_threshold", 0.88)))
+                    ),
+                    "confirm_frames": max(1, int(raw.get("confirm_frames", 2))),
+                    "calibration": {
+                        "present_template": present_template,
+                        "missing_template": missing_template,
+                    },
+                }
+            )
+        return normalized
+
+    @staticmethod
     def _normalize_priority_items(raw_items: object, fallback_order: object) -> list[dict]:
         """
         Normalize profile priority items to:
@@ -232,6 +300,8 @@ class AppConfig:
                         "type": "slot",
                         "slot_index": raw,
                         "activation_rule": "always",
+                        "ready_source": "slot",
+                        "buff_roi_id": "",
                     }
                 )
                 continue
@@ -248,16 +318,35 @@ class AppConfig:
                             "activation_rule": AppConfig._normalize_activation_rule(
                                 raw.get("activation_rule")
                             ),
+                            "ready_source": AppConfig._normalize_ready_source(
+                                raw.get("ready_source"), "slot"
+                            ),
+                            "buff_roi_id": str(raw.get("buff_roi_id", "") or "").strip().lower(),
                         }
                     )
             elif itype == "manual":
                 action_id = str(raw.get("action_id", "") or "").strip().lower()
                 if action_id:
-                    normalized.append({"type": "manual", "action_id": action_id})
+                    normalized.append(
+                        {
+                            "type": "manual",
+                            "action_id": action_id,
+                            "ready_source": AppConfig._normalize_ready_source(
+                                raw.get("ready_source"), "manual"
+                            ),
+                            "buff_roi_id": str(raw.get("buff_roi_id", "") or "").strip().lower(),
+                        }
+                    )
         if normalized:
             return normalized
         return [
-            {"type": "slot", "slot_index": i, "activation_rule": "always"}
+            {
+                "type": "slot",
+                "slot_index": i,
+                "activation_rule": "always",
+                "ready_source": "slot",
+                "buff_roi_id": "",
+            }
             for i in list(fallback_order or [])
             if isinstance(i, int)
         ]
@@ -265,6 +354,7 @@ class AppConfig:
     def _normalize_profiles(self) -> None:
         """Ensure automation profiles are valid and there is always an active profile."""
         self.keybinds = self._normalize_slot_keybinds(self.keybinds)
+        self.buff_rois = self._normalize_buff_rois(self.buff_rois)
         normalized: list[dict] = []
         seen_ids: set[str] = set()
         for p in list(self.priority_profiles or []):
@@ -316,7 +406,13 @@ class AppConfig:
                     "name": "Default",
                     "priority_order": [int(i) for i in self.priority_order if isinstance(i, int)],
                     "priority_items": [
-                        {"type": "slot", "slot_index": int(i), "activation_rule": "always"}
+                        {
+                            "type": "slot",
+                            "slot_index": int(i),
+                            "activation_rule": "always",
+                            "ready_source": "slot",
+                            "buff_roi_id": "",
+                        }
                         for i in self.priority_order
                         if isinstance(i, int)
                     ],
@@ -505,6 +601,7 @@ class AppConfig:
             slot_display_names=data.get("slot_display_names", []),
             slot_baselines=data.get("slot_baselines", []),
             overwritten_baseline_slots=data.get("overwritten_baseline_slots", []),
+            buff_rois=cls._normalize_buff_rois(data.get("buff_rois", [])),
             priority_order=data.get("priority_order", []),
             automation_enabled=data.get("automation_enabled", False),
             automation_toggle_bind=data.get("automation_toggle_bind", ""),
@@ -534,7 +631,13 @@ class AppConfig:
                     "name": "Default",
                     "priority_order": list(data.get("priority_order", [])),
                     "priority_items": [
-                        {"type": "slot", "slot_index": int(i), "activation_rule": "always"}
+                        {
+                            "type": "slot",
+                            "slot_index": int(i),
+                            "activation_rule": "always",
+                            "ready_source": "slot",
+                            "buff_roi_id": "",
+                        }
                         for i in list(data.get("priority_order", []))
                         if isinstance(i, int)
                     ],
@@ -612,6 +715,7 @@ class AppConfig:
             "display": {"always_on_top": self.always_on_top},
             "slot_baselines": self.slot_baselines,
             "overwritten_baseline_slots": self.overwritten_baseline_slots,
+            "buff_rois": self.buff_rois,
             "priority_order": self.priority_order,
             "automation_enabled": self.automation_enabled,
             "automation_toggle_bind": self.automation_toggle_bind,

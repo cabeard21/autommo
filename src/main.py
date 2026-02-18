@@ -11,6 +11,8 @@ import logging
 import sys
 from pathlib import Path
 
+import cv2
+
 from PyQt6.QtCore import QRect, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -50,6 +52,13 @@ def decode_baselines(data: list[dict]) -> dict[int, np.ndarray]:
     return result
 
 
+def encode_gray_template(gray: np.ndarray) -> dict:
+    return {
+        "shape": [int(gray.shape[0]), int(gray.shape[1])],
+        "data": base64.b64encode(gray.astype(np.uint8).tobytes()).decode(),
+    }
+
+
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -69,6 +78,7 @@ class CaptureWorker(QThread):
 
     frame_captured = pyqtSignal(np.ndarray)  # Raw frame for preview
     state_updated = pyqtSignal(list)  # List of slot state dicts
+    buff_state_updated = pyqtSignal(object)  # Dict of buff ROI states
     cast_bar_debug = pyqtSignal(object)  # Live cast-bar ROI motion/status info
     key_action = pyqtSignal(
         object
@@ -194,6 +204,8 @@ class CaptureWorker(QThread):
                     # Snapshot queue at start of tick so priority never replaces it this tick.
                     queued = self._queue_listener.get_queue() if self._queue_listener else None
                     self.state_updated.emit(slot_dicts)
+                    buff_states = self._analyzer.buff_states()
+                    self.buff_state_updated.emit(buff_states)
                     self.cast_bar_debug.emit(self._analyzer.cast_bar_debug())
                     if self._key_sender is not None:
                         on_queued_sent = (
@@ -205,6 +217,7 @@ class CaptureWorker(QThread):
                             self._config.keybinds,
                             self._config.active_manual_actions(),
                             getattr(self._config, "automation_enabled", False),
+                            buff_states=buff_states,
                             queued_override=queued,
                             on_queued_sent=on_queued_sent,
                         )
@@ -297,6 +310,7 @@ def main() -> None:
     overlay = CalibrationOverlay(monitor_geometry=monitor_rect)
     overlay.update_bounding_box(config.bounding_box)
     overlay.update_cast_bar_region(getattr(config, "cast_bar_region", {}))
+    overlay.update_buff_rois(getattr(config, "buff_rois", []) or [])
     if config.overlay_enabled:
         overlay.show()
 
@@ -314,6 +328,7 @@ def main() -> None:
         worker.update_config(new_config)
         key_sender.update_config(new_config)
         overlay.update_cast_bar_region(getattr(new_config, "cast_bar_region", {}))
+        overlay.update_buff_rois(getattr(new_config, "buff_rois", []) or [])
         overlay.update_bounding_box(new_config.bounding_box)
         overlay.update_slot_layout(
             new_config.slot_count,
@@ -351,6 +366,8 @@ def main() -> None:
     worker.frame_captured.connect(window.update_preview)
     worker.state_updated.connect(window.update_slot_states)
     worker.state_updated.connect(overlay.update_slot_states)
+    worker.buff_state_updated.connect(window.update_buff_states)
+    worker.buff_state_updated.connect(overlay.update_buff_states)
     worker.cast_bar_debug.connect(window.update_cast_bar_debug)
 
     def on_key_action(result: dict) -> None:
@@ -495,6 +512,71 @@ def main() -> None:
             QTimer.singleShot(2000, lambda: revert_calibrate_button(btn))
 
     settings_dialog.calibrate_requested.connect(lambda: calibrate_baselines(settings_dialog._btn_calibrate))
+
+    def calibrate_buff_roi_present(roi_id: str) -> None:
+        rid = str(roi_id or "").strip().lower()
+        if not rid:
+            return
+        rois = [r for r in list(getattr(config, "buff_rois", []) or []) if isinstance(r, dict)]
+        roi = next(
+            (r for r in rois if str(r.get("id", "") or "").strip().lower() == rid),
+            None,
+        )
+        if roi is None:
+            window.show_status_message(f"Buff ROI not found: {rid}", 2000)
+            return
+        action = config.bounding_box
+        roi_left = int(roi.get("left", 0))
+        roi_top = int(roi.get("top", 0))
+        roi_width = int(roi.get("width", 0))
+        roi_height = int(roi.get("height", 0))
+        if roi_width <= 1 or roi_height <= 1:
+            window.show_status_message("Buff ROI size must be > 1x1", 2000)
+            return
+        left = min(int(action.left), int(action.left) + roi_left)
+        top = min(int(action.top), int(action.top) + roi_top)
+        right = max(int(action.left + action.width), int(action.left) + roi_left + roi_width)
+        bottom = max(int(action.top + action.height), int(action.top) + roi_top + roi_height)
+        try:
+            cap = ScreenCapture(monitor_index=config.monitor_index)
+            cap.start()
+            monitor = cap.monitor_info
+            mw = int(monitor["width"])
+            mh = int(monitor["height"])
+            left = max(0, min(left, mw - 1))
+            top = max(0, min(top, mh - 1))
+            right = max(left + 1, min(right, mw))
+            bottom = max(top + 1, min(bottom, mh))
+            bbox = BoundingBox(top=top, left=left, width=right - left, height=bottom - top)
+            frame = cap.grab_region(bbox)
+            cap.stop()
+            action_origin = (int(action.left) - int(bbox.left), int(action.top) - int(bbox.top))
+            x1 = int(action_origin[0]) + roi_left
+            y1 = int(action_origin[1]) + roi_top
+            x2 = x1 + roi_width
+            y2 = y1 + roi_height
+            if x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
+                window.show_status_message("Buff ROI is out of capture frame", 2000)
+                return
+            crop = frame[y1:y2, x1:x2]
+            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            calibration = roi.get("calibration", {})
+            if not isinstance(calibration, dict):
+                calibration = {}
+            calibration["present_template"] = encode_gray_template(gray)
+            roi["calibration"] = calibration
+            settings_dialog.sync_from_config()
+            on_config_changed(config)
+            window.show_status_message(
+                f"Buff '{roi.get('name', rid)}' present calibrated", 2000
+            )
+        except Exception as e:
+            logger.error(f"Buff calibration failed: {e}", exc_info=True)
+            window.show_status_message(f"Buff calibration failed: {e}", 2000)
+
+    settings_dialog.calibrate_buff_present_requested.connect(
+        lambda rid: calibrate_buff_roi_present(rid)
+    )
 
     def calibrate_single_slot(slot_index: int) -> None:
         try:

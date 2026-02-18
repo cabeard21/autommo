@@ -89,6 +89,7 @@ class SettingsDialog(QDialog):
 
     config_updated = pyqtSignal(object)
     calibrate_requested = pyqtSignal()
+    calibrate_buff_present_requested = pyqtSignal(str)
     bounding_box_changed = pyqtSignal(object)
     slot_layout_changed = pyqtSignal(int, int, int)
     overlay_visibility_changed = pyqtSignal(bool)
@@ -566,6 +567,69 @@ class SettingsDialog(QDialog):
         cast_bar_row.addWidget(self._spin_cast_bar_activity)
         cast_bar_row.addStretch()
         fl.addRow(_row_label("Cast bar:"), cast_bar_row)
+        buff_row = QHBoxLayout()
+        self._combo_buff_roi = QComboBox()
+        self._combo_buff_roi.setMinimumWidth(140)
+        self._btn_add_buff_roi = QPushButton("+")
+        self._btn_add_buff_roi.setFixedWidth(28)
+        self._btn_remove_buff_roi = QPushButton("-")
+        self._btn_remove_buff_roi.setObjectName("deleteButton")
+        self._btn_remove_buff_roi.setFixedWidth(28)
+        self._edit_buff_roi_name = QLineEdit()
+        self._edit_buff_roi_name.setPlaceholderText("Buff name")
+        buff_row.addWidget(self._combo_buff_roi)
+        buff_row.addWidget(self._btn_add_buff_roi)
+        buff_row.addWidget(self._btn_remove_buff_roi)
+        buff_row.addWidget(self._edit_buff_roi_name, 1)
+        fl.addRow(_row_label("Buff ROI:"), buff_row)
+        buff_geom_row = QHBoxLayout()
+        self._check_buff_roi_enabled = QCheckBox("Enabled")
+        self._spin_buff_left = QSpinBox()
+        self._spin_buff_left.setRange(-4000, 4000)
+        self._spin_buff_left.setPrefix("L ")
+        self._spin_buff_left.setMaximumWidth(74)
+        self._spin_buff_top = QSpinBox()
+        self._spin_buff_top.setRange(-4000, 4000)
+        self._spin_buff_top.setPrefix("T ")
+        self._spin_buff_top.setMaximumWidth(74)
+        self._spin_buff_width = QSpinBox()
+        self._spin_buff_width.setRange(0, 2000)
+        self._spin_buff_width.setPrefix("W ")
+        self._spin_buff_width.setMaximumWidth(74)
+        self._spin_buff_height = QSpinBox()
+        self._spin_buff_height.setRange(0, 500)
+        self._spin_buff_height.setPrefix("H ")
+        self._spin_buff_height.setMaximumWidth(74)
+        buff_geom_row.addWidget(self._check_buff_roi_enabled)
+        buff_geom_row.addWidget(self._spin_buff_left)
+        buff_geom_row.addWidget(self._spin_buff_top)
+        buff_geom_row.addWidget(self._spin_buff_width)
+        buff_geom_row.addWidget(self._spin_buff_height)
+        buff_geom_row.addStretch()
+        fl.addRow(_row_label("Buff rect:"), buff_geom_row)
+        buff_detect_row = QHBoxLayout()
+        self._spin_buff_match_threshold = QSpinBox()
+        self._spin_buff_match_threshold.setRange(50, 100)
+        self._spin_buff_match_threshold.setPrefix("T ")
+        self._spin_buff_match_threshold.setSuffix("%")
+        self._spin_buff_match_threshold.setMaximumWidth(86)
+        self._spin_buff_confirm_frames = QSpinBox()
+        self._spin_buff_confirm_frames.setRange(1, 10)
+        self._spin_buff_confirm_frames.setPrefix("N ")
+        self._spin_buff_confirm_frames.setMaximumWidth(64)
+        buff_detect_row.addWidget(self._spin_buff_match_threshold)
+        buff_detect_row.addWidget(self._spin_buff_confirm_frames)
+        buff_detect_row.addStretch()
+        fl.addRow(_row_label("Buff detect:"), buff_detect_row)
+        buff_cal_row = QHBoxLayout()
+        self._btn_calibrate_buff_present = QPushButton("Calibrate Present")
+        self._btn_clear_buff_templates = QPushButton("Clear")
+        self._buff_calibration_status = QLabel("Uncalibrated")
+        self._buff_calibration_status.setObjectName("hint")
+        buff_cal_row.addWidget(self._btn_calibrate_buff_present)
+        buff_cal_row.addWidget(self._btn_clear_buff_templates)
+        buff_cal_row.addWidget(self._buff_calibration_status, 1)
+        fl.addRow(_row_label("Buff calib:"), buff_cal_row)
         return w
 
     def _automation_controls_section(self) -> QWidget:
@@ -760,6 +824,19 @@ class SettingsDialog(QDialog):
         self._spin_cast_bar_width.valueChanged.connect(self._on_detection_changed)
         self._spin_cast_bar_height.valueChanged.connect(self._on_detection_changed)
         self._spin_cast_bar_activity.valueChanged.connect(self._on_detection_changed)
+        self._combo_buff_roi.currentIndexChanged.connect(self._on_buff_roi_selected)
+        self._btn_add_buff_roi.clicked.connect(self._on_add_buff_roi)
+        self._btn_remove_buff_roi.clicked.connect(self._on_remove_buff_roi)
+        self._edit_buff_roi_name.textChanged.connect(self._on_detection_changed)
+        self._check_buff_roi_enabled.toggled.connect(self._on_detection_changed)
+        self._spin_buff_left.valueChanged.connect(self._on_detection_changed)
+        self._spin_buff_top.valueChanged.connect(self._on_detection_changed)
+        self._spin_buff_width.valueChanged.connect(self._on_detection_changed)
+        self._spin_buff_height.valueChanged.connect(self._on_detection_changed)
+        self._spin_buff_match_threshold.valueChanged.connect(self._on_detection_changed)
+        self._spin_buff_confirm_frames.valueChanged.connect(self._on_detection_changed)
+        self._btn_calibrate_buff_present.clicked.connect(self._on_calibrate_buff_present_clicked)
+        self._btn_clear_buff_templates.clicked.connect(self._on_clear_buff_templates_clicked)
         self._combo_automation_profile.currentIndexChanged.connect(self._on_automation_profile_selected)
         self._btn_add_automation_profile.clicked.connect(self._on_add_automation_profile)
         self._btn_copy_automation_profile.clicked.connect(self._on_copy_automation_profile)
@@ -969,6 +1046,7 @@ class SettingsDialog(QDialog):
         self._spin_cast_bar_width.blockSignals(False)
         self._spin_cast_bar_height.blockSignals(False)
         self._spin_cast_bar_activity.blockSignals(False)
+        self._sync_buff_roi_controls()
         self._sync_automation_profile_controls()
         self._spin_min_delay.blockSignals(True)
         self._spin_min_delay.setValue(getattr(self._config, "min_press_interval_ms", 150))
@@ -1320,6 +1398,161 @@ class SettingsDialog(QDialog):
             parsed.add(slot_idx)
         return ", ".join(str(v) for v in sorted(parsed))
 
+    def _selected_buff_roi_index(self) -> int:
+        idx = self._combo_buff_roi.currentIndex()
+        if idx < 0:
+            return -1
+        roi_id = str(self._combo_buff_roi.itemData(idx) or "")
+        rois = list(getattr(self._config, "buff_rois", []) or [])
+        for i, roi in enumerate(rois):
+            if str(roi.get("id", "") or "").strip().lower() == roi_id:
+                return i
+        return -1
+
+    def _sync_buff_roi_controls(self) -> None:
+        rois = list(getattr(self._config, "buff_rois", []) or [])
+        current_id = str(self._combo_buff_roi.currentData() or "")
+        self._combo_buff_roi.blockSignals(True)
+        self._combo_buff_roi.clear()
+        for roi in rois:
+            if not isinstance(roi, dict):
+                continue
+            roi_id = str(roi.get("id", "") or "").strip().lower()
+            if not roi_id:
+                continue
+            roi_name = str(roi.get("name", "") or "").strip() or roi_id
+            self._combo_buff_roi.addItem(roi_name, roi_id)
+        idx = self._combo_buff_roi.findData(current_id)
+        if idx < 0:
+            idx = 0 if self._combo_buff_roi.count() > 0 else -1
+        self._combo_buff_roi.setCurrentIndex(idx)
+        self._combo_buff_roi.blockSignals(False)
+
+        selected_idx = self._selected_buff_roi_index()
+        enabled = selected_idx >= 0
+        self._btn_remove_buff_roi.setEnabled(enabled and len(rois) > 0)
+        for w in (
+            self._edit_buff_roi_name,
+            self._check_buff_roi_enabled,
+            self._spin_buff_left,
+            self._spin_buff_top,
+            self._spin_buff_width,
+            self._spin_buff_height,
+            self._spin_buff_match_threshold,
+            self._spin_buff_confirm_frames,
+            self._btn_calibrate_buff_present,
+            self._btn_clear_buff_templates,
+        ):
+            w.setEnabled(enabled)
+        if not enabled:
+            self._edit_buff_roi_name.setText("")
+            self._check_buff_roi_enabled.setChecked(False)
+            self._spin_buff_left.setValue(0)
+            self._spin_buff_top.setValue(0)
+            self._spin_buff_width.setValue(0)
+            self._spin_buff_height.setValue(0)
+            self._spin_buff_match_threshold.setValue(88)
+            self._spin_buff_confirm_frames.setValue(2)
+            self._buff_calibration_status.setText("No buff ROI")
+            return
+        roi = rois[selected_idx]
+        self._edit_buff_roi_name.blockSignals(True)
+        self._check_buff_roi_enabled.blockSignals(True)
+        self._spin_buff_left.blockSignals(True)
+        self._spin_buff_top.blockSignals(True)
+        self._spin_buff_width.blockSignals(True)
+        self._spin_buff_height.blockSignals(True)
+        self._spin_buff_match_threshold.blockSignals(True)
+        self._spin_buff_confirm_frames.blockSignals(True)
+        self._edit_buff_roi_name.setText(str(roi.get("name", "") or "").strip())
+        self._check_buff_roi_enabled.setChecked(bool(roi.get("enabled", True)))
+        self._spin_buff_left.setValue(int(roi.get("left", 0)))
+        self._spin_buff_top.setValue(int(roi.get("top", 0)))
+        self._spin_buff_width.setValue(int(roi.get("width", 0)))
+        self._spin_buff_height.setValue(int(roi.get("height", 0)))
+        self._spin_buff_match_threshold.setValue(
+            int(round(float(roi.get("match_threshold", 0.88)) * 100))
+        )
+        self._spin_buff_confirm_frames.setValue(int(roi.get("confirm_frames", 2)))
+        calibration = roi.get("calibration", {})
+        if not isinstance(calibration, dict):
+            calibration = {}
+        has_present = isinstance(calibration.get("present_template"), dict)
+        if has_present:
+            self._buff_calibration_status.setText("Present calibrated")
+        else:
+            self._buff_calibration_status.setText("Uncalibrated")
+        self._edit_buff_roi_name.blockSignals(False)
+        self._check_buff_roi_enabled.blockSignals(False)
+        self._spin_buff_left.blockSignals(False)
+        self._spin_buff_top.blockSignals(False)
+        self._spin_buff_width.blockSignals(False)
+        self._spin_buff_height.blockSignals(False)
+        self._spin_buff_match_threshold.blockSignals(False)
+        self._spin_buff_confirm_frames.blockSignals(False)
+
+    def _on_buff_roi_selected(self, _index: int) -> None:
+        self._sync_buff_roi_controls()
+
+    def _on_add_buff_roi(self) -> None:
+        rois = [dict(r) for r in list(getattr(self._config, "buff_rois", []) or []) if isinstance(r, dict)]
+        existing = {str(r.get("id", "") or "").strip().lower() for r in rois}
+        i = 1
+        while f"buff_{i}" in existing:
+            i += 1
+        rid = f"buff_{i}"
+        rois.append(
+            {
+                "id": rid,
+                "name": f"Buff {i}",
+                "enabled": True,
+                "left": 0,
+                "top": 0,
+                "width": 48,
+                "height": 48,
+                "match_threshold": 0.88,
+                "confirm_frames": 2,
+                "calibration": {"present_template": None},
+            }
+        )
+        self._config.buff_rois = rois
+        self._sync_buff_roi_controls()
+        idx = self._combo_buff_roi.findData(rid)
+        if idx >= 0:
+            self._combo_buff_roi.setCurrentIndex(idx)
+        self._emit_config()
+
+    def _on_remove_buff_roi(self) -> None:
+        idx = self._selected_buff_roi_index()
+        if idx < 0:
+            return
+        rois = [dict(r) for r in list(getattr(self._config, "buff_rois", []) or []) if isinstance(r, dict)]
+        del rois[idx]
+        self._config.buff_rois = rois
+        self._sync_buff_roi_controls()
+        self._emit_config()
+
+    def _on_calibrate_buff_present_clicked(self) -> None:
+        idx = self._selected_buff_roi_index()
+        if idx < 0:
+            return
+        roi_id = str(self._config.buff_rois[idx].get("id", "") or "").strip().lower()
+        if roi_id:
+            self.calibrate_buff_present_requested.emit(roi_id)
+
+    def _on_clear_buff_templates_clicked(self) -> None:
+        idx = self._selected_buff_roi_index()
+        if idx < 0:
+            return
+        roi = self._config.buff_rois[idx]
+        calibration = roi.get("calibration", {})
+        if not isinstance(calibration, dict):
+            calibration = {}
+        calibration["present_template"] = None
+        roi["calibration"] = calibration
+        self._sync_buff_roi_controls()
+        self._emit_config()
+
     def _on_detection_changed(self) -> None:
         self._config.polling_fps = max(1, min(240, self._spin_polling_fps.value()))
         self._config.cooldown_min_duration_ms = max(0, min(10000, self._spin_cooldown_min_ms.value()))
@@ -1381,6 +1614,27 @@ class SettingsDialog(QDialog):
             "height": self._spin_cast_bar_height.value(),
         }
         self._config.cast_bar_activity_threshold = float(self._spin_cast_bar_activity.value())
+        buff_idx = self._selected_buff_roi_index()
+        if buff_idx >= 0 and buff_idx < len(self._config.buff_rois):
+            roi = self._config.buff_rois[buff_idx]
+            roi["name"] = (self._edit_buff_roi_name.text() or "").strip() or str(
+                roi.get("id", "") or "Buff"
+            )
+            roi["enabled"] = self._check_buff_roi_enabled.isChecked()
+            roi["left"] = self._spin_buff_left.value()
+            roi["top"] = self._spin_buff_top.value()
+            roi["width"] = self._spin_buff_width.value()
+            roi["height"] = self._spin_buff_height.value()
+            roi["match_threshold"] = self._spin_buff_match_threshold.value() / 100.0
+            roi["confirm_frames"] = self._spin_buff_confirm_frames.value()
+            calibration = roi.get("calibration", {})
+            if not isinstance(calibration, dict):
+                calibration = {}
+            calibration.setdefault("present_template", None)
+            roi["calibration"] = calibration
+            combo_idx = self._combo_buff_roi.currentIndex()
+            if combo_idx >= 0:
+                self._combo_buff_roi.setItemText(combo_idx, str(roi["name"]))
         self._emit_config()
 
     def _start_rebind_capture(self, target: str, button: QPushButton) -> None:
