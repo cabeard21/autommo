@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings Window — Tab Redesign v2</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #111120;
+    color: #e0e0e0;
+    font-family: 'IBM Plex Sans', sans-serif;
+    padding: 32px;
+    min-height: 100vh;
+  }
+
+  h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: #6ef;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 4px;
+  }
+
+  .page-subtitle {
+    color: #555;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 28px;
+  }
+
+  .window {
+    background: #2a2a3a;
+    border: 1px solid #444;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    width: 500px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .title-bar {
+    background: #1e1e2e;
+    padding: 7px 12px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    border-bottom: 1px solid #333;
+  }
+
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.r { background: #e55; }
+  .dot.y { background: #eb5; }
+  .dot.g { background: #5b5; }
+
+  .title-bar .title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #888;
+    margin-left: 6px;
+  }
+
+  /* ===== TABS ===== */
+  .tab-bar {
+    display: flex;
+    background: #1e1e2e;
+    border-bottom: 1px solid #333;
+    padding: 0 8px;
+  }
+
+  .tab {
+    padding: 9px 16px;
+    font-size: 11px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 500;
+    color: #666;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    user-select: none;
+  }
+
+  .tab:hover { color: #999; }
+  .tab.active { color: #6ef; border-bottom-color: #6ef; }
+
+  .tab-body {
+    padding: 14px;
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .tab-body.active { display: flex; }
+
+  /* ===== SECTION ===== */
+  .section {
+    background: #252535;
+    border: 1px solid #3a3a4a;
+    border-radius: 4px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .section-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 2px;
+  }
+
+  .subsection {
+    background: #1e1e2e;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .subsection-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* ===== FORM ELEMENTS ===== */
+  .form-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .form-row label {
+    font-size: 11px;
+    color: #999;
+    min-width: 85px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .form-row label.narrow { min-width: 50px; }
+  .form-row label.wide { min-width: 100px; }
+  .form-row label.xnarrow { min-width: 34px; }
+
+  .fake-input {
+    background: #1a1a2a;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 5px 8px;
+    color: #ccc;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-align: center;
+    min-width: 52px;
+  }
+
+  .fake-input.wide { text-align: left; flex: 1; }
+  .fake-input.placeholder { color: #555; }
+
+  .fake-btn {
+    background: #333345;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 6px 12px;
+    color: #ccc;
+    font-size: 11px;
+    text-align: center;
+    cursor: pointer;
+  }
+  .fake-btn:hover { background: #3d3d50; }
+  .fake-btn.small { padding: 4px 10px; font-size: 10px; }
+  .fake-btn.calibrate {
+    background: #2d5a2d;
+    border-color: #3a7a3a;
+    color: #8f8;
+    width: 100%;
+    text-align: center;
+  }
+
+  .fake-dropdown {
+    background: #1a1a2a;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 5px 8px;
+    color: #ccc;
+    font-size: 11px;
+    flex: 1;
+  }
+
+  .fake-checkbox {
+    width: 14px; height: 14px;
+    background: #1a1a2a;
+    border: 1px solid #555;
+    border-radius: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: #f6a;
+    flex-shrink: 0;
+  }
+
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #999;
+  }
+
+  .fake-slider {
+    flex: 1;
+    height: 4px;
+    background: #444;
+    border-radius: 2px;
+    position: relative;
+    min-width: 80px;
+  }
+  .fake-slider::after {
+    content: '';
+    position: absolute;
+    left: 40%;
+    top: -4px;
+    width: 12px; height: 12px;
+    background: #888;
+    border-radius: 50%;
+  }
+
+  .hint {
+    font-size: 10px;
+    color: #555;
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1.4;
+  }
+
+  .help-icon {
+    font-size: 10px;
+    color: #666;
+    cursor: help;
+  }
+
+  .grid-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .grid-3col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+
+  .grid-4col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 6px;
+  }
+
+  .bind-btn {
+    background: #333345;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 5px 16px;
+    color: #6ef;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    min-width: 80px;
+  }
+
+  .bind-hint { font-size: 10px; color: #555; }
+
+  /* ===== STATUS BAR ===== */
+  .status-bar {
+    padding: 6px 14px;
+    border-top: 1px solid #333;
+    background: #1e1e2e;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #555;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #3a7a3a;
+  }
+
+  .status-bar.saving .status-dot { background: #e5a522; }
+  .status-bar.saving .status-text { color: #e5a522; }
+
+  /* ===== LAYOUT WRAPPERS ===== */
+  .windows-row {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .window-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 8px;
+  }
+
+  .profile-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .profile-row .fake-input { flex: 1; }
+
+  .dimmed { opacity: 0.4; }
+
+  /* ===== ANNOTATIONS ===== */
+  .annotations {
+    max-width: 1560px;
+    margin-top: 24px;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .callout {
+    background: #1a1a2e;
+    border: 1px solid rgba(102, 238, 255, 0.15);
+    border-left: 3px solid #6ef;
+    padding: 10px 12px;
+    border-radius: 0 4px 4px 0;
+    font-size: 11px;
+    color: #aaa;
+    line-height: 1.6;
+    flex: 1;
+    min-width: 280px;
+  }
+
+  .callout strong { color: #6ef; font-weight: 600; }
+
+  .separator {
+    border-top: 1px solid #3a3a4a;
+    margin: 2px 0;
+  }
+
+  .slider-val {
+    font-size: 11px;
+    color: #999;
+    font-family: 'JetBrains Mono', monospace;
+    width: 36px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>Settings Window — Tab Redesign v2</h1>
+<p class="page-subtitle">Three tabs. Auto-save status bar. Glow detection grouped into collapsible subsection.</p>
+
+<div class="windows-row">
+
+<!-- ==================== TAB 1: GENERAL ==================== -->
+<div>
+  <div class="window-label">Tab 1 — General</div>
+  <div class="window">
+    <div class="title-bar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <span class="title">Settings</span>
+    </div>
+
+    <div class="tab-bar">
+      <div class="tab active">General</div>
+      <div class="tab">Detection</div>
+      <div class="tab">Automation</div>
+    </div>
+
+    <div class="tab-body active">
+
+      <!-- Profile -->
+      <div class="section">
+        <div class="section-title">Profile</div>
+        <div class="profile-row">
+          <label style="min-width:auto; font-size:11px; color:#999">Name:</label>
+          <div class="fake-input wide">Teglaan</div>
+          <div class="fake-btn small">Export</div>
+          <div class="fake-btn small">Import</div>
+        </div>
+      </div>
+
+      <!-- Display -->
+      <div class="section">
+        <div class="section-title">Display</div>
+        <div class="form-row">
+          <label>Monitor:</label>
+          <div class="fake-dropdown">Monitor 2: 2560×1440</div>
+        </div>
+        <div class="form-row" style="justify-content: flex-start; padding-left: 93px; gap: 16px">
+          <div class="check-row">
+            <div class="fake-checkbox"></div>
+            <span>Show Region Overlay</span>
+          </div>
+          <div class="check-row">
+            <div class="fake-checkbox">✓</div>
+            <span>Always on Top</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>History rows:</label>
+          <div class="fake-input">3</div>
+          <span class="hint">(Last Action / Next Intention)</span>
+        </div>
+      </div>
+
+      <!-- Capture Region -->
+      <div class="section">
+        <div class="section-title">Capture Region</div>
+        <div class="grid-2col">
+          <div class="form-row"><label class="narrow">Top:</label><div class="fake-input" style="flex:1">849</div></div>
+          <div class="form-row"><label class="narrow">Left:</label><div class="fake-input" style="flex:1">757</div></div>
+          <div class="form-row"><label class="narrow">Width:</label><div class="fake-input" style="flex:1">408</div></div>
+          <div class="form-row"><label class="narrow">Height:</label><div class="fake-input" style="flex:1">36</div></div>
+        </div>
+        <div class="grid-3col" style="margin-top: 2px">
+          <div class="form-row"><label class="narrow">Slots:</label><div class="fake-input" style="flex:1">11</div></div>
+          <div class="form-row"><label class="narrow">Gap:</label><div class="fake-input" style="flex:1">1 px</div></div>
+          <div class="form-row"><label class="narrow">Pad:</label><div class="fake-input" style="flex:1">2 px</div></div>
+        </div>
+      </div>
+
+      <!-- Calibration -->
+      <div class="section">
+        <div class="section-title">Calibration</div>
+        <div class="fake-btn calibrate">Calibrate All Baselines</div>
+        <div class="hint">Tip: right-click a Slot State button to calibrate individual slots</div>
+      </div>
+
+    </div>
+
+    <div class="status-bar">
+      <div class="status-dot"></div>
+      <span class="status-text">Last saved: 23m ago</span>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TAB 2: DETECTION ==================== -->
+<div>
+  <div class="window-label">Tab 2 — Detection</div>
+  <div class="window">
+    <div class="title-bar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <span class="title">Settings</span>
+    </div>
+
+    <div class="tab-bar">
+      <div class="tab">General</div>
+      <div class="tab active">Detection</div>
+      <div class="tab">Automation</div>
+    </div>
+
+    <div class="tab-body active">
+
+      <!-- Cooldown Detection -->
+      <div class="section">
+        <div class="section-title">Cooldown Thresholds</div>
+        <div class="form-row">
+          <label>Darken:</label>
+          <div class="fake-input">30</div>
+          <span class="help-icon">(?)</span>
+        </div>
+        <div class="form-row">
+          <label>Trigger:</label>
+          <div class="fake-slider"></div>
+          <span class="slider-val">0.40</span>
+          <span class="help-icon">(?)</span>
+        </div>
+        <div class="form-row">
+          <label>Change:</label>
+          <div class="fake-slider"></div>
+          <span class="slider-val">0.40</span>
+          <span class="help-icon">(?)</span>
+        </div>
+        <div class="form-row">
+          <label>Change ignore:</label>
+          <div class="fake-input wide placeholder">e.g. 5</div>
+          <span class="help-icon">(?)</span>
+        </div>
+      </div>
+
+      <!-- Glow Detection -->
+      <div class="section">
+        <div class="section-title">Glow / Ready Override</div>
+        <div class="check-row">
+          <div class="fake-checkbox">✓</div>
+          <span>Enable glow ready override</span>
+        </div>
+
+        <div class="subsection">
+          <div class="subsection-title">Glow Parameters</div>
+          <div class="grid-4col">
+            <div class="form-row"><label class="xnarrow">Ring:</label><div class="fake-input" style="flex:1">4</div></div>
+            <div class="form-row"><label class="xnarrow">V+:</label><div class="fake-input" style="flex:1">35</div></div>
+            <div class="form-row"><label class="xnarrow">S≥:</label><div class="fake-input" style="flex:1">80</div></div>
+            <div class="form-row"><label class="xnarrow">N:</label><div class="fake-input" style="flex:1">2</div></div>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <div class="subsection-title">Per-Slot Overrides</div>
+          <div class="form-row">
+            <label>Glow by slot:</label>
+            <div class="fake-input wide placeholder">e.g. 4:55, 6:45</div>
+            <span class="help-icon">(?)</span>
+          </div>
+          <div class="form-row">
+            <label>Y frac by slot:</label>
+            <div class="fake-input wide placeholder">e.g. 5:0.08</div>
+            <span class="help-icon">(?)</span>
+          </div>
+          <div class="form-row">
+            <label>Glow→ready:</label>
+            <div class="fake-input wide placeholder">e.g. 5</div>
+            <span class="help-icon">(?)</span>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <div class="subsection-title">Color Thresholds</div>
+          <div class="form-row">
+            <label>Yellow frac:</label>
+            <div class="fake-slider"></div>
+            <span class="slider-val">0.18</span>
+            <span class="help-icon">(?)</span>
+          </div>
+          <div class="form-row">
+            <label>Red frac:</label>
+            <div class="fake-slider"></div>
+            <span class="slider-val">0.18</span>
+            <span class="help-icon">(?)</span>
+          </div>
+          <div class="grid-4col" style="margin-top: 2px">
+            <div class="form-row"><label class="xnarrow">Y min:</label><div class="fake-input" style="flex:1">18</div></div>
+            <div class="form-row"><label class="xnarrow">Y max:</label><div class="fake-input" style="flex:1">42</div></div>
+            <div class="form-row"><label class="xnarrow">R≤:</label><div class="fake-input" style="flex:1">9</div></div>
+            <div class="form-row"><label class="xnarrow">R≥:</label><div class="fake-input" style="flex:1">168</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cast/Channel Detection -->
+      <div class="section">
+        <div class="section-title">Cast / Channel Detection</div>
+        <div class="check-row">
+          <div class="fake-checkbox"></div>
+          <span>Enable cast/channel detection</span>
+        </div>
+
+        <div class="subsection dimmed">
+          <div class="subsection-title">Cast Band</div>
+          <div class="form-row">
+            <label>Range:</label>
+            <div class="fake-input">5%</div>
+            <span style="color:#666; font-size:11px">to</span>
+            <div class="fake-input">22%</div>
+            <span class="hint" style="margin-left:4px">of bar height</span>
+          </div>
+        </div>
+
+        <div class="subsection dimmed">
+          <div class="subsection-title">Cast Timing</div>
+          <div class="grid-2col">
+            <div class="form-row"><label class="narrow">Confirm:</label><div class="fake-input" style="flex:1">5</div></div>
+            <div class="form-row"><label class="narrow">Min:</label><div class="fake-input" style="flex:1">150 ms</div></div>
+          </div>
+          <div class="grid-2col">
+            <div class="form-row"><label class="narrow">Max:</label><div class="fake-input" style="flex:1">3000 ms</div></div>
+            <div class="form-row"><label class="narrow">Grace:</label><div class="fake-input" style="flex:1">120 ms</div></div>
+          </div>
+        </div>
+
+        <div class="dimmed" style="display:flex; flex-direction:column; gap:6px">
+          <div class="check-row">
+            <div class="fake-checkbox"></div>
+            <span>Allow channeling mode</span>
+          </div>
+          <div class="check-row">
+            <div class="fake-checkbox"></div>
+            <span>Lock ready slots while cast bar active</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cast Bar ROI -->
+      <div class="section">
+        <div class="section-title">Cast Bar Region</div>
+        <div class="check-row" style="margin-bottom: 4px">
+          <div class="fake-checkbox" style="color:#555"></div>
+          <span>Use separate cast bar ROI</span>
+        </div>
+        <div class="grid-2col dimmed">
+          <div class="form-row"><label class="narrow">Left:</label><div class="fake-input" style="flex:1">5</div></div>
+          <div class="form-row"><label class="narrow">Top:</label><div class="fake-input" style="flex:1">0</div></div>
+          <div class="form-row"><label class="narrow">Width:</label><div class="fake-input" style="flex:1">100</div></div>
+          <div class="form-row"><label class="narrow">Height:</label><div class="fake-input" style="flex:1">35</div></div>
+        </div>
+        <div class="hint dimmed">d: <span style="font-family:'JetBrains Mono',monospace">12</span> — distance from main capture region</div>
+      </div>
+
+    </div>
+
+    <div class="status-bar">
+      <div class="status-dot"></div>
+      <span class="status-text">Last saved: 2m ago</span>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TAB 3: AUTOMATION ==================== -->
+<div>
+  <div class="window-label">Tab 3 — Automation</div>
+  <div class="window">
+    <div class="title-bar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <span class="title">Settings</span>
+    </div>
+
+    <div class="tab-bar">
+      <div class="tab">General</div>
+      <div class="tab">Detection</div>
+      <div class="tab active">Automation</div>
+    </div>
+
+    <div class="tab-body active">
+
+      <!-- Controls -->
+      <div class="section">
+        <div class="section-title">Controls</div>
+        <div class="form-row">
+          <label>Toggle bind:</label>
+          <div class="bind-btn">F24</div>
+          <span class="bind-hint">click to rebind · right-click to clear</span>
+        </div>
+        <div class="form-row">
+          <label>Single bind:</label>
+          <div class="bind-btn" style="color:#555">—</div>
+          <span class="bind-hint">click to rebind · right-click to clear</span>
+        </div>
+        <div class="form-row">
+          <label>Window:</label>
+          <div class="fake-input wide placeholder">e.g. World of Warcraft</div>
+        </div>
+      </div>
+
+      <!-- Timing -->
+      <div class="section">
+        <div class="section-title">Timing</div>
+        <div class="grid-2col">
+          <div class="form-row">
+            <label class="narrow">Delay:</label>
+            <div class="fake-input" style="flex:1">150 ms</div>
+          </div>
+          <div class="form-row">
+            <label class="narrow">Queue:</label>
+            <div class="fake-input" style="flex:1">120 ms</div>
+          </div>
+        </div>
+        <div class="check-row">
+          <div class="fake-checkbox"></div>
+          <span>Allow sends while casting/channeling</span>
+        </div>
+      </div>
+
+      <!-- Priority Lists -->
+      <div class="section">
+        <div class="section-title">Priority Lists</div>
+        <div class="form-row">
+          <label>Active list:</label>
+          <div class="fake-dropdown">Default</div>
+        </div>
+        <div class="form-row" style="justify-content: flex-end; gap: 4px">
+          <div class="fake-btn small">+ New</div>
+          <div class="fake-btn small">Copy</div>
+          <div class="fake-btn small" style="color: #f66">Delete</div>
+        </div>
+        <div class="form-row">
+          <label>List name:</label>
+          <div class="fake-input wide">Default</div>
+        </div>
+      </div>
+
+      <!-- Spell Queue -->
+      <div class="section">
+        <div class="section-title">Spell Queue</div>
+        <div class="form-row">
+          <label>Queue keys:</label>
+          <div class="fake-input wide" style="text-align:left">v</div>
+        </div>
+        <div class="hint" style="padding-left: 93px">Manual presses of these keys (or bound keys not in priority) queue to fire at next GCD</div>
+        <div class="grid-2col">
+          <div class="form-row">
+            <label class="narrow">Timeout:</label>
+            <div class="fake-input" style="flex:1">5000 ms</div>
+          </div>
+          <div class="form-row">
+            <label class="narrow">Fire delay:</label>
+            <div class="fake-input" style="flex:1">100 ms</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="status-bar">
+      <div class="status-dot"></div>
+      <span class="status-text">Last saved: just now</span>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<!-- Annotations -->
+<div class="annotations">
+  <div class="callout">
+    <strong>Tab 1 — General:</strong> Unchanged from v1. Profile, display, capture region, calibration. Setup-once tab.
+  </div>
+  <div class="callout">
+    <strong>Tab 2 — Detection:</strong> Now has three main sections. <strong>Cooldown Thresholds</strong> — darken, trigger, change slider (new), change ignore field (new). <strong>Glow / Ready Override</strong> — the big new block: enable checkbox at top, then three subsections (Glow Parameters as a compact 4-col grid, Per-Slot Overrides for the text fields, Color Thresholds for the sliders and hue ranges). When the enable checkbox is off, all subsections dim. <strong>Cast / Channel Detection</strong> — same as v1 with subsections for Cast Band and Cast Timing, dimmed when disabled. <strong>Cast Bar Region</strong> — separate section for the ROI override.
+  </div>
+  <div class="callout">
+    <strong>Tab 3 — Automation:</strong> Unchanged from v1. Controls, timing, priority lists, spell queue.
+  </div>
+  <div class="callout">
+    <strong>Status bar:</strong> Replaces Save Config button. Shows auto-save status with a green dot + relative time ("Last saved: 2m ago", "Last saved: just now"). Dot turns amber during active save. Sits outside the tab widget so it's always visible. Updates every ~30s or on save event.
+  </div>
+  <div class="callout">
+    <strong>Glow layout strategy:</strong> The glow settings are numerous but logically group into three concerns: (1) the ring/V+/S/N parameters that control <em>how</em> glow is detected, (2) per-slot text fields for exceptions, and (3) color fraction sliders + hue ranges. Each gets its own subsection with a darker background, keeping the section scannable. The 4-column grid for Ring/V+/S≥/N and Y min/Y max/R≤/R≥ is compact because these are small numeric values that belong together.
+  </div>
+</div>
+
+</body>
+</html>

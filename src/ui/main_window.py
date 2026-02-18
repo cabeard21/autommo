@@ -39,6 +39,10 @@ from src.ui.priority_panel import (
 )
 from src.automation.global_hotkey import format_bind_for_display
 from src.automation.binds import normalize_bind, normalize_bind_from_parts
+from src.automation.priority_rules import (
+    normalize_activation_rule,
+    slot_item_is_eligible_for_state_dict,
+)
 
 if TYPE_CHECKING:
     from src.automation.key_sender import KeySender
@@ -614,9 +618,20 @@ class MainWindow(QMainWindow):
         profile = self._active_priority_profile()
         items = profile.get("priority_items", [])
         if isinstance(items, list) and items:
-            return [dict(i) for i in items if isinstance(i, dict)]
+            normalized: list[dict] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                out = dict(item)
+                if str(out.get("type", "") or "").strip().lower() == "slot":
+                    out["activation_rule"] = normalize_activation_rule(
+                        out.get("activation_rule")
+                    )
+                normalized.append(out)
+            return normalized
         return [
-            {"type": "slot", "slot_index": i} for i in self._active_priority_order()
+            {"type": "slot", "slot_index": i, "activation_rule": "always"}
+            for i in self._active_priority_order()
         ]
 
     def _active_manual_actions(self) -> list[dict]:
@@ -828,7 +843,16 @@ class MainWindow(QMainWindow):
 
     def _on_priority_items_changed(self, items: list) -> None:
         profile = self._active_priority_profile()
-        normalized_items = [dict(i) for i in list(items or []) if isinstance(i, dict)]
+        normalized_items: list[dict] = []
+        for item in list(items or []):
+            if not isinstance(item, dict):
+                continue
+            out = dict(item)
+            if str(out.get("type", "") or "").strip().lower() == "slot":
+                out["activation_rule"] = normalize_activation_rule(
+                    out.get("activation_rule")
+                )
+            normalized_items.append(out)
         slot_order = self._slot_order_from_priority_items(normalized_items)
         profile["priority_items"] = normalized_items
         profile["priority_order"] = slot_order
@@ -990,7 +1014,7 @@ class MainWindow(QMainWindow):
                 if not isinstance(slot_index, int):
                     continue
                 slot = by_index.get(slot_index)
-                if not slot or slot.get("state") != "ready":
+                if not slot_item_is_eligible_for_state_dict(item, slot):
                     continue
                 keybind = (
                     self._config.keybinds[slot_index]
@@ -1053,7 +1077,7 @@ class MainWindow(QMainWindow):
             if not isinstance(slot_index, int):
                 continue
             slot = by_index.get(slot_index)
-            if slot and slot.get("state") == "ready":
+            if slot_item_is_eligible_for_state_dict(item, slot):
                 return slot_index
         return None
 
@@ -1138,7 +1162,7 @@ class MainWindow(QMainWindow):
         ]
         if not items:
             items = [
-                {"type": "slot", "slot_index": i}
+                {"type": "slot", "slot_index": i, "activation_rule": "always"}
                 for i in list(profile.get("priority_order", []))
             ]
         items.append({"type": "manual", "action_id": action_id})

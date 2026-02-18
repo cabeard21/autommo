@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -26,6 +25,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -33,30 +33,55 @@ from PyQt6.QtWidgets import (
 from src.models import AppConfig, BoundingBox
 from src.automation.global_hotkey import CaptureOneKeyThread, format_bind_for_display
 from src.automation.binds import normalize_bind
+from src.ui.themes import load_theme
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "default_config.json"
 
-LABEL_MIN_WIDTH = 70
+LABEL_MIN_WIDTH = 85
+LABEL_MIN_WIDTH_NARROW = 50
+LABEL_MIN_WIDTH_XNARROW = 34
 SECTION_GAP = 10
 
 
-def _label_style() -> str:
-    return "font-size: 11px; color: #999; min-width: 70px;"
-
-
-def _section_title_style() -> str:
-    return "font-family: monospace; font-size: 10px; color: #666; font-weight: bold;"
-
-
-def _row_label(text: str) -> QLabel:
+def _row_label(text: str, narrow: bool = False, xnarrow: bool = False) -> QLabel:
     l = QLabel(text)
-    l.setStyleSheet(_label_style())
+    if xnarrow:
+        l.setObjectName("formLabelXnarrow")
+        l.setMinimumWidth(LABEL_MIN_WIDTH_XNARROW)
+    else:
+        l.setObjectName("formLabelNarrow" if narrow else "formLabel")
+        l.setMinimumWidth(LABEL_MIN_WIDTH_NARROW if narrow else LABEL_MIN_WIDTH)
     l.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-    l.setMinimumWidth(LABEL_MIN_WIDTH)
     return l
+
+
+def _section_frame(title: str, content: QWidget) -> QFrame:
+    f = QFrame()
+    f.setObjectName("section")
+    layout = QVBoxLayout(f)
+    layout.setContentsMargins(5, 6, 5, 6)
+    layout.setSpacing(6)
+    title_l = QLabel(title.upper())
+    title_l.setObjectName("sectionTitle")
+    layout.addWidget(title_l)
+    layout.addWidget(content)
+    return f
+
+
+def _subsection_frame(title: str, content: QWidget) -> QFrame:
+    f = QFrame()
+    f.setObjectName("subsection")
+    layout = QVBoxLayout(f)
+    layout.setContentsMargins(4, 5, 4, 5)
+    layout.setSpacing(4)
+    title_l = QLabel(title.upper())
+    title_l.setObjectName("subsectionTitle")
+    layout.addWidget(title_l)
+    layout.addWidget(content)
+    return f
 
 
 class SettingsDialog(QDialog):
@@ -88,39 +113,87 @@ class SettingsDialog(QDialog):
         self._auto_save_timer.timeout.connect(self._do_auto_save)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(420)
+        self.setObjectName("settingsDialog")
+        self.setStyleSheet(load_theme("dark") + "\n" + load_theme("settings-dark"))
+        self._status_saving = False
+        self._status_update_timer = QTimer(self)
+        self._status_update_timer.setInterval(30_000)
+        self._status_update_timer.timeout.connect(self._update_status_bar)
         self._build_ui()
         self._connect_signals()
+        self._update_status_bar()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(SECTION_GAP)
-        self._scroll_area = QScrollArea()
-        self._scroll_area.setWidgetResizable(True)
-        self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self._scroll_area.setStyleSheet("QScrollArea { background: transparent; }")
-        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        content = QWidget()
-        self._scroll_content = content
-        content_layout = QVBoxLayout(content)
-        content_layout.setSpacing(SECTION_GAP)
+        layout.setSpacing(0)
 
-        content_layout.addWidget(self._profile_section())
-        content_layout.addWidget(self._display_section())
-        content_layout.addWidget(self._capture_section())
-        content_layout.addWidget(self._detection_section())
-        content_layout.addWidget(self._automation_section())
-        content_layout.addWidget(self._spell_queue_section())
-        content_layout.addWidget(self._calibration_section())
-        content_layout.addStretch()
-        self._scroll_area.setWidget(content)
-        layout.addWidget(self._scroll_area)
-        layout.addLayout(self._status_row())
+        self._tabs = QTabWidget()
+        self._tabs.setObjectName("settingsTabs")
 
-    def _profile_section(self) -> QGroupBox:
-        g = QGroupBox("Profile")
-        g.setStyleSheet("QGroupBox { font-weight: bold; }")
-        fl = QFormLayout(g)
+        # General tab
+        general_content = QWidget()
+        general_layout = QVBoxLayout(general_content)
+        general_layout.setSpacing(SECTION_GAP)
+        general_layout.addWidget(_section_frame("Profile", self._profile_section()))
+        general_layout.addWidget(_section_frame("Display", self._display_section()))
+        general_layout.addWidget(_section_frame("Capture Region", self._capture_section()))
+        general_layout.addWidget(_section_frame("Calibration", self._calibration_section()))
+        general_layout.addStretch()
+        general_scroll = QScrollArea()
+        general_scroll.setWidgetResizable(True)
+        general_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        general_scroll.setWidget(general_content)
+        self._scroll_content = general_content
+        self._tabs.addTab(general_scroll, "General")
+
+        # Detection tab
+        detection_content = QWidget()
+        detection_layout = QVBoxLayout(detection_content)
+        detection_layout.setSpacing(SECTION_GAP)
+        detection_layout.addWidget(_section_frame("Detection", self._detection_section()))
+        detection_layout.addStretch()
+        detection_scroll = QScrollArea()
+        detection_scroll.setWidgetResizable(True)
+        detection_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        detection_scroll.setWidget(detection_content)
+        self._tabs.addTab(detection_scroll, "Detection")
+
+        # Automation tab
+        automation_content = QWidget()
+        automation_layout = QVBoxLayout(automation_content)
+        automation_layout.setSpacing(SECTION_GAP)
+        automation_layout.addWidget(_section_frame("Controls", self._automation_controls_section()))
+        automation_layout.addWidget(_section_frame("Timing", self._automation_timing_section()))
+        automation_layout.addWidget(_section_frame("Priority Lists", self._automation_priority_lists_section()))
+        automation_layout.addWidget(_section_frame("Spell Queue", self._spell_queue_section()))
+        automation_layout.addStretch()
+        automation_scroll = QScrollArea()
+        automation_scroll.setWidgetResizable(True)
+        automation_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        automation_scroll.setWidget(automation_content)
+        self._tabs.addTab(automation_scroll, "Automation")
+
+        layout.addWidget(self._tabs)
+
+        # Status bar (no Save button)
+        status_bar = QWidget()
+        status_bar.setObjectName("settingsStatusBar")
+        status_layout = QHBoxLayout(status_bar)
+        status_layout.setContentsMargins(14, 6, 14, 6)
+        self._status_dot = QLabel()
+        self._status_dot.setObjectName("statusBarDot")
+        self._status_dot.setFixedSize(6, 6)
+        self._status_dot.setStyleSheet("background: #3a7a3a; border-radius: 3px;")
+        self._status_text = QLabel("Last saved: -")
+        self._status_text.setObjectName("statusBarText")
+        status_layout.addWidget(self._status_dot)
+        status_layout.addWidget(self._status_text)
+        status_layout.addStretch()
+        layout.addWidget(status_bar)
+
+    def _profile_section(self) -> QWidget:
+        w = QWidget()
+        fl = QFormLayout(w)
         fl.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self._edit_profile_name = QLineEdit()
         self._edit_profile_name.setPlaceholderText("e.g. Default")
@@ -132,12 +205,11 @@ class SettingsDialog(QDialog):
         btn_row.addWidget(self._btn_export)
         btn_row.addWidget(self._btn_import)
         fl.addRow("", btn_row)
-        return g
+        return w
 
-    def _display_section(self) -> QGroupBox:
-        g = QGroupBox("Display")
-        g.setStyleSheet("QGroupBox { font-weight: bold; }")
-        fl = QFormLayout(g)
+    def _display_section(self) -> QWidget:
+        w = QWidget()
+        fl = QFormLayout(w)
         self._monitor_combo = QComboBox()
         self._monitor_combo.setMinimumWidth(180)
         fl.addRow(_row_label("Monitor:"), self._monitor_combo)
@@ -153,16 +225,18 @@ class SettingsDialog(QDialog):
         self._spin_history_rows.setValue(3)
         self._spin_history_rows.setMaximumWidth(48)
         history_row.addWidget(self._spin_history_rows)
-        history_row.addWidget(QLabel("(Last Action / Next Intention)"))
-        help_l = history_row.itemAt(1).widget()
-        help_l.setStyleSheet("font-size: 10px; color: #666;")
+        help_l = QLabel("(Last Action / Next Intention)")
+        help_l.setObjectName("hint")
+        history_row.addWidget(help_l)
         fl.addRow(_row_label("History rows:"), history_row)
-        return g
+        return w
 
-    def _capture_section(self) -> QGroupBox:
-        g = QGroupBox("Capture Region")
-        g.setStyleSheet("QGroupBox { font-weight: bold; }")
-        grid = QGridLayout(g)
+    def _capture_section(self) -> QWidget:
+        w = QWidget()
+        outer = QHBoxLayout(w)
+        outer.addStretch()
+        inner = QWidget()
+        grid = QGridLayout(inner)
         self._spin_top = QSpinBox()
         self._spin_left = QSpinBox()
         self._spin_width = QSpinBox()
@@ -194,20 +268,21 @@ class SettingsDialog(QDialog):
         row2.addWidget(self._spin_padding)
         row2.addStretch()
         grid.addLayout(row2, 2, 0, 1, 4)
-        return g
+        outer.addWidget(inner)
+        outer.addStretch()
+        return w
 
-    def _detection_section(self) -> QGroupBox:
-        g = QGroupBox("Detection")
-        g.setStyleSheet("QGroupBox { font-weight: bold; }")
-        fl = QFormLayout(g)
+    def _detection_section(self) -> QWidget:
+        w = QWidget()
+        fl = QFormLayout(w)
         self._spin_brightness_drop = QSpinBox()
         self._spin_brightness_drop.setRange(0, 255)
         self._spin_brightness_drop.setMaximumWidth(48)
         darken_help = QLabel("(?)")
+        darken_help.setObjectName("hint")
         darken_help.setToolTip(
             "Pixels must darken by this many brightness levels (0-255) to count as on cooldown."
         )
-        darken_help.setStyleSheet("color: #666; font-size: 11px;")
         darken_row = QHBoxLayout()
         darken_row.addWidget(self._spin_brightness_drop)
         darken_row.addWidget(darken_help)
@@ -217,17 +292,186 @@ class SettingsDialog(QDialog):
         self._slider_pixel_fraction.setSingleStep(5)
         self._pixel_fraction_label = QLabel("0.30")
         self._pixel_fraction_label.setMinimumWidth(32)
-        self._pixel_fraction_label.setStyleSheet("font-family: monospace; font-size: 11px;")
         trigger_help = QLabel("(?)")
+        trigger_help.setObjectName("hint")
         trigger_help.setToolTip(
             "Fraction of pixels that must be darkened to trigger cooldown detection."
         )
-        trigger_help.setStyleSheet("color: #666; font-size: 11px;")
         trigger_row = QHBoxLayout()
         trigger_row.addWidget(self._slider_pixel_fraction)
         trigger_row.addWidget(self._pixel_fraction_label)
         trigger_row.addWidget(trigger_help)
         fl.addRow(_row_label("Trigger:"), trigger_row)
+        self._slider_change_pixel_fraction = QSlider(Qt.Orientation.Horizontal)
+        self._slider_change_pixel_fraction.setRange(10, 90)
+        self._slider_change_pixel_fraction.setSingleStep(5)
+        self._change_pixel_fraction_label = QLabel("0.30")
+        self._change_pixel_fraction_label.setMinimumWidth(32)
+        change_help = QLabel("(?)")
+        change_help.setObjectName("hint")
+        change_help.setToolTip(
+            "Fraction of pixels that may differ from baseline (dark or bright) before marking not-ready."
+        )
+        change_row = QHBoxLayout()
+        change_row.addWidget(self._slider_change_pixel_fraction)
+        change_row.addWidget(self._change_pixel_fraction_label)
+        change_row.addWidget(change_help)
+        fl.addRow(_row_label("Change:"), change_row)
+        self._edit_cooldown_change_ignore_by_slot = QLineEdit()
+        self._edit_cooldown_change_ignore_by_slot.setPlaceholderText("e.g. 5")
+        self._edit_cooldown_change_ignore_by_slot.setToolTip(
+            "Optional slot indexes where change-based cooldown detection is ignored."
+        )
+        change_ignore_help = QLabel("(?)")
+        change_ignore_help.setObjectName("hint")
+        change_ignore_help.setToolTip(
+            "Example: 5 means slot 5 uses dark-cooldown detection only."
+        )
+        change_ignore_row = QHBoxLayout()
+        change_ignore_row.addWidget(self._edit_cooldown_change_ignore_by_slot)
+        change_ignore_row.addWidget(change_ignore_help)
+        fl.addRow(_row_label("Change ignore:"), change_ignore_row)
+        self._check_glow_enabled = QCheckBox("Enable glow ready override")
+        self._check_glow_enabled.setToolTip(
+            "If enabled, confirmed icon glow can mark a slot ready even when generic change-delta says not-ready."
+        )
+        fl.addRow("", self._check_glow_enabled)
+        glow_row = QHBoxLayout()
+        self._spin_glow_ring_thickness = QSpinBox()
+        self._spin_glow_ring_thickness.setRange(1, 12)
+        self._spin_glow_ring_thickness.setPrefix("ring ")
+        self._spin_glow_ring_thickness.setMaximumWidth(92)
+        self._spin_glow_ring_thickness.setToolTip(
+            "Thickness of the edge ring (pixels) used to look for glow."
+        )
+        self._spin_glow_value_delta = QSpinBox()
+        self._spin_glow_value_delta.setRange(5, 120)
+        self._spin_glow_value_delta.setPrefix("V+ ")
+        self._spin_glow_value_delta.setMaximumWidth(82)
+        self._spin_glow_value_delta.setToolTip(
+            "Minimum brightness increase vs baseline in the ring to count as glow."
+        )
+        self._spin_glow_saturation_min = QSpinBox()
+        self._spin_glow_saturation_min.setRange(0, 255)
+        self._spin_glow_saturation_min.setPrefix("S>= ")
+        self._spin_glow_saturation_min.setMaximumWidth(86)
+        self._spin_glow_saturation_min.setToolTip(
+            "Minimum HSV saturation for glow-colored ring pixels."
+        )
+        self._spin_glow_confirm_frames = QSpinBox()
+        self._spin_glow_confirm_frames.setRange(1, 8)
+        self._spin_glow_confirm_frames.setPrefix("N ")
+        self._spin_glow_confirm_frames.setMaximumWidth(64)
+        self._spin_glow_confirm_frames.setToolTip(
+            "Consecutive glow frames required before glow is considered confirmed."
+        )
+        glow_row.addWidget(self._spin_glow_ring_thickness)
+        glow_row.addWidget(self._spin_glow_value_delta)
+        glow_row.addWidget(self._spin_glow_saturation_min)
+        glow_row.addWidget(self._spin_glow_confirm_frames)
+        glow_row.addStretch()
+        fl.addRow(_row_label("Glow:"), glow_row)
+        self._edit_glow_value_delta_by_slot = QLineEdit()
+        self._edit_glow_value_delta_by_slot.setPlaceholderText("e.g. 4:55, 6:45")
+        self._edit_glow_value_delta_by_slot.setToolTip(
+            "Optional per-slot V+ overrides as slot:delta pairs (0-based slot index), comma-separated."
+        )
+        glow_slot_help = QLabel("(?)")
+        glow_slot_help.setObjectName("hint")
+        glow_slot_help.setToolTip(
+            "Example: 4:55,6:45 means slot 4 uses V+=55 and slot 6 uses V+=45."
+        )
+        glow_slot_row = QHBoxLayout()
+        glow_slot_row.addWidget(self._edit_glow_value_delta_by_slot)
+        glow_slot_row.addWidget(glow_slot_help)
+        fl.addRow(_row_label("Glow by slot:"), glow_slot_row)
+        self._edit_glow_ring_fraction_by_slot = QLineEdit()
+        self._edit_glow_ring_fraction_by_slot.setPlaceholderText("e.g. 5:0.08")
+        self._edit_glow_ring_fraction_by_slot.setToolTip(
+            "Optional per-slot yellow fraction overrides as slot:fraction pairs (0-based), comma-separated."
+        )
+        glow_frac_slot_help = QLabel("(?)")
+        glow_frac_slot_help.setObjectName("hint")
+        glow_frac_slot_help.setToolTip(
+            "Example: 5:0.08 lowers yellow fraction threshold for slot 5 only."
+        )
+        glow_frac_slot_row = QHBoxLayout()
+        glow_frac_slot_row.addWidget(self._edit_glow_ring_fraction_by_slot)
+        glow_frac_slot_row.addWidget(glow_frac_slot_help)
+        fl.addRow(_row_label("Y frac by slot:"), glow_frac_slot_row)
+        self._edit_glow_override_cooldown_by_slot = QLineEdit()
+        self._edit_glow_override_cooldown_by_slot.setPlaceholderText("e.g. 5")
+        self._edit_glow_override_cooldown_by_slot.setToolTip(
+            "Optional slot indexes where any confirmed glow (not just red) can override cooldown."
+        )
+        glow_override_help = QLabel("(?)")
+        glow_override_help.setObjectName("hint")
+        glow_override_help.setToolTip(
+            "Example: 5,7 allows yellow/white glow to mark those slots ready while on cooldown."
+        )
+        glow_override_row = QHBoxLayout()
+        glow_override_row.addWidget(self._edit_glow_override_cooldown_by_slot)
+        glow_override_row.addWidget(glow_override_help)
+        fl.addRow(_row_label("Glow->ready:"), glow_override_row)
+        self._slider_glow_ring_fraction = QSlider(Qt.Orientation.Horizontal)
+        self._slider_glow_ring_fraction.setRange(5, 60)
+        self._slider_glow_ring_fraction.setSingleStep(1)
+        self._slider_glow_ring_fraction.setToolTip(
+            "Minimum fraction of ring pixels that must meet yellow glow criteria."
+        )
+        self._glow_ring_fraction_label = QLabel("0.18")
+        self._glow_ring_fraction_label.setMinimumWidth(32)
+        glow_frac_help = QLabel("(?)")
+        glow_frac_help.setObjectName("hint")
+        glow_frac_help.setToolTip(
+            "Minimum fraction of ring pixels matching yellow glow color/brightness criteria."
+        )
+        glow_frac_row = QHBoxLayout()
+        glow_frac_row.addWidget(self._slider_glow_ring_fraction)
+        glow_frac_row.addWidget(self._glow_ring_fraction_label)
+        glow_frac_row.addWidget(glow_frac_help)
+        fl.addRow(_row_label("Yellow frac:"), glow_frac_row)
+        self._slider_glow_red_ring_fraction = QSlider(Qt.Orientation.Horizontal)
+        self._slider_glow_red_ring_fraction.setRange(5, 60)
+        self._slider_glow_red_ring_fraction.setSingleStep(1)
+        self._slider_glow_red_ring_fraction.setToolTip(
+            "Minimum fraction of ring pixels that must meet red glow criteria."
+        )
+        self._glow_red_ring_fraction_label = QLabel("0.18")
+        self._glow_red_ring_fraction_label.setMinimumWidth(32)
+        glow_red_frac_help = QLabel("(?)")
+        glow_red_frac_help.setObjectName("hint")
+        glow_red_frac_help.setToolTip(
+            "Minimum fraction of ring pixels matching red glow color/brightness criteria."
+        )
+        glow_red_frac_row = QHBoxLayout()
+        glow_red_frac_row.addWidget(self._slider_glow_red_ring_fraction)
+        glow_red_frac_row.addWidget(self._glow_red_ring_fraction_label)
+        glow_red_frac_row.addWidget(glow_red_frac_help)
+        fl.addRow(_row_label("Red frac:"), glow_red_frac_row)
+        glow_hue_row = QHBoxLayout()
+        self._spin_glow_yellow_hue_min = QSpinBox()
+        self._spin_glow_yellow_hue_min.setRange(0, 179)
+        self._spin_glow_yellow_hue_min.setPrefix("Y min ")
+        self._spin_glow_yellow_hue_min.setMaximumWidth(86)
+        self._spin_glow_yellow_hue_max = QSpinBox()
+        self._spin_glow_yellow_hue_max.setRange(0, 179)
+        self._spin_glow_yellow_hue_max.setPrefix("Y max ")
+        self._spin_glow_yellow_hue_max.setMaximumWidth(86)
+        self._spin_glow_red_hue_max_low = QSpinBox()
+        self._spin_glow_red_hue_max_low.setRange(0, 179)
+        self._spin_glow_red_hue_max_low.setPrefix("R<= ")
+        self._spin_glow_red_hue_max_low.setMaximumWidth(78)
+        self._spin_glow_red_hue_min_high = QSpinBox()
+        self._spin_glow_red_hue_min_high.setRange(0, 179)
+        self._spin_glow_red_hue_min_high.setPrefix("R>= ")
+        self._spin_glow_red_hue_min_high.setMaximumWidth(78)
+        glow_hue_row.addWidget(self._spin_glow_yellow_hue_min)
+        glow_hue_row.addWidget(self._spin_glow_yellow_hue_max)
+        glow_hue_row.addWidget(self._spin_glow_red_hue_max_low)
+        glow_hue_row.addWidget(self._spin_glow_red_hue_min_high)
+        glow_hue_row.addStretch()
+        fl.addRow(_row_label("Glow hue:"), glow_hue_row)
         self._check_cast_detection = QCheckBox("Enable cast/channel detection")
         fl.addRow("", self._check_cast_detection)
         cast_band_row = QHBoxLayout()
@@ -307,56 +551,45 @@ class SettingsDialog(QDialog):
         cast_bar_row.addWidget(self._spin_cast_bar_activity)
         cast_bar_row.addStretch()
         fl.addRow(_row_label("Cast bar:"), cast_bar_row)
-        return g
+        return w
 
-    def _automation_section(self) -> QGroupBox:
-        g = QGroupBox("Automation")
-        g.setStyleSheet("QGroupBox { font-weight: bold; }")
-        fl = QFormLayout(g)
-        self._combo_automation_profile = QComboBox()
-        self._btn_add_automation_profile = QPushButton("+")
-        self._btn_copy_automation_profile = QPushButton("Copy")
-        self._btn_remove_automation_profile = QPushButton("-")
-        self._btn_add_automation_profile.setFixedWidth(28)
-        self._btn_copy_automation_profile.setMinimumWidth(54)
-        self._btn_remove_automation_profile.setFixedWidth(28)
-        profile_row = QHBoxLayout()
-        profile_row.addWidget(self._combo_automation_profile, 1)
-        profile_row.addWidget(self._btn_add_automation_profile)
-        profile_row.addWidget(self._btn_copy_automation_profile)
-        profile_row.addWidget(self._btn_remove_automation_profile)
-        fl.addRow(_row_label("List profile:"), profile_row)
-        self._edit_automation_profile_name = QLineEdit()
-        self._edit_automation_profile_name.setPlaceholderText("e.g. Single Target")
-        self._edit_automation_profile_name.setClearButtonEnabled(True)
-        fl.addRow(_row_label("List name:"), self._edit_automation_profile_name)
+    def _automation_controls_section(self) -> QWidget:
+        w = QWidget()
+        fl = QFormLayout(w)
         self._btn_toggle_bind = QPushButton("-")
-        self._btn_toggle_bind.setStyleSheet("font-family: monospace;")
+        self._btn_toggle_bind.setObjectName("bindButton")
         self._btn_toggle_bind.setMinimumWidth(72)
         self._btn_toggle_bind.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         toggle_help = QLabel("click to bind combo, right-click to clear")
-        toggle_help.setStyleSheet("font-size: 10px; color: #666;")
+        toggle_help.setObjectName("hint")
         toggle_row = QHBoxLayout()
         toggle_row.addWidget(self._btn_toggle_bind)
         toggle_row.addWidget(toggle_help)
         fl.addRow(_row_label("Toggle bind:"), toggle_row)
         self._btn_single_fire_bind = QPushButton("-")
-        self._btn_single_fire_bind.setStyleSheet("font-family: monospace;")
+        self._btn_single_fire_bind.setObjectName("bindButton")
         self._btn_single_fire_bind.setMinimumWidth(72)
         self._btn_single_fire_bind.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         single_help = QLabel("click to bind combo, right-click to clear")
-        single_help.setStyleSheet("font-size: 10px; color: #666;")
+        single_help.setObjectName("hint")
         single_row = QHBoxLayout()
         single_row.addWidget(self._btn_single_fire_bind)
         single_row.addWidget(single_help)
         fl.addRow(_row_label("Single bind:"), single_row)
         self._automation_bind_conflict_badge = QLabel("")
+        self._automation_bind_conflict_badge.setObjectName("hint")
         self._automation_bind_conflict_badge.setWordWrap(True)
-        self._automation_bind_conflict_badge.setStyleSheet(
-            "font-size: 10px; color: #ffb3b3; background: #4a1f1f; border: 1px solid #7a2f2f; border-radius: 3px; padding: 4px 6px;"
-        )
         self._automation_bind_conflict_badge.setVisible(False)
         fl.addRow("", self._automation_bind_conflict_badge)
+        self._edit_window_title = QLineEdit()
+        self._edit_window_title.setPlaceholderText("e.g. World of Warcraft")
+        self._edit_window_title.setClearButtonEnabled(True)
+        fl.addRow(_row_label("Window:"), self._edit_window_title)
+        return w
+
+    def _automation_timing_section(self) -> QWidget:
+        w = QWidget()
+        fl = QFormLayout(w)
         self._spin_min_delay = QSpinBox()
         self._spin_min_delay.setRange(50, 2000)
         self._spin_min_delay.setMaximumWidth(56)
@@ -367,16 +600,34 @@ class SettingsDialog(QDialog):
         fl.addRow(_row_label("Queue (ms):"), self._spin_queue_window)
         self._check_allow_cast_while_casting = QCheckBox("Allow sends while casting/channeling")
         fl.addRow("", self._check_allow_cast_while_casting)
-        self._edit_window_title = QLineEdit()
-        self._edit_window_title.setPlaceholderText("e.g. World of Warcraft")
-        self._edit_window_title.setClearButtonEnabled(True)
-        fl.addRow(_row_label("Window:"), self._edit_window_title)
-        return g
+        return w
 
-    def _spell_queue_section(self) -> QGroupBox:
-        g = QGroupBox("Spell Queue")
-        g.setStyleSheet("QGroupBox { font-weight: bold; }")
-        fl = QFormLayout(g)
+    def _automation_priority_lists_section(self) -> QWidget:
+        w = QWidget()
+        fl = QFormLayout(w)
+        self._combo_automation_profile = QComboBox()
+        self._btn_add_automation_profile = QPushButton("+ New")
+        self._btn_copy_automation_profile = QPushButton("Copy")
+        self._btn_remove_automation_profile = QPushButton("Delete")
+        self._btn_remove_automation_profile.setObjectName("deleteButton")
+        self._btn_add_automation_profile.setFixedWidth(56)
+        self._btn_copy_automation_profile.setMinimumWidth(54)
+        self._btn_remove_automation_profile.setFixedWidth(56)
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(self._combo_automation_profile, 1)
+        profile_row.addWidget(self._btn_add_automation_profile)
+        profile_row.addWidget(self._btn_copy_automation_profile)
+        profile_row.addWidget(self._btn_remove_automation_profile)
+        fl.addRow(_row_label("Active list:"), profile_row)
+        self._edit_automation_profile_name = QLineEdit()
+        self._edit_automation_profile_name.setPlaceholderText("e.g. Single Target")
+        self._edit_automation_profile_name.setClearButtonEnabled(True)
+        fl.addRow(_row_label("List name:"), self._edit_automation_profile_name)
+        return w
+
+    def _spell_queue_section(self) -> QWidget:
+        w = QWidget()
+        fl = QFormLayout(w)
         self._edit_queue_keys = QLineEdit()
         self._edit_queue_keys.setPlaceholderText("e.g. R, T, V")
         self._edit_queue_keys.setClearButtonEnabled(True)
@@ -384,7 +635,7 @@ class SettingsDialog(QDialog):
         queue_help = QLabel(
             "Manual presses of these keys (or bound keys not in priority) will queue to fire at next GCD"
         )
-        queue_help.setStyleSheet("font-size: 10px; color: #666;")
+        queue_help.setObjectName("hint")
         queue_help.setWordWrap(True)
         fl.addRow("", queue_help)
         self._spin_queue_timeout = QSpinBox()
@@ -398,30 +649,43 @@ class SettingsDialog(QDialog):
         self._spin_queue_fire_delay.setMaximumWidth(80)
         self._spin_queue_fire_delay.setToolTip("Delay after GCD ready before sending queued key (avoids firing too early)")
         fl.addRow(_row_label("Fire delay:"), self._spin_queue_fire_delay)
-        return g
+        return w
 
-    def _calibration_section(self) -> QGroupBox:
-        g = QGroupBox("Calibration")
-        g.setStyleSheet("QGroupBox { font-weight: bold; }")
-        layout = QVBoxLayout(g)
+    def _calibration_section(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
         self._btn_calibrate = QPushButton("Calibrate All Baselines")
-        self._btn_calibrate.setStyleSheet(
-            "background-color: #2d5a2d; color: #88ff88; border: 1px solid #3a7a3a;"
-        )
+        self._btn_calibrate.setObjectName("calibrateButton")
         layout.addWidget(self._btn_calibrate)
         tip = QLabel("Tip: individual slots can be calibrated via right-click on Slot States")
-        tip.setStyleSheet("font-family: monospace; font-size: 10px; color: #555;")
+        tip.setObjectName("hint")
         tip.setWordWrap(True)
         layout.addWidget(tip)
-        return g
+        return w
 
-    def _status_row(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        self._auto_save_status_label = QLabel("Last auto-saved: -")
-        self._auto_save_status_label.setStyleSheet("font-size: 10px; color: #666;")
-        row.addWidget(self._auto_save_status_label)
-        row.addStretch()
-        return row
+    def _update_status_bar(self) -> None:
+        if self._status_saving:
+            self._status_dot.setStyleSheet("background: #e5a522; border-radius: 3px;")
+            self._status_text.setText("Saving...")
+            self._status_text.setProperty("saving", True)
+            self._status_text.style().unpolish(self._status_text)
+            self._status_text.style().polish(self._status_text)
+            return
+        self._status_text.setProperty("saving", False)
+        self._status_text.style().unpolish(self._status_text)
+        self._status_text.style().polish(self._status_text)
+        self._status_dot.setStyleSheet("background: #3a7a3a; border-radius: 3px;")
+        if self._last_auto_saved is None:
+            self._status_text.setText("Last saved: -")
+            return
+        delta = datetime.now() - self._last_auto_saved
+        secs = int(delta.total_seconds())
+        if secs < 60:
+            self._status_text.setText("Last saved: just now")
+        elif secs < 3600:
+            self._status_text.setText(f"Last saved: {secs // 60}m ago")
+        else:
+            self._status_text.setText(f"Last saved: {secs // 3600}h ago")
 
     def _connect_signals(self) -> None:
         self._edit_profile_name.textChanged.connect(self._on_profile_changed)
@@ -440,6 +704,22 @@ class SettingsDialog(QDialog):
         self._spin_padding.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_brightness_drop.valueChanged.connect(self._on_detection_changed)
         self._slider_pixel_fraction.valueChanged.connect(self._on_detection_changed)
+        self._slider_change_pixel_fraction.valueChanged.connect(self._on_detection_changed)
+        self._edit_cooldown_change_ignore_by_slot.editingFinished.connect(self._on_detection_changed)
+        self._check_glow_enabled.toggled.connect(self._on_detection_changed)
+        self._spin_glow_ring_thickness.valueChanged.connect(self._on_detection_changed)
+        self._spin_glow_value_delta.valueChanged.connect(self._on_detection_changed)
+        self._spin_glow_saturation_min.valueChanged.connect(self._on_detection_changed)
+        self._spin_glow_confirm_frames.valueChanged.connect(self._on_detection_changed)
+        self._edit_glow_value_delta_by_slot.editingFinished.connect(self._on_detection_changed)
+        self._edit_glow_ring_fraction_by_slot.editingFinished.connect(self._on_detection_changed)
+        self._edit_glow_override_cooldown_by_slot.editingFinished.connect(self._on_detection_changed)
+        self._slider_glow_ring_fraction.valueChanged.connect(self._on_detection_changed)
+        self._slider_glow_red_ring_fraction.valueChanged.connect(self._on_detection_changed)
+        self._spin_glow_yellow_hue_min.valueChanged.connect(self._on_detection_changed)
+        self._spin_glow_yellow_hue_max.valueChanged.connect(self._on_detection_changed)
+        self._spin_glow_red_hue_max_low.valueChanged.connect(self._on_detection_changed)
+        self._spin_glow_red_hue_min_high.valueChanged.connect(self._on_detection_changed)
         self._check_cast_detection.toggled.connect(self._on_detection_changed)
         self._spin_cast_min_fraction.valueChanged.connect(self._on_detection_changed)
         self._spin_cast_max_fraction.valueChanged.connect(self._on_detection_changed)
@@ -512,9 +792,79 @@ class SettingsDialog(QDialog):
         self._spin_padding.blockSignals(False)
         self._spin_brightness_drop.blockSignals(True)
         self._slider_pixel_fraction.blockSignals(True)
+        self._slider_change_pixel_fraction.blockSignals(True)
+        self._edit_cooldown_change_ignore_by_slot.blockSignals(True)
+        self._check_glow_enabled.blockSignals(True)
+        self._spin_glow_ring_thickness.blockSignals(True)
+        self._spin_glow_value_delta.blockSignals(True)
+        self._spin_glow_saturation_min.blockSignals(True)
+        self._spin_glow_confirm_frames.blockSignals(True)
+        self._edit_glow_value_delta_by_slot.blockSignals(True)
+        self._edit_glow_ring_fraction_by_slot.blockSignals(True)
+        self._edit_glow_override_cooldown_by_slot.blockSignals(True)
+        self._slider_glow_ring_fraction.blockSignals(True)
+        self._slider_glow_red_ring_fraction.blockSignals(True)
+        self._spin_glow_yellow_hue_min.blockSignals(True)
+        self._spin_glow_yellow_hue_max.blockSignals(True)
+        self._spin_glow_red_hue_max_low.blockSignals(True)
+        self._spin_glow_red_hue_min_high.blockSignals(True)
         self._spin_brightness_drop.setValue(self._config.brightness_drop_threshold)
         self._slider_pixel_fraction.setValue(int(self._config.cooldown_pixel_fraction * 100))
         self._pixel_fraction_label.setText(f"{self._config.cooldown_pixel_fraction:.2f}")
+        self._slider_change_pixel_fraction.setValue(
+            int(round(getattr(self._config, "cooldown_change_pixel_fraction", self._config.cooldown_pixel_fraction) * 100))
+        )
+        self._change_pixel_fraction_label.setText(
+            f"{getattr(self._config, 'cooldown_change_pixel_fraction', self._config.cooldown_pixel_fraction):.2f}"
+        )
+        self._edit_cooldown_change_ignore_by_slot.setText(
+            self._format_slot_index_list(
+                getattr(self._config, "cooldown_change_ignore_by_slot", []) or []
+            )
+        )
+        self._check_glow_enabled.setChecked(bool(getattr(self._config, "glow_enabled", True)))
+        self._spin_glow_ring_thickness.setValue(int(getattr(self._config, "glow_ring_thickness_px", 4)))
+        self._spin_glow_value_delta.setValue(int(getattr(self._config, "glow_value_delta", 35)))
+        self._spin_glow_saturation_min.setValue(int(getattr(self._config, "glow_saturation_min", 80)))
+        self._spin_glow_confirm_frames.setValue(int(getattr(self._config, "glow_confirm_frames", 2)))
+        self._edit_glow_value_delta_by_slot.setText(
+            self._format_glow_value_delta_by_slot(
+                getattr(self._config, "glow_value_delta_by_slot", {}) or {}
+            )
+        )
+        self._edit_glow_ring_fraction_by_slot.setText(
+            self._format_glow_ring_fraction_by_slot(
+                getattr(self._config, "glow_ring_fraction_by_slot", {}) or {}
+            )
+        )
+        self._edit_glow_override_cooldown_by_slot.setText(
+            self._format_slot_index_list(
+                getattr(self._config, "glow_override_cooldown_by_slot", []) or []
+            )
+        )
+        self._slider_glow_ring_fraction.setValue(
+            int(round(getattr(self._config, "glow_ring_fraction", 0.18) * 100))
+        )
+        self._slider_glow_red_ring_fraction.setValue(
+            int(
+                round(
+                    getattr(
+                        self._config,
+                        "glow_red_ring_fraction",
+                        getattr(self._config, "glow_ring_fraction", 0.18),
+                    )
+                    * 100
+                )
+            )
+        )
+        self._spin_glow_yellow_hue_min.setValue(int(getattr(self._config, "glow_yellow_hue_min", 18)))
+        self._spin_glow_yellow_hue_max.setValue(int(getattr(self._config, "glow_yellow_hue_max", 42)))
+        self._spin_glow_red_hue_max_low.setValue(int(getattr(self._config, "glow_red_hue_max_low", 12)))
+        self._spin_glow_red_hue_min_high.setValue(int(getattr(self._config, "glow_red_hue_min_high", 168)))
+        self._glow_ring_fraction_label.setText(f"{getattr(self._config, 'glow_ring_fraction', 0.18):.2f}")
+        self._glow_red_ring_fraction_label.setText(
+            f"{getattr(self._config, 'glow_red_ring_fraction', getattr(self._config, 'glow_ring_fraction', 0.18)):.2f}"
+        )
         self._check_cast_detection.blockSignals(True)
         self._spin_cast_min_fraction.blockSignals(True)
         self._spin_cast_max_fraction.blockSignals(True)
@@ -556,6 +906,22 @@ class SettingsDialog(QDialog):
         )
         self._spin_brightness_drop.blockSignals(False)
         self._slider_pixel_fraction.blockSignals(False)
+        self._slider_change_pixel_fraction.blockSignals(False)
+        self._edit_cooldown_change_ignore_by_slot.blockSignals(False)
+        self._check_glow_enabled.blockSignals(False)
+        self._spin_glow_ring_thickness.blockSignals(False)
+        self._spin_glow_value_delta.blockSignals(False)
+        self._spin_glow_saturation_min.blockSignals(False)
+        self._spin_glow_confirm_frames.blockSignals(False)
+        self._edit_glow_value_delta_by_slot.blockSignals(False)
+        self._edit_glow_ring_fraction_by_slot.blockSignals(False)
+        self._edit_glow_override_cooldown_by_slot.blockSignals(False)
+        self._slider_glow_ring_fraction.blockSignals(False)
+        self._slider_glow_red_ring_fraction.blockSignals(False)
+        self._spin_glow_yellow_hue_min.blockSignals(False)
+        self._spin_glow_yellow_hue_max.blockSignals(False)
+        self._spin_glow_red_hue_max_low.blockSignals(False)
+        self._spin_glow_red_hue_min_high.blockSignals(False)
         self._check_cast_detection.blockSignals(False)
         self._spin_cast_min_fraction.blockSignals(False)
         self._spin_cast_max_fraction.blockSignals(False)
@@ -597,6 +963,7 @@ class SettingsDialog(QDialog):
         self._spin_queue_fire_delay.setValue(getattr(self._config, "queue_fire_delay_ms", 100))
         self._spin_queue_fire_delay.blockSignals(False)
         self._update_monitor_combo()
+        self._update_status_bar()
 
     def _sync_automation_profile_controls(self) -> None:
         self._config.ensure_priority_profiles()
@@ -712,6 +1079,8 @@ class SettingsDialog(QDialog):
         self._auto_save_timer.start(1000)
 
     def _do_auto_save(self) -> None:
+        self._status_saving = True
+        self._update_status_bar()
         try:
             if self._before_save_callback:
                 self._before_save_callback()
@@ -719,18 +1088,15 @@ class SettingsDialog(QDialog):
             with open(CONFIG_PATH, "w") as f:
                 json.dump(self._config.to_dict(), f, indent=2)
             self._last_auto_saved = datetime.now()
-            self._update_auto_save_status()
             logger.info(f"Config auto-saved to {CONFIG_PATH}")
         except Exception as e:
             logger.error(f"Config auto-save failed: {e}")
+        finally:
+            QTimer.singleShot(500, self._clear_saving_state)
 
-    def _update_auto_save_status(self) -> None:
-        if self._last_auto_saved is None:
-            self._auto_save_status_label.setText("Last auto-saved: -")
-        else:
-            self._auto_save_status_label.setText(
-                self._last_auto_saved.strftime("Last auto-saved: %b %d, %H:%M")
-            )
+    def _clear_saving_state(self) -> None:
+        self._status_saving = False
+        self._update_status_bar()
 
     def _on_profile_changed(self) -> None:
         self._config.profile_name = (self._edit_profile_name.text() or "").strip()
@@ -818,10 +1184,142 @@ class SettingsDialog(QDialog):
         )
         self._emit_config()
 
+    @staticmethod
+    def _parse_glow_value_delta_by_slot(raw_text: str) -> dict[int, int]:
+        out: dict[int, int] = {}
+        for token in str(raw_text or "").split(","):
+            part = token.strip()
+            if not part:
+                continue
+            if ":" not in part:
+                continue
+            left, right = part.split(":", 1)
+            try:
+                slot_idx = int(left.strip())
+                delta = int(right.strip())
+            except Exception:
+                continue
+            if slot_idx < 0:
+                continue
+            delta = max(0, min(255, delta))
+            out[slot_idx] = delta
+        return out
+
+    @staticmethod
+    def _format_glow_value_delta_by_slot(overrides: dict) -> str:
+        parsed: list[tuple[int, int]] = []
+        for k, v in (overrides or {}).items():
+            try:
+                slot_idx = int(k)
+                delta = int(v)
+            except Exception:
+                continue
+            if slot_idx < 0:
+                continue
+            parsed.append((slot_idx, delta))
+        items = [f"{slot_idx}:{delta}" for slot_idx, delta in sorted(parsed, key=lambda t: t[0])]
+        return ", ".join(items)
+
+    @staticmethod
+    def _parse_glow_ring_fraction_by_slot(raw_text: str) -> dict[int, float]:
+        out: dict[int, float] = {}
+        for token in str(raw_text or "").split(","):
+            part = token.strip()
+            if not part or ":" not in part:
+                continue
+            left, right = part.split(":", 1)
+            try:
+                slot_idx = int(left.strip())
+                frac = float(right.strip())
+            except Exception:
+                continue
+            if slot_idx < 0:
+                continue
+            frac = max(0.0, min(1.0, frac))
+            out[slot_idx] = frac
+        return out
+
+    @staticmethod
+    def _format_glow_ring_fraction_by_slot(overrides: dict) -> str:
+        parsed: list[tuple[int, float]] = []
+        for k, v in (overrides or {}).items():
+            try:
+                slot_idx = int(k)
+                frac = float(v)
+            except Exception:
+                continue
+            if slot_idx < 0:
+                continue
+            parsed.append((slot_idx, frac))
+        items = [f"{slot_idx}:{frac:.2f}" for slot_idx, frac in sorted(parsed, key=lambda t: t[0])]
+        return ", ".join(items)
+
+    @staticmethod
+    def _parse_slot_index_list(raw_text: str) -> list[int]:
+        out: list[int] = []
+        seen: set[int] = set()
+        for token in str(raw_text or "").split(","):
+            part = token.strip()
+            if not part:
+                continue
+            try:
+                slot_idx = int(part)
+            except Exception:
+                continue
+            if slot_idx < 0 or slot_idx in seen:
+                continue
+            seen.add(slot_idx)
+            out.append(slot_idx)
+        return out
+
+    @staticmethod
+    def _format_slot_index_list(values: list[int]) -> str:
+        parsed: set[int] = set()
+        for v in values or []:
+            try:
+                slot_idx = int(v)
+            except Exception:
+                continue
+            if slot_idx < 0:
+                continue
+            parsed.add(slot_idx)
+        return ", ".join(str(v) for v in sorted(parsed))
+
     def _on_detection_changed(self) -> None:
         self._config.brightness_drop_threshold = self._spin_brightness_drop.value()
         self._config.cooldown_pixel_fraction = self._slider_pixel_fraction.value() / 100.0
         self._pixel_fraction_label.setText(f"{self._config.cooldown_pixel_fraction:.2f}")
+        self._config.cooldown_change_pixel_fraction = self._slider_change_pixel_fraction.value() / 100.0
+        self._change_pixel_fraction_label.setText(f"{self._config.cooldown_change_pixel_fraction:.2f}")
+        self._config.cooldown_change_ignore_by_slot = self._parse_slot_index_list(
+            self._edit_cooldown_change_ignore_by_slot.text()
+        )
+        self._config.glow_enabled = self._check_glow_enabled.isChecked()
+        self._config.glow_ring_thickness_px = self._spin_glow_ring_thickness.value()
+        self._config.glow_value_delta = self._spin_glow_value_delta.value()
+        self._config.glow_value_delta_by_slot = self._parse_glow_value_delta_by_slot(
+            self._edit_glow_value_delta_by_slot.text()
+        )
+        self._config.glow_saturation_min = self._spin_glow_saturation_min.value()
+        self._config.glow_confirm_frames = self._spin_glow_confirm_frames.value()
+        self._config.glow_ring_fraction = self._slider_glow_ring_fraction.value() / 100.0
+        self._config.glow_ring_fraction_by_slot = self._parse_glow_ring_fraction_by_slot(
+            self._edit_glow_ring_fraction_by_slot.text()
+        )
+        self._config.glow_red_ring_fraction = self._slider_glow_red_ring_fraction.value() / 100.0
+        self._config.glow_override_cooldown_by_slot = self._parse_slot_index_list(
+            self._edit_glow_override_cooldown_by_slot.text()
+        )
+        y_min = self._spin_glow_yellow_hue_min.value()
+        y_max = self._spin_glow_yellow_hue_max.value()
+        if y_min > y_max:
+            y_max = y_min
+        self._config.glow_yellow_hue_min = y_min
+        self._config.glow_yellow_hue_max = y_max
+        self._config.glow_red_hue_max_low = self._spin_glow_red_hue_max_low.value()
+        self._config.glow_red_hue_min_high = self._spin_glow_red_hue_min_high.value()
+        self._glow_ring_fraction_label.setText(f"{self._config.glow_ring_fraction:.2f}")
+        self._glow_red_ring_fraction_label.setText(f"{self._config.glow_red_ring_fraction:.2f}")
         cast_min = self._spin_cast_min_fraction.value() / 100.0
         cast_max = self._spin_cast_max_fraction.value() / 100.0
         if cast_min >= cast_max:
@@ -1089,15 +1587,21 @@ class SettingsDialog(QDialog):
         event.accept()
         self.hide()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._status_update_timer.start()
+
     def show_or_raise(self) -> None:
         self.sync_from_config()
-        self._update_auto_save_status()
-        self._resize_to_fit_content()
+        self._update_status_bar()
         if self.isVisible():
+            self._resize_to_fit_content()
             self.raise_()
             self.activateWindow()
         else:
             self.show()
+            QApplication.processEvents()
+            self._resize_to_fit_content()
 
     def _resize_to_fit_content(self) -> None:
         """Size the dialog so content fits without scrollbars when there is room on screen."""
@@ -1108,7 +1612,7 @@ class SettingsDialog(QDialog):
         cw = max(sh.width(), self.minimumWidth())
         status_h = 28
         frame_margin = 48
-        preferred_w = cw + frame_margin
+        preferred_w = cw + frame_margin + 40
         preferred_h = ch + status_h + frame_margin
         screen = self.screen() or QApplication.primaryScreen()
         if screen:

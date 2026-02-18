@@ -9,6 +9,7 @@ A Python desktop app that reads MMO action bar cooldowns via screen capture and 
 - **Shows** a transparent overlay so you can align the capture region with your action bar
 - **Displays** live slot states (green = ready, blue = casting, amber = channeling, red = on cooldown, gray = locked)
 - **Automation**: when enabled, presses keys in a **priority order**—only the first *ready* ability in the list is triggered, with a minimum delay between keypresses, cast-aware blocking/queue timing, and an optional “target window” check so keys are only sent when the game has focus
+- **Per-slot activation rules**: each slot item in Priority can be set to **Always** or **DoT refresh** (`no glow` or `red glow`)
 
 ## Setup
 
@@ -57,6 +58,9 @@ The order here is the **priority order** for the currently active automation pro
 - **Add slots** — Drag slot buttons from the left (Slot States) and drop them onto the Priority list.
 - **Reorder** — Drag a priority item up or down within the list to change order.
 - **Remove** — Drag a priority item outside of the **Priority panel** It will be removed from the list.
+- **Slot activation rule** — Right-click a slot item in the Priority list:
+  - **Activation: Always** — sends whenever that slot is ready.
+  - **Activation: DoT refresh (no glow or red)** — sends only when slot is ready and either no glow is found or red glow is active (yellow-only glow is blocked).
 
 The right panel also shows:
 
@@ -83,7 +87,10 @@ The right panel also shows:
 ### Other Settings
 
 - **Always on top** — Check to keep the app window above other windows.
-- **Detection** — **Darken** and **Trigger** control cooldown detection sensitivity.
+- **Detection** — **Darken**, **Trigger**, **Yellow frac**, and **Red frac** control cooldown/glow detection sensitivity.
+- **Red glow threshold** — Tune **Red frac** if DoT-refresh slots are triggering too early or too late on red-glow windows.
+- **Per-slot glow sensitivity (advanced)** — In `config/default_config.json`, set `detection.glow_value_delta_by_slot` (example: `{"4": 55}`) to lower/raise glow brightness delta for one slot without changing others.
+- **Per-slot glow thresholds (advanced)** — Use `detection.glow_ring_fraction_by_slot` (example: `{"5": 0.08}`) and `detection.glow_override_cooldown_by_slot` (example: `[5]`) for proc-style icons that need lower yellow-fraction threshold and optional non-red glow cooldown override.
 - **Cast detection** — Configure cast band %, confirmation frames, min/max cast duration, cancel grace, and channeling mode.
 - **Cast bar ROI (optional)** — Define a region inside the capture box to detect active cast-bar motion; optionally mark ready slots as `locked` while active.
 - **Save Settings** — Saves the current config (region, slots, keybinds, priority profiles + binds, detection, overlay, delay, window title, etc.) to `config/default_config.json`.

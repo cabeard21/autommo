@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from src.models import ActionBarState, SlotState
 from src.automation.binds import normalize_bind
+from src.automation.priority_rules import slot_item_is_eligible_for_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ class KeySender:
                 and str(item.get("type", "") or "").strip().lower() == "slot"
                 and isinstance(item.get("slot_index"), int)
                 and (slots_by_index.get(item["slot_index"]) is not None)
-                and slots_by_index[item["slot_index"]].state == SlotState.READY
+                and slot_item_is_eligible_for_snapshot(item, slots_by_index[item["slot_index"]])
             )
             for item in (priority_items or [])
         )
@@ -237,7 +238,7 @@ class KeySender:
                 if not isinstance(slot_index, int):
                     continue
                 slot = slots_by_index.get(slot_index)
-                if not slot or slot.state != SlotState.READY:
+                if not slot_item_is_eligible_for_snapshot(item, slot):
                     continue
                 keybind = keybinds[slot_index] if slot_index < len(keybinds) else None
             elif item_type == "manual":

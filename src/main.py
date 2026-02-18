@@ -176,6 +176,17 @@ class CaptureWorker(QThread):
                             "cast_ends_at": s.cast_ends_at,
                             "last_cast_start_at": s.last_cast_start_at,
                             "last_cast_success_at": s.last_cast_success_at,
+                            "glow_candidate": bool(getattr(s, "glow_candidate", False)),
+                            "glow_fraction": float(getattr(s, "glow_fraction", 0.0) or 0.0),
+                            "glow_ready": bool(getattr(s, "glow_ready", False)),
+                            "yellow_glow_candidate": bool(getattr(s, "yellow_glow_candidate", False)),
+                            "yellow_glow_fraction": float(
+                                getattr(s, "yellow_glow_fraction", 0.0) or 0.0
+                            ),
+                            "yellow_glow_ready": bool(getattr(s, "yellow_glow_ready", False)),
+                            "red_glow_candidate": bool(getattr(s, "red_glow_candidate", False)),
+                            "red_glow_fraction": float(getattr(s, "red_glow_fraction", 0.0) or 0.0),
+                            "red_glow_ready": bool(getattr(s, "red_glow_ready", False)),
                             "brightness": s.brightness,
                         }
                         for s in state.slots
@@ -302,6 +313,17 @@ def main() -> None:
         worker.update_config(new_config)
         key_sender.update_config(new_config)
         overlay.update_cast_bar_region(getattr(new_config, "cast_bar_region", {}))
+        overlay.update_bounding_box(new_config.bounding_box)
+        overlay.update_slot_layout(
+            new_config.slot_count,
+            new_config.slot_gap_pixels,
+            new_config.slot_padding,
+        )
+        overlay.update_monitor_geometry(monitor_rect_for_index(new_config.monitor_index, monitors))
+        if getattr(new_config, "overlay_enabled", True):
+            overlay.show()
+        else:
+            overlay.hide()
         window.refresh_from_config()
         # Apply always-on-top to main window when changed from Settings
         flags = window.windowFlags()
@@ -327,6 +349,7 @@ def main() -> None:
     window.config_changed.connect(on_config_changed)
     worker.frame_captured.connect(window.update_preview)
     worker.state_updated.connect(window.update_slot_states)
+    worker.state_updated.connect(overlay.update_slot_states)
     worker.cast_bar_debug.connect(window.update_cast_bar_debug)
 
     def on_key_action(result: dict) -> None:

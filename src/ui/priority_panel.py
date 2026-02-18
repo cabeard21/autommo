@@ -20,6 +20,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from src.automation.priority_rules import normalize_activation_rule
+
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +95,7 @@ class PriorityItemWidget(QFrame):
         item_type: str,
         slot_index: Optional[int],
         action_id: Optional[str],
+        activation_rule: str,
         rank: int,
         keybind: str,
         display_name: str,
@@ -103,6 +106,7 @@ class PriorityItemWidget(QFrame):
         self._item_type = item_type
         self._slot_index = slot_index
         self._action_id = action_id
+        self._activation_rule = normalize_activation_rule(activation_rule)
         self._rank = rank
         self._keybind = keybind
         self._display_name = display_name or "Unidentified"
@@ -140,6 +144,12 @@ class PriorityItemWidget(QFrame):
         self._name_label.setWordWrap(False)
         layout.addWidget(self._name_label, 1)
 
+        self._rule_label = QLabel("")
+        self._rule_label.setMinimumWidth(28)
+        self._rule_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._rule_label.setStyleSheet("font-family: monospace; font-size: 9px; color: #d3a75b;")
+        layout.addWidget(self._rule_label)
+
         self._countdown_label = QLabel("-")
         self._countdown_label.setMinimumWidth(32)
         self._countdown_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -175,6 +185,16 @@ class PriorityItemWidget(QFrame):
     @property
     def action_id(self) -> Optional[str]:
         return self._action_id
+
+    @property
+    def activation_rule(self) -> str:
+        return self._activation_rule
+
+    def set_activation_rule(self, activation_rule: str) -> None:
+        self._activation_rule = normalize_activation_rule(activation_rule)
+        self._rule_label.setText(
+            "DOT" if self._item_type == "slot" and self._activation_rule == "dot_refresh" else ""
+        )
 
     def set_rank(self, rank: int) -> None:
         self._rank = rank
@@ -280,27 +300,47 @@ class PriorityItemWidget(QFrame):
         super().mouseReleaseEvent(event)
 
     def contextMenuEvent(self, event) -> None:
-        if self._item_type != "manual" or not self._action_id:
+        if self._item_type not in ("manual", "slot"):
             event.ignore()
             return
         menu = QMenu(self)
-        rename_action = menu.addAction("Rename...")
-        rebind_action = menu.addAction("Rebind...")
-        remove_action = menu.addAction("Remove")
+        rename_action = None
+        rebind_action = None
+        remove_action = None
+        always_action = None
+        dot_refresh_action = None
+        if self._item_type == "manual" and self._action_id:
+            rename_action = menu.addAction("Rename...")
+            rebind_action = menu.addAction("Rebind...")
+            remove_action = menu.addAction("Remove")
+        elif self._item_type == "slot":
+            always_action = menu.addAction("Activation: Always")
+            always_action.setCheckable(True)
+            always_action.setChecked(self._activation_rule == "always")
+            dot_refresh_action = menu.addAction("Activation: DoT refresh (no glow or red)")
+            dot_refresh_action.setCheckable(True)
+            dot_refresh_action.setChecked(self._activation_rule == "dot_refresh")
         chosen = menu.exec(event.globalPos())
         if chosen is None:
             return
         parent = self.parent()
-        while parent is not None and not hasattr(parent, "_on_manual_item_action"):
+        while parent is not None and not (
+            hasattr(parent, "_on_manual_item_action")
+            and hasattr(parent, "_on_slot_item_activation_rule_changed")
+        ):
             parent = parent.parent()
         if parent is None:
             return
-        if chosen == rename_action:
+        if chosen == rename_action and self._action_id:
             parent._on_manual_item_action(self._action_id, "rename")
-        elif chosen == rebind_action:
+        elif chosen == rebind_action and self._action_id:
             parent._on_manual_item_action(self._action_id, "rebind")
-        elif chosen == remove_action:
+        elif chosen == remove_action and self._action_id:
             parent._on_manual_item_action(self._action_id, "remove")
+        elif chosen == always_action:
+            parent._on_slot_item_activation_rule_changed(self._item_key, "always")
+        elif chosen == dot_refresh_action:
+            parent._on_slot_item_activation_rule_changed(self._item_key, "dot_refresh")
 
 
 class PriorityListWidget(QWidget):
@@ -361,7 +401,17 @@ class PriorityListWidget(QWidget):
         self._rebuild_items()
 
     def set_items(self, items: list[dict]) -> None:
-        self._items = [dict(i) for i in list(items or []) if isinstance(i, dict)]
+        normalized: list[dict] = []
+        for item in list(items or []):
+            if not isinstance(item, dict):
+                continue
+            out = dict(item)
+            if str(out.get("type", "") or "").strip().lower() == "slot":
+                out["activation_rule"] = normalize_activation_rule(
+                    out.get("activation_rule")
+                )
+            normalized.append(out)
+        self._items = normalized
         self._rebuild_items()
 
     def get_items(self) -> list[dict]:
@@ -403,6 +453,7 @@ class PriorityListWidget(QWidget):
             item_type = str(item.get("type", "") or "").strip().lower()
             slot_index = item.get("slot_index")
             action_id = str(item.get("action_id", "") or "").strip().lower()
+            activation_rule = normalize_activation_rule(item.get("activation_rule"))
             if item_type == "slot" and isinstance(slot_index, int):
                 keybind = self._keybinds[slot_index] if slot_index < len(self._keybinds) else "?"
                 name = (
@@ -424,11 +475,13 @@ class PriorityListWidget(QWidget):
                 item_type,
                 slot_index if isinstance(slot_index, int) else None,
                 action_id if item_type == "manual" and action_id else None,
+                activation_rule,
                 rank,
                 keybind or "?",
                 name,
                 self._list_container,
             )
+            w.set_activation_rule(activation_rule)
             if item_type == "slot" and isinstance(slot_index, int):
                 state, cd, cast_progress, cast_ends_at = self._states_by_index.get(
                     slot_index,
@@ -464,7 +517,9 @@ class PriorityListWidget(QWidget):
             if not has_keybind:
                 event.acceptProposedAction()
                 return
-            self._items.append({"type": "slot", "slot_index": slot_index})
+            self._items.append(
+                {"type": "slot", "slot_index": slot_index, "activation_rule": "always"}
+            )
             self._rebuild_items()
             self._emit_items()
         elif mime.hasFormat(MIME_PRIORITY_ITEM):
@@ -502,6 +557,18 @@ class PriorityListWidget(QWidget):
             self.manual_action_rebind_requested.emit(action_id)
         elif op == "remove":
             self.manual_action_remove_requested.emit(action_id)
+
+    def _on_slot_item_activation_rule_changed(self, item_key: str, activation_rule: str) -> None:
+        rule = normalize_activation_rule(activation_rule)
+        for item in self._items:
+            if self._item_key(item) != item_key:
+                continue
+            if str(item.get("type", "") or "").strip().lower() != "slot":
+                continue
+            item["activation_rule"] = rule
+            self._rebuild_items()
+            self._emit_items()
+            return
 
 
 class PriorityPanel(QWidget):

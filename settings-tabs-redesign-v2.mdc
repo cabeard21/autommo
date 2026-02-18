@@ -1,0 +1,318 @@
+# Settings Window Redesign v2: Tabbed Layout + QSS Theming
+
+## Overview
+
+Redesign the Settings window (`src/ui/settings_dialog.py`) from a single scrolling list of sections into a **three-tab layout** (General, Detection, Automation). All existing settings and functionality are preserved — this is a layout and styling refactor, not a feature change.
+
+A visual mockup of all three tabs is available at `./mockup/settings-redesign-mockup-v2.html`. Open it in a browser for pixel-reference. The mockup is the source of truth for layout, grouping, and visual hierarchy.
+
+---
+
+## CRITICAL: QSS THEMING
+
+All styling MUST be done through QSS (Qt Style Sheets) with CSS custom properties / QSS variables, consistent with how the main window theming was done. The goal is to make the entire settings window themeable by changing a single QSS file or variable block.
+
+### QSS Variable Strategy
+
+Define all theme values as properties or constants that can be overridden. Use the same variable/property pattern already established in the main window's theming. At minimum, extract these to QSS variables or a central theme definition:
+
+```
+/* Backgrounds */
+--bg-window:          #2a2a3a
+--bg-tab-bar:         #1e1e2e
+--bg-section:         #252535
+--bg-subsection:      #1e1e2e
+--bg-input:           #1a1a2a
+--bg-button:          #333345
+--bg-button-calibrate: #2d5a2d
+--bg-bottom-bar:      #1e1e2e
+
+/* Borders */
+--border-window:      #444
+--border-section:     #3a3a4a
+--border-subsection:  #333
+--border-input:       #555
+--border-button-calibrate: #3a7a3a
+--border-tab-bar:     #333
+
+/* Text */
+--text-primary:       #e0e0e0
+--text-secondary:     #ccc
+--text-label:         #999
+--text-hint:          #555
+--text-section-title: #666
+--text-accent:        #66eeff
+--text-calibrate-btn: #88ff88
+--text-checkbox:      #ff66aa
+--text-delete:        #ff6666
+
+/* Tab */
+--tab-text:           #666
+--tab-text-hover:     #999
+--tab-text-active:    #66eeff
+--tab-border-active:  #66eeff
+
+/* Bind button */
+--bind-text:          #66eeff
+--bind-bg:            #333345
+
+/* Status bar */
+--status-text:        #555
+--status-dot-saved:   #3a7a3a
+--status-dot-saving:  #e5a522
+--status-text-saving: #e5a522
+
+/* Fonts */
+--font-mono:          'JetBrains Mono', 'Consolas', 'Courier New', monospace
+--font-body:          system default (whatever PyQt6 uses)
+```
+
+### Implementation Approach
+
+Since Qt doesn't natively support CSS custom properties like the web, use one of these approaches (whichever is already established in the main window):
+
+1. **String-template approach**: Define a Python dict/dataclass of theme values, then use `.format()` or f-strings to inject them into the QSS string. This is the most common PyQt pattern.
+2. **QSS class/property selectors**: Use Qt object names and properties to create reusable style rules (e.g. `QFrame#section`, `QPushButton[role="primary"]`).
+3. **Central theme module**: If there's already a `theme.py` or similar, add the settings variables there.
+
+**Match whatever pattern the main window already uses.** The key requirement is: a designer should be able to change `--bg-section` in one place and have every section background in both the main window AND the settings window update. Don't hardcode hex values inline in Python widget code.
+
+### QSS Organization
+
+- All settings window QSS should be in a dedicated method (e.g. `_build_stylesheet()`) or loaded from an external `.qss` file, NOT scattered across `setStyleSheet()` calls on individual widgets.
+- Use object names on widgets (e.g. `self.setObjectName("settingsDialog")`, section frames get `setObjectName("section")`, etc.) so QSS selectors can target them cleanly.
+- Where the main window already defines shared styles (for sections, inputs, buttons), reuse those definitions rather than duplicating them.
+
+---
+
+## STATUS BAR (replaces Save Config button)
+
+There is NO save button. All settings auto-save. Instead, a status bar sits at the bottom of the window, **outside** the tab widget, always visible regardless of active tab.
+
+**Layout:** Right-aligned content: small colored dot (6px circle) + text label.
+
+**States:**
+- **Idle/saved:** Green dot (`--status-dot-saved`), text `"Last saved: Xm ago"` or `"Last saved: just now"` in `--status-text` color. Update the relative time every ~30 seconds via a QTimer.
+- **Saving:** Amber dot (`--status-dot-saving`), text `"Saving..."` in `--status-text-saving` color. Show briefly (~500ms) when auto-save triggers, then transition back to idle.
+
+**Styling:** Background `--bg-bottom-bar`, top border 1px solid `--border-tab-bar`, padding 6px 14px, font: `--font-mono` 10px.
+
+**Implementation:** Add a `_update_status_bar()` method. Connect it to the existing auto-save signal/event. Use a QTimer to update the relative time display. Track `self._last_save_time` as a timestamp.
+
+---
+
+## TAB STRUCTURE
+
+Use a `QTabWidget` for the three tabs. Style the tab bar to match the mockup:
+
+- Tab bar background: `--bg-tab-bar`
+- Tab text: `--tab-text`, hover: `--tab-text-hover`, active: `--tab-text-active`
+- Active tab has a 2px bottom border in `--tab-border-active`
+- Font: 11px, medium weight (500)
+- Padding: 9px 16px per tab
+- Tab bar sits directly below the title bar with `--border-tab-bar` bottom border
+
+### Tab 1: General
+
+Contains these sections top to bottom:
+
+**Profile**
+- Single compact row: Label "Name:" + QLineEdit (stretches) + "Export" button (small) + "Import" button (small). All on one line.
+
+**Display**
+- Row: Label "Monitor:" (85px min-width, right-aligned) + QComboBox (stretches).
+- Row: Two checkboxes side by side, left-aligned with ~93px left padding: "Show Region Overlay" and "Always on Top".
+- Row: Label "History rows:" + QSpinBox (52px) + hint text "(Last Action / Next Intention)".
+
+**Capture Region**
+- 2×2 grid: Top/Left on first row, Width/Height on second. Label 50px "narrow" + QSpinBox stretches.
+- 3-column row: Slots / Gap / Padding. Gap and Padding show "px" suffix.
+
+**Calibration**
+- Full-width button: "Calibrate All Baselines". Styled as calibrate button (`--bg-button-calibrate`, `--border-button-calibrate`, `--text-calibrate-btn`).
+- Hint: "Tip: right-click a Slot State button to calibrate individual slots".
+
+### Tab 2: Detection
+
+This tab has the most content. It should be scrollable (QScrollArea wrapping the tab page content) for smaller screens.
+
+**Cooldown Thresholds**
+- Row: Label "Darken:" + QSpinBox (52px) + "(?)" help tooltip.
+- Row: Label "Trigger:" + QSlider (stretches) + value label "0.40" (monospace, 36px right-aligned) + "(?)" tooltip.
+- Row: Label "Change:" + QSlider (stretches) + value label "0.40" + "(?)" tooltip.
+- Row: Label "Change ignore:" + QLineEdit (stretches, placeholder "e.g. 5") + "(?)" tooltip.
+
+**Glow / Ready Override**
+- Checkbox at top: "Enable glow ready override". When unchecked, all subsections below dim but remain visible.
+- **Glow Parameters subsection**: Darker background (`--bg-subsection`), title "Glow Parameters". 4-column grid with very narrow labels (34px "xnarrow"): Ring / V+ / S≥ / N — each a QSpinBox.
+- **Per-Slot Overrides subsection**: Title "Per-Slot Overrides". Three rows with 85px labels:
+  - "Glow by slot:" + QLineEdit (placeholder "e.g. 4:55, 6:45") + "(?)" tooltip
+  - "Y frac by slot:" + QLineEdit (placeholder "e.g. 5:0.08") + "(?)" tooltip
+  - "Glow→ready:" + QLineEdit (placeholder "e.g. 5") + "(?)" tooltip
+- **Color Thresholds subsection**: Title "Color Thresholds".
+  - Row: "Yellow frac:" + QSlider + value "0.18" + "(?)" tooltip
+  - Row: "Red frac:" + QSlider + value "0.18" + "(?)" tooltip
+  - 4-column grid (xnarrow labels): Y min / Y max / R≤ / R≥ — each a QSpinBox.
+
+**Cast / Channel Detection**
+- Checkbox at top: "Enable cast/channel detection". When unchecked, all content below dims.
+- **Cast Band subsection** (dimmed when disabled): Title "Cast Band". Row: "Range:" + QSpinBox "5%" + "to" + QSpinBox "22%" + hint "of bar height".
+- **Cast Timing subsection** (dimmed when disabled): Title "Cast Timing". 2×2 grid: Confirm/Min first row, Max/Grace second row. Min/Max/Grace show "ms" suffix.
+- Checkboxes (dimmed when disabled): "Allow channeling mode", "Lock ready slots while cast bar active".
+
+**Cast Bar Region**
+- Checkbox: "Use separate cast bar ROI". When unchecked, inputs dim to ~40% opacity.
+- 2×2 grid for L/T/W/H, dimmed when off.
+- Hint: "d: 12 — distance from main capture region" (dimmed when off).
+
+### Tab 3: Automation
+
+**Controls**
+- Row: Label "Toggle bind:" + bind button (cyan text, monospace, `--bind-bg`) + hint "click to rebind · right-click to clear".
+- Row: Label "Single bind:" + bind button (dim text if unset) + same hint.
+- Row: Label "Window:" + QLineEdit (placeholder "e.g. World of Warcraft").
+
+**Timing**
+- 2-column grid: "Delay:" + QSpinBox "150 ms" | "Queue:" + QSpinBox "120 ms". Narrow labels.
+- Checkbox: "Allow sends while casting/channeling".
+
+**Priority Lists**
+- Row: Label "Active list:" + QComboBox (stretches).
+- Row: right-aligned button cluster: "+ New" (small), "Copy" (small), "Delete" (small, red text `--text-delete`).
+- Row: Label "List name:" + QLineEdit (stretches).
+
+**Spell Queue**
+- Row: Label "Queue keys:" + QLineEdit (stretches, left-aligned).
+- Hint: "Manual presses of these keys (or bound keys not in priority) queue to fire at next GCD".
+- 2-column grid: "Timeout:" + QSpinBox "5000 ms" | "Fire delay:" + QSpinBox "100 ms". Narrow labels.
+
+---
+
+## SHARED COMPONENT STYLES (via QSS)
+
+These should be QSS rules targeting object names or widget types, not inline styles:
+
+**Section containers** (objectName: "section"):
+- Background: `--bg-section`, border: 1px solid `--border-section`, radius 4px, padding 10px 12px.
+
+**Subsection containers** (objectName: "subsection"):
+- Background: `--bg-subsection`, border: 1px solid `--border-subsection`, radius 3px, padding 8px 10px.
+
+**Section titles** (objectName: "sectionTitle"):
+- Font: `--font-mono`, 10px, uppercase, letter-spacing 1.5px, color `--text-section-title`.
+
+**Subsection titles** (objectName: "subsectionTitle"):
+- Font: `--font-mono`, 9px, uppercase, letter-spacing 1px, color `--text-hint`.
+
+**Form labels**: Font: 11px, color `--text-label`, right-aligned. Default min-width 85px. Narrow: 50px. XNarrow: 34px.
+
+**Inputs** (QSpinBox, QLineEdit): Background `--bg-input`, border 1px solid `--border-input`, radius 3px, padding 5px 8px, color `--text-secondary`, font `--font-mono` 11px.
+
+**Buttons** (QPushButton):
+- Default: `--bg-button`, border `--border-input`, radius 3px, padding 6px 12px, color `--text-secondary`.
+- Calibrate (objectName "calibrateButton"): `--bg-button-calibrate`, border `--border-button-calibrate`, color `--text-calibrate-btn`.
+- Small: padding 4px 10px, font-size 10px.
+
+**Bind buttons** (objectName: "bindButton"): `--bind-bg`, border `--border-input`, radius 3px, padding 5px 16px, color `--bind-text`, font `--font-mono` 12px bold, min-width 80px, centered.
+
+**Checkboxes**: Indicator 14px, background `--bg-input`, border `--border-input`, radius 2px, check mark `--text-checkbox`.
+
+**Sliders** (QSlider): Groove height 4px background #444, handle 12px circle #888. Style via QSS `::groove:horizontal` and `::handle:horizontal`.
+
+**Hints** (objectName: "hint"): Font `--font-mono` 10px, color `--text-hint`.
+
+**Help icons**: Font 10px, color `--text-section-title`, with tooltip on hover.
+
+---
+
+## DIMMING PATTERN
+
+Multiple sections use a "dim when disabled" pattern:
+
+- **Glow section**: When "Enable glow ready override" is unchecked, all three subsections (Glow Parameters, Per-Slot Overrides, Color Thresholds) set to ~40% opacity and widgets disabled.
+- **Cast/Channel section**: When "Enable cast/channel detection" is unchecked, Cast Band subsection, Cast Timing subsection, and the channeling/lock checkboxes all dim and disable.
+- **Cast Bar Region**: When "Use separate cast bar ROI" is unchecked, the coordinate grid and hint dim.
+
+Implement this by connecting each enable checkbox's `toggled` signal to a method that iterates the child widgets of the relevant container, calling `setEnabled(bool)` and adjusting opacity via `setGraphicsEffect(QGraphicsOpacityEffect)` or a simpler approach: set a property on the container frame (e.g. `setProperty("dimmed", True)`) and use QSS to handle opacity:
+
+```css
+QFrame[dimmed="true"] { opacity: 0.4; }
+```
+
+If Qt's QSS `opacity` doesn't work reliably on frames, use `QGraphicsOpacityEffect` on the container widget instead. The key is: one checkbox toggles the visual state of its associated group.
+
+---
+
+## WHAT MOVES WHERE
+
+| Setting | Currently in | Moves to |
+|---------|-------------|----------|
+| Profile name, export, import | Profile section | General → Profile |
+| Monitor selector | Display section | General → Display |
+| Show Region Overlay | Display section | General → Display |
+| Always on Top | Display section | General → Display |
+| History rows | Display section | General → Display |
+| Capture region (top/left/width/height) | Capture Region section | General → Capture Region |
+| Slots, gap, padding | Capture Region section | General → Capture Region |
+| Calibrate All Baselines | Calibration section | General → Calibration |
+| Darken threshold | Detection section | Detection → Cooldown Thresholds |
+| Trigger fraction | Detection section | Detection → Cooldown Thresholds |
+| Change fraction | Detection section | Detection → Cooldown Thresholds |
+| Change ignore | Detection section | Detection → Cooldown Thresholds |
+| Enable glow ready override | Detection section | Detection → Glow / Ready Override |
+| Glow ring, V+, S>=, N | Detection section | Detection → Glow → Glow Parameters |
+| Glow by slot | Detection section | Detection → Glow → Per-Slot Overrides |
+| Y frac by slot | Detection section | Detection → Glow → Per-Slot Overrides |
+| Glow→ready | Detection section | Detection → Glow → Per-Slot Overrides |
+| Yellow frac | Detection section | Detection → Glow → Color Thresholds |
+| Red frac | Detection section | Detection → Glow → Color Thresholds |
+| Glow hue (Y min, Y max, R<=, R>=) | Detection section | Detection → Glow → Color Thresholds |
+| Enable cast/channel detection | Detection section | Detection → Cast/Channel Detection |
+| Cast band range | Detection section | Detection → Cast/Channel → Cast Band |
+| Cast timing (confirm, min, max) | Detection section | Detection → Cast/Channel → Cast Timing |
+| Cancel grace | Detection section | Detection → Cast/Channel → Cast Timing |
+| Allow channeling mode | Detection section | Detection → Cast/Channel Detection |
+| Lock ready slots | Detection section | Detection → Cast/Channel Detection |
+| Cast bar ROI checkbox + coords | Detection section | Detection → Cast Bar Region |
+| Toggle bind | Automation section | Automation → Controls |
+| Single bind | Automation section | Automation → Controls |
+| Window title | Automation section | Automation → Controls |
+| Delay (ms) | Automation section | Automation → Timing |
+| Queue (ms) | Automation section | Automation → Timing |
+| Allow sends while casting | Automation section | Automation → Timing |
+| List profile dropdown, +, copy, - | Automation section | Automation → Priority Lists |
+| List name | Automation section | Automation → Priority Lists |
+| Queue keys | Spell Queue section | Automation → Spell Queue |
+| Queue timeout | Spell Queue section | Automation → Spell Queue |
+| Fire delay | Spell Queue section | Automation → Spell Queue |
+
+**No settings are added or removed.** This is purely a reorganization.
+
+---
+
+## IMPLEMENTATION ORDER
+
+1. **Extract theme variables**: Create or update the theme definition (dict, dataclass, or wherever the main window's theme vars live) with all the settings-window variables listed above. Ensure the main window's existing vars are included so both windows share a single theme source.
+
+2. **Build the QSS**: Write the complete stylesheet for the settings window using the theme variables. Use object names for all selectors. Put in `_build_stylesheet()` or a shared theme module.
+
+3. **Restructure the layout**: Replace the current QVBoxLayout-with-scroll with a QTabWidget + three tab pages. The Detection tab should wrap its content in a QScrollArea since it's the tallest. Move existing widgets into the correct tabs — don't recreate widgets that already exist, reparent them.
+
+4. **Add object names**: Set objectName on all widgets that need QSS targeting.
+
+5. **Replace Save button with status bar**: Remove any "Save Config" button. Add the status bar widget below the QTabWidget. Wire it to the existing auto-save mechanism.
+
+6. **Wire dimming**: Connect the three enable checkboxes (glow, cast/channel, cast bar ROI) to their dimming groups.
+
+7. **Apply the stylesheet**: `self.setStyleSheet(self._build_stylesheet())` once, not per-widget.
+
+8. **Test**: Verify all settings load, emit signals, auto-save triggers, dimming toggles work, and the main window's live preview still updates.
+
+---
+
+## REFERENCE
+
+Visual mockup: `./mockup/settings-redesign-mockup-v2.html`
+Open in browser for pixel-accurate reference of all three tabs.
+
+Existing main window theming: check `src/ui/main_window.py` and any `.qss` files or theme modules for the established pattern. Match that pattern exactly.

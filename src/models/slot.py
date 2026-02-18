@@ -41,6 +41,15 @@ class SlotSnapshot:
     cast_ends_at: Optional[float] = None
     last_cast_start_at: Optional[float] = None
     last_cast_success_at: Optional[float] = None
+    glow_candidate: bool = False
+    glow_fraction: float = 0.0
+    glow_ready: bool = False
+    yellow_glow_candidate: bool = False
+    yellow_glow_fraction: float = 0.0
+    yellow_glow_ready: bool = False
+    red_glow_candidate: bool = False
+    red_glow_fraction: float = 0.0
+    red_glow_ready: bool = False
     brightness: float = 0.0
     timestamp: float = 0.0
 
@@ -104,6 +113,10 @@ class AppConfig:
     brightness_drop_threshold: int = 40  # 0-255; pixel counts as darkened if brightness dropped by more
     cooldown_pixel_fraction: float = 0.30  # ON_COOLDOWN if this fraction of pixels darkened
     cooldown_min_duration_ms: int = 2000
+    # Extra detector: absolute baseline change fraction (captures bright overlays).
+    cooldown_change_pixel_fraction: float = 0.30
+    # Optional slot indexes where cooldown-change detector is ignored (dark detector still applies).
+    cooldown_change_ignore_by_slot: list[int] = field(default_factory=list)
     cast_detection_enabled: bool = True
     cast_candidate_min_fraction: float = 0.05
     cast_candidate_max_fraction: float = 0.22
@@ -118,6 +131,23 @@ class AppConfig:
     cast_bar_region: dict = field(default_factory=dict)
     cast_bar_activity_threshold: float = 12.0
     cast_bar_history_frames: int = 8
+    glow_enabled: bool = True
+    glow_ring_thickness_px: int = 4
+    glow_value_delta: int = 35
+    # Optional per-slot override for glow_value_delta: {slot_index: delta}.
+    glow_value_delta_by_slot: dict[int, int] = field(default_factory=dict)
+    glow_saturation_min: int = 80
+    glow_ring_fraction: float = 0.18
+    # Optional per-slot override for yellow glow ring-fraction threshold: {slot_index: fraction}.
+    glow_ring_fraction_by_slot: dict[int, float] = field(default_factory=dict)
+    glow_red_ring_fraction: float = 0.18
+    # Optional per-slot cooldown override trigger for non-red glow (yellow/white proc icons).
+    glow_override_cooldown_by_slot: list[int] = field(default_factory=list)
+    glow_confirm_frames: int = 2
+    glow_yellow_hue_min: int = 18
+    glow_yellow_hue_max: int = 42
+    glow_red_hue_max_low: int = 12
+    glow_red_hue_min_high: int = 168
     ocr_enabled: bool = True
     overlay_enabled: bool = True
     overlay_border_color: str = "#00FF00"
@@ -180,15 +210,28 @@ class AppConfig:
         return normalized
 
     @staticmethod
+    def _normalize_activation_rule(raw_rule: object) -> str:
+        rule = str(raw_rule or "").strip().lower()
+        if rule in ("always", "dot_refresh"):
+            return rule
+        return "always"
+
+    @staticmethod
     def _normalize_priority_items(raw_items: object, fallback_order: object) -> list[dict]:
         """
         Normalize profile priority items to:
-        [{type:'slot', slot_index:int} | {type:'manual', action_id:str}]
+        [{type:'slot', slot_index:int, activation_rule:str} | {type:'manual', action_id:str}]
         """
         normalized: list[dict] = []
         for raw in list(raw_items or []):
             if isinstance(raw, int):
-                normalized.append({"type": "slot", "slot_index": raw})
+                normalized.append(
+                    {
+                        "type": "slot",
+                        "slot_index": raw,
+                        "activation_rule": "always",
+                    }
+                )
                 continue
             if not isinstance(raw, dict):
                 continue
@@ -196,7 +239,15 @@ class AppConfig:
             if itype == "slot":
                 slot_index = raw.get("slot_index")
                 if isinstance(slot_index, int):
-                    normalized.append({"type": "slot", "slot_index": slot_index})
+                    normalized.append(
+                        {
+                            "type": "slot",
+                            "slot_index": slot_index,
+                            "activation_rule": AppConfig._normalize_activation_rule(
+                                raw.get("activation_rule")
+                            ),
+                        }
+                    )
             elif itype == "manual":
                 action_id = str(raw.get("action_id", "") or "").strip().lower()
                 if action_id:
@@ -204,7 +255,7 @@ class AppConfig:
         if normalized:
             return normalized
         return [
-            {"type": "slot", "slot_index": i}
+            {"type": "slot", "slot_index": i, "activation_rule": "always"}
             for i in list(fallback_order or [])
             if isinstance(i, int)
         ]
@@ -263,7 +314,7 @@ class AppConfig:
                     "name": "Default",
                     "priority_order": [int(i) for i in self.priority_order if isinstance(i, int)],
                     "priority_items": [
-                        {"type": "slot", "slot_index": int(i)}
+                        {"type": "slot", "slot_index": int(i), "activation_rule": "always"}
                         for i in self.priority_order
                         if isinstance(i, int)
                     ],
@@ -327,6 +378,62 @@ class AppConfig:
     @classmethod
     def from_dict(cls, data: dict) -> AppConfig:
         bb = data.get("bounding_box", {})
+        raw_glow_delta_by_slot = data.get("detection", {}).get("glow_value_delta_by_slot", {})
+        if not isinstance(raw_glow_delta_by_slot, dict):
+            raw_glow_delta_by_slot = {}
+        raw_glow_ring_frac_by_slot = data.get("detection", {}).get("glow_ring_fraction_by_slot", {})
+        if not isinstance(raw_glow_ring_frac_by_slot, dict):
+            raw_glow_ring_frac_by_slot = {}
+        raw_glow_override_slots = data.get("detection", {}).get("glow_override_cooldown_by_slot", [])
+        if not isinstance(raw_glow_override_slots, list):
+            raw_glow_override_slots = []
+        raw_cooldown_change_ignore_slots = data.get("detection", {}).get(
+            "cooldown_change_ignore_by_slot", []
+        )
+        if not isinstance(raw_cooldown_change_ignore_slots, list):
+            raw_cooldown_change_ignore_slots = []
+        parsed_glow_delta_by_slot: dict[int, int] = {}
+        for k, v in raw_glow_delta_by_slot.items():
+            try:
+                slot_idx = int(k)
+                delta = int(v)
+            except Exception:
+                continue
+            if slot_idx < 0:
+                continue
+            parsed_glow_delta_by_slot[slot_idx] = max(0, min(255, delta))
+        parsed_glow_ring_frac_by_slot: dict[int, float] = {}
+        for k, v in raw_glow_ring_frac_by_slot.items():
+            try:
+                slot_idx = int(k)
+                frac = float(v)
+            except Exception:
+                continue
+            if slot_idx < 0:
+                continue
+            parsed_glow_ring_frac_by_slot[slot_idx] = max(0.0, min(1.0, frac))
+        parsed_glow_override_slots: list[int] = []
+        seen_override_slots: set[int] = set()
+        for v in raw_glow_override_slots:
+            try:
+                slot_idx = int(v)
+            except Exception:
+                continue
+            if slot_idx < 0 or slot_idx in seen_override_slots:
+                continue
+            seen_override_slots.add(slot_idx)
+            parsed_glow_override_slots.append(slot_idx)
+        parsed_cooldown_change_ignore_slots: list[int] = []
+        seen_change_ignore_slots: set[int] = set()
+        for v in raw_cooldown_change_ignore_slots:
+            try:
+                slot_idx = int(v)
+            except Exception:
+                continue
+            if slot_idx < 0 or slot_idx in seen_change_ignore_slots:
+                continue
+            seen_change_ignore_slots.add(slot_idx)
+            parsed_cooldown_change_ignore_slots.append(slot_idx)
         hotkey_mode = (data.get("automation_hotkey_mode", "toggle") or "toggle").strip().lower()
         if hotkey_mode not in ("toggle", "single_fire"):
             hotkey_mode = "toggle"
@@ -344,6 +451,11 @@ class AppConfig:
             ),
             cooldown_pixel_fraction=data.get("detection", {}).get("cooldown_pixel_fraction", 0.30),
             cooldown_min_duration_ms=data.get("detection", {}).get("cooldown_min_duration_ms", 2000),
+            cooldown_change_pixel_fraction=data.get("detection", {}).get(
+                "cooldown_change_pixel_fraction",
+                data.get("detection", {}).get("cooldown_pixel_fraction", 0.30),
+            ),
+            cooldown_change_ignore_by_slot=parsed_cooldown_change_ignore_slots,
             cast_detection_enabled=data.get("detection", {}).get("cast_detection_enabled", True),
             cast_candidate_min_fraction=data.get("detection", {}).get("cast_candidate_min_fraction", 0.05),
             cast_candidate_max_fraction=data.get("detection", {}).get("cast_candidate_max_fraction", 0.22),
@@ -364,6 +476,25 @@ class AppConfig:
                 12.0,
             ),
             cast_bar_history_frames=data.get("detection", {}).get("cast_bar_history_frames", 8),
+            glow_enabled=data.get("detection", {}).get("glow_enabled", True),
+            glow_ring_thickness_px=int(data.get("detection", {}).get("glow_ring_thickness_px", 4)),
+            glow_value_delta=int(data.get("detection", {}).get("glow_value_delta", 35)),
+            glow_value_delta_by_slot=parsed_glow_delta_by_slot,
+            glow_saturation_min=int(data.get("detection", {}).get("glow_saturation_min", 80)),
+            glow_ring_fraction=float(data.get("detection", {}).get("glow_ring_fraction", 0.18)),
+            glow_ring_fraction_by_slot=parsed_glow_ring_frac_by_slot,
+            glow_red_ring_fraction=float(
+                data.get("detection", {}).get(
+                    "glow_red_ring_fraction",
+                    data.get("detection", {}).get("glow_ring_fraction", 0.18),
+                )
+            ),
+            glow_override_cooldown_by_slot=parsed_glow_override_slots,
+            glow_confirm_frames=int(data.get("detection", {}).get("glow_confirm_frames", 2)),
+            glow_yellow_hue_min=int(data.get("detection", {}).get("glow_yellow_hue_min", 18)),
+            glow_yellow_hue_max=int(data.get("detection", {}).get("glow_yellow_hue_max", 42)),
+            glow_red_hue_max_low=int(data.get("detection", {}).get("glow_red_hue_max_low", 12)),
+            glow_red_hue_min_high=int(data.get("detection", {}).get("glow_red_hue_min_high", 168)),
             ocr_enabled=data.get("detection", {}).get("ocr_enabled", True),
             overlay_enabled=data.get("overlay", {}).get("enabled", True),
             overlay_border_color=data.get("overlay", {}).get("border_color", "#00FF00"),
@@ -400,7 +531,7 @@ class AppConfig:
                     "name": "Default",
                     "priority_order": list(data.get("priority_order", [])),
                     "priority_items": [
-                        {"type": "slot", "slot_index": int(i)}
+                        {"type": "slot", "slot_index": int(i), "activation_rule": "always"}
                         for i in list(data.get("priority_order", []))
                         if isinstance(i, int)
                     ],
@@ -431,6 +562,10 @@ class AppConfig:
                 "brightness_drop_threshold": self.brightness_drop_threshold,
                 "cooldown_pixel_fraction": self.cooldown_pixel_fraction,
                 "cooldown_min_duration_ms": self.cooldown_min_duration_ms,
+                "cooldown_change_pixel_fraction": self.cooldown_change_pixel_fraction,
+                "cooldown_change_ignore_by_slot": [
+                    int(v) for v in list(self.cooldown_change_ignore_by_slot or [])
+                ],
                 "cast_detection_enabled": self.cast_detection_enabled,
                 "cast_candidate_min_fraction": self.cast_candidate_min_fraction,
                 "cast_candidate_max_fraction": self.cast_candidate_max_fraction,
@@ -445,6 +580,26 @@ class AppConfig:
                 "cast_bar_region": self.cast_bar_region,
                 "cast_bar_activity_threshold": self.cast_bar_activity_threshold,
                 "cast_bar_history_frames": self.cast_bar_history_frames,
+                "glow_enabled": self.glow_enabled,
+                "glow_ring_thickness_px": self.glow_ring_thickness_px,
+                "glow_value_delta": self.glow_value_delta,
+                "glow_value_delta_by_slot": {
+                    str(int(k)): int(v) for k, v in dict(self.glow_value_delta_by_slot or {}).items()
+                },
+                "glow_saturation_min": self.glow_saturation_min,
+                "glow_ring_fraction": self.glow_ring_fraction,
+                "glow_ring_fraction_by_slot": {
+                    str(int(k)): float(v) for k, v in dict(self.glow_ring_fraction_by_slot or {}).items()
+                },
+                "glow_red_ring_fraction": self.glow_red_ring_fraction,
+                "glow_override_cooldown_by_slot": [
+                    int(v) for v in list(self.glow_override_cooldown_by_slot or [])
+                ],
+                "glow_confirm_frames": self.glow_confirm_frames,
+                "glow_yellow_hue_min": self.glow_yellow_hue_min,
+                "glow_yellow_hue_max": self.glow_yellow_hue_max,
+                "glow_red_hue_max_low": self.glow_red_hue_max_low,
+                "glow_red_hue_min_high": self.glow_red_hue_min_high,
                 "ocr_enabled": self.ocr_enabled,
             },
             "overlay": {

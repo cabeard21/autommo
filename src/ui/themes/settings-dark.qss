@@ -1,0 +1,160 @@
+/* Settings window — dark theme (v2)
+ * Aligned with dark.qss. Use objectName for selectors.
+ */
+
+QDialog#settingsDialog {
+    background: #2a2a3a;
+    border: 1px solid #444;
+}
+
+QTabWidget#settingsTabs::pane {
+    background: #2a2a3a;
+    border: none;
+    border-top: 1px solid #333;
+    top: -1px;
+    padding: 0;
+}
+
+QTabBar::tab {
+    background: #1e1e2e;
+    color: #666;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 9px 16px;
+    margin: 0;
+    border: none;
+    border-bottom: 2px solid transparent;
+}
+QTabBar::tab:hover { color: #999; }
+QTabBar::tab:selected {
+    color: #66eeff;
+    border-bottom: 2px solid #66eeff;
+}
+QTabBar::tab:!selected { margin-top: 2px; }
+
+QFrame#section {
+    background: #252535;
+    border: 1px solid #3a3a4a;
+    border-radius: 4px;
+    padding: 5px 6px;
+}
+
+QLabel#sectionTitle {
+    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+    font-size: 10px;
+    color: #666;
+    font-weight: bold;
+    letter-spacing: 1.5px;
+}
+
+QFrame#subsection {
+    background: #1e1e2e;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 4px 5px;
+}
+
+QLabel#subsectionTitle {
+    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+    font-size: 9px;
+    color: #555;
+    letter-spacing: 1px;
+}
+
+QLabel#formLabel { font-size: 11px; color: #999; min-width: 85px; }
+QLabel#formLabelNarrow { font-size: 11px; color: #999; min-width: 50px; }
+QLabel#formLabelXnarrow { font-size: 11px; color: #999; min-width: 34px; }
+
+QSpinBox, QLineEdit {
+    background: #1a1a2a;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 5px 8px;
+    color: #ccc;
+    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+    font-size: 11px;
+}
+QSpinBox:focus, QLineEdit:focus { border-color: #66eeff; }
+
+QComboBox {
+    background: #1a1a2a;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 5px 8px;
+    color: #ccc;
+    font-size: 11px;
+}
+
+QPushButton {
+    background: #333345;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 6px 12px;
+    color: #ccc;
+    font-size: 11px;
+}
+QPushButton:hover { background: #3d3d50; }
+QPushButton#calibrateButton {
+    background: #2d5a2d;
+    border: 1px solid #3a7a3a;
+    color: #88ff88;
+}
+QPushButton#calibrateButton:hover { background: #356b35; }
+QPushButton#smallButton { padding: 4px 10px; font-size: 10px; }
+QPushButton#deleteButton { color: #ff6666; }
+
+QPushButton#bindButton {
+    background: #333345;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 5px 16px;
+    color: #66eeff;
+    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+    font-size: 12px;
+    font-weight: bold;
+    min-width: 80px;
+}
+
+QCheckBox { font-size: 11px; color: #e0e0e0; }
+QCheckBox::indicator {
+    width: 14px; height: 14px;
+    border-radius: 2px;
+    background: #1a1a2a;
+    border: 1px solid #555;
+}
+QCheckBox::indicator:checked { border-color: #ff66aa; }
+
+QLabel#hint {
+    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+    font-size: 10px;
+    color: #555;
+}
+
+QSlider::groove:horizontal {
+    height: 4px;
+    background: #444;
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    width: 12px; height: 12px;
+    margin: -4px 0;
+    background: #888;
+    border-radius: 6px;
+}
+
+QWidget#settingsStatusBar {
+    background: #1e1e2e;
+    border-top: 1px solid #333;
+    padding: 6px 14px;
+    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+    font-size: 10px;
+    color: #555;
+}
+
+QLabel#statusBarDot { min-width: 6px; max-width: 6px; min-height: 6px; max-height: 6px; border-radius: 3px; }
+QLabel#statusBarDot[saved="true"] { background: #3a7a3a; }
+QLabel#statusBarDot[saving="true"] { background: #e5a522; }
+QLabel#statusBarText { color: #555; }
+QLabel#statusBarText[saving="true"] { color: #e5a522; }
+
+QScrollArea { background: transparent; border: none; }
