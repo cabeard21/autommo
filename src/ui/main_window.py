@@ -237,6 +237,8 @@ class LastActionHistoryWidget(QWidget):
             []
         )  # (row, opacity_effect) — time is fixed per row
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        # Min height so rows can't collapse and overlap: (row_height * n) + (spacing * (n-1)) + top margin
+        self._update_min_height()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(4)
@@ -281,6 +283,7 @@ class LastActionHistoryWidget(QWidget):
                 self._placeholder_rows.append(ph)
                 self._rows_container.addWidget(ph)
         self._max_rows = n
+        self._update_min_height()
         for i, ph in enumerate(self._placeholder_rows):
             ph.setVisible(i >= len(self._entries))
         self._update_opacities()
@@ -310,6 +313,13 @@ class LastActionHistoryWidget(QWidget):
             if len(self._entries) < len(self._placeholder_rows):
                 self._placeholder_rows[len(self._entries)].show()
         self._update_opacities()
+
+    def _update_min_height(self) -> None:
+        """Set minimum height so rows cannot collapse and overlap (row 52px + 4px spacing between)."""
+        row_h = 52
+        spacing = 4
+        top_margin = 4
+        self.setMinimumHeight(top_margin + self._max_rows * row_h + max(0, self._max_rows - 1) * spacing)
 
     def _update_opacities(self) -> None:
         for i, (row, eff) in enumerate(self._entries):
