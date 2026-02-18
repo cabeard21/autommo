@@ -623,10 +623,19 @@ class SlotAnalyzer:
                 changed_fraction = changed_count / total if total else 0.0
                 raw_dark_cooldown = darkened_fraction >= frac_thresh
                 raw_changed_cooldown = changed_fraction >= change_frac_thresh
-                raw_cooldown = (
-                    raw_dark_cooldown
-                    or raw_changed_cooldown
-                )
+                raw_cooldown = raw_dark_cooldown or raw_changed_cooldown
+
+                # Cooldown hysteresis: once a slot is on cooldown, require a lower
+                # release threshold before it can return to ready. This prevents
+                # per-icon art/animation from flipping ready several seconds early.
+                runtime = self._runtime.setdefault(slot_cfg.index, _SlotRuntime())
+                if runtime.state == SlotState.ON_COOLDOWN:
+                    release_factor = 0.5
+                    dark_release_thresh = frac_thresh * release_factor
+                    change_release_thresh = change_frac_thresh * release_factor
+                    hold_dark_cooldown = darkened_fraction >= dark_release_thresh
+                    hold_changed_cooldown = changed_fraction >= change_release_thresh
+                    raw_cooldown = raw_cooldown or hold_dark_cooldown or hold_changed_cooldown
                 (
                     state,
                     cast_progress,
@@ -640,7 +649,6 @@ class SlotAnalyzer:
                     now,
                     cast_gate_active=cast_gate_active,
                 )
-                runtime = self._runtime.setdefault(slot_cfg.index, _SlotRuntime())
                 (
                     yellow_glow_candidate,
                     yellow_glow_fraction,
