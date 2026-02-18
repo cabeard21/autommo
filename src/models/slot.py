@@ -6,10 +6,15 @@ from typing import Optional
 
 import numpy as np
 
+from src.automation.binds import normalize_bind
+
 
 class SlotState(Enum):
     READY = "ready"
     ON_COOLDOWN = "on_cooldown"
+    CASTING = "casting"
+    CHANNELING = "channeling"
+    LOCKED = "locked"
     GCD = "gcd"
     UNKNOWN = "unknown"
 
@@ -32,12 +37,20 @@ class SlotSnapshot:
     state: SlotState = SlotState.UNKNOWN
     keybind: Optional[str] = None
     cooldown_remaining: Optional[float] = None
+    cast_progress: Optional[float] = None
+    cast_ends_at: Optional[float] = None
+    last_cast_start_at: Optional[float] = None
+    last_cast_success_at: Optional[float] = None
     brightness: float = 0.0
     timestamp: float = 0.0
 
     @property
     def is_ready(self) -> bool:
         return self.state == SlotState.READY
+
+    @property
+    def is_casting(self) -> bool:
+        return self.state in (SlotState.CASTING, SlotState.CHANNELING)
 
 
 @dataclass
@@ -51,6 +64,9 @@ class ActionBarState:
 
     def cooldown_slots(self) -> list[SlotSnapshot]:
         return [s for s in self.slots if s.state == SlotState.ON_COOLDOWN]
+
+    def casting_slots(self) -> list[SlotSnapshot]:
+        return [s for s in self.slots if s.is_casting]
 
 
 @dataclass
@@ -88,6 +104,20 @@ class AppConfig:
     brightness_drop_threshold: int = 40  # 0-255; pixel counts as darkened if brightness dropped by more
     cooldown_pixel_fraction: float = 0.30  # ON_COOLDOWN if this fraction of pixels darkened
     cooldown_min_duration_ms: int = 2000
+    cast_detection_enabled: bool = True
+    cast_candidate_min_fraction: float = 0.05
+    cast_candidate_max_fraction: float = 0.22
+    cast_confirm_frames: int = 2
+    cast_min_duration_ms: int = 150
+    cast_max_duration_ms: int = 3000
+    cast_cancel_grace_ms: int = 120
+    channeling_enabled: bool = True
+    queue_window_ms: int = 120
+    allow_cast_while_casting: bool = False
+    lock_ready_while_cast_bar_active: bool = False
+    cast_bar_region: dict = field(default_factory=dict)
+    cast_bar_activity_threshold: float = 12.0
+    cast_bar_history_frames: int = 8
     ocr_enabled: bool = True
     overlay_enabled: bool = True
     overlay_border_color: str = "#00FF00"
@@ -99,11 +129,15 @@ class AppConfig:
     slot_baselines: list = field(default_factory=list)
     # Slot indices that had their baseline set by "Calibrate This Slot" (show bold in UI)
     overwritten_baseline_slots: list[int] = field(default_factory=list)
-    # Priority order for automation: list of slot indices (first READY in this order is "next")
+    # Priority order for automation: kept for backward compatibility with older config files.
     priority_order: list[int] = field(default_factory=list)
     automation_enabled: bool = False
-    # Global hotkey to toggle automation (e.g. "f5", "x1" for mouse side button); empty = not set
+    # Legacy single hotkey fields kept for migration compatibility.
     automation_toggle_bind: str = ""
+    automation_hotkey_mode: str = "toggle"
+    # Multiple automation profiles, each with its own priority list + hotkeys.
+    priority_profiles: list[dict] = field(default_factory=list)
+    active_priority_profile_id: str = "default"
     # Minimum ms between keypresses when automation is sending keys
     min_press_interval_ms: int = 150
     # If non-empty, only send keys when foreground window title contains this (case-insensitive)
@@ -119,10 +153,184 @@ class AppConfig:
     # Ms to wait after detecting GCD ready before sending queued key (avoids firing too early)
     queue_fire_delay_ms: int = 100
 
+    @staticmethod
+    def _normalize_manual_actions(raw_actions: object) -> list[dict]:
+        """Normalize profile manual actions to [{id, name, keybind}] with unique ids."""
+        normalized: list[dict] = []
+        seen_ids: set[str] = set()
+        for raw in list(raw_actions or []):
+            if not isinstance(raw, dict):
+                continue
+            aid = str(raw.get("id", "") or "").strip().lower()
+            if not aid:
+                aid = f"manual_{len(normalized) + 1}"
+            if aid in seen_ids:
+                continue
+            seen_ids.add(aid)
+            name = str(raw.get("name", "") or "").strip() or aid.replace("_", " ").title()
+            keybind = normalize_bind(str(raw.get("keybind", "") or ""))
+            normalized.append({"id": aid, "name": name, "keybind": keybind})
+        return normalized
+
+    @staticmethod
+    def _normalize_slot_keybinds(raw_keybinds: object) -> list[str]:
+        normalized: list[str] = []
+        for raw in list(raw_keybinds or []):
+            normalized.append(normalize_bind(str(raw or "")))
+        return normalized
+
+    @staticmethod
+    def _normalize_priority_items(raw_items: object, fallback_order: object) -> list[dict]:
+        """
+        Normalize profile priority items to:
+        [{type:'slot', slot_index:int} | {type:'manual', action_id:str}]
+        """
+        normalized: list[dict] = []
+        for raw in list(raw_items or []):
+            if isinstance(raw, int):
+                normalized.append({"type": "slot", "slot_index": raw})
+                continue
+            if not isinstance(raw, dict):
+                continue
+            itype = str(raw.get("type", "") or "").strip().lower()
+            if itype == "slot":
+                slot_index = raw.get("slot_index")
+                if isinstance(slot_index, int):
+                    normalized.append({"type": "slot", "slot_index": slot_index})
+            elif itype == "manual":
+                action_id = str(raw.get("action_id", "") or "").strip().lower()
+                if action_id:
+                    normalized.append({"type": "manual", "action_id": action_id})
+        if normalized:
+            return normalized
+        return [
+            {"type": "slot", "slot_index": i}
+            for i in list(fallback_order or [])
+            if isinstance(i, int)
+        ]
+
+    def _normalize_profiles(self) -> None:
+        """Ensure automation profiles are valid and there is always an active profile."""
+        self.keybinds = self._normalize_slot_keybinds(self.keybinds)
+        normalized: list[dict] = []
+        seen_ids: set[str] = set()
+        for p in list(self.priority_profiles or []):
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("id", "") or "").strip().lower()
+            if not pid:
+                pid = f"profile_{len(normalized) + 1}"
+            if pid in seen_ids:
+                continue
+            seen_ids.add(pid)
+            name = str(p.get("name", "") or "").strip() or pid.replace("_", " ").title()
+            order = p.get("priority_order", [])
+            if not isinstance(order, list):
+                order = []
+            manual_actions = self._normalize_manual_actions(p.get("manual_actions", []))
+            manual_action_ids = {str(a.get("id", "") or "") for a in manual_actions}
+            priority_items = [
+                item
+                for item in self._normalize_priority_items(p.get("priority_items", []), order)
+                if (
+                    item.get("type") == "slot"
+                    or str(item.get("action_id", "") or "") in manual_action_ids
+                )
+            ]
+            slot_order = [
+                int(item["slot_index"])
+                for item in priority_items
+                if item.get("type") == "slot" and isinstance(item.get("slot_index"), int)
+            ]
+            toggle_bind = normalize_bind(str(p.get("toggle_bind", "") or ""))
+            single_fire_bind = normalize_bind(str(p.get("single_fire_bind", "") or ""))
+            normalized.append(
+                {
+                    "id": pid,
+                    "name": name,
+                    "priority_order": slot_order,
+                    "priority_items": priority_items,
+                    "manual_actions": manual_actions,
+                    "toggle_bind": toggle_bind,
+                    "single_fire_bind": single_fire_bind,
+                }
+            )
+
+        if not normalized:
+            normalized = [
+                {
+                    "id": "default",
+                    "name": "Default",
+                    "priority_order": [int(i) for i in self.priority_order if isinstance(i, int)],
+                    "priority_items": [
+                        {"type": "slot", "slot_index": int(i)}
+                        for i in self.priority_order
+                        if isinstance(i, int)
+                    ],
+                    "manual_actions": [],
+                    "toggle_bind": normalize_bind(str(self.automation_toggle_bind or "")),
+                    "single_fire_bind": (
+                        normalize_bind(str(self.automation_toggle_bind or ""))
+                        if (self.automation_hotkey_mode or "").strip().lower() == "single_fire"
+                        else ""
+                    ),
+                }
+            ]
+
+        self.priority_profiles = normalized
+        active = (self.active_priority_profile_id or "").strip().lower()
+        if not active or not any(p["id"] == active for p in normalized):
+            self.active_priority_profile_id = normalized[0]["id"]
+        else:
+            self.active_priority_profile_id = active
+        # Keep legacy mirror fields aligned with the active profile for compatibility.
+        active_profile = next(
+            (p for p in normalized if p["id"] == self.active_priority_profile_id),
+            normalized[0],
+        )
+        self.priority_order = list(active_profile.get("priority_order", []))
+        self.automation_toggle_bind = str(active_profile.get("toggle_bind", "") or "")
+        self.automation_hotkey_mode = "toggle"
+
+    def get_active_priority_profile(self) -> dict:
+        self._normalize_profiles()
+        for p in self.priority_profiles:
+            if p["id"] == self.active_priority_profile_id:
+                return p
+        return self.priority_profiles[0]
+
+    def ensure_priority_profiles(self) -> None:
+        self._normalize_profiles()
+
+    def set_active_priority_profile(self, profile_id: str) -> bool:
+        self._normalize_profiles()
+        pid = (profile_id or "").strip().lower()
+        if not pid or not any(p["id"] == pid for p in self.priority_profiles):
+            return False
+        if self.active_priority_profile_id == pid:
+            return False
+        self.active_priority_profile_id = pid
+        active = self.get_active_priority_profile()
+        self.priority_order = list(active.get("priority_order", []))
+        self.automation_toggle_bind = str(active.get("toggle_bind", "") or "")
+        return True
+
+    def active_priority_order(self) -> list[int]:
+        return list(self.get_active_priority_profile().get("priority_order", []))
+
+    def active_priority_items(self) -> list[dict]:
+        return list(self.get_active_priority_profile().get("priority_items", []))
+
+    def active_manual_actions(self) -> list[dict]:
+        return list(self.get_active_priority_profile().get("manual_actions", []))
+
     @classmethod
     def from_dict(cls, data: dict) -> AppConfig:
         bb = data.get("bounding_box", {})
-        return cls(
+        hotkey_mode = (data.get("automation_hotkey_mode", "toggle") or "toggle").strip().lower()
+        if hotkey_mode not in ("toggle", "single_fire"):
+            hotkey_mode = "toggle"
+        cfg = cls(
             monitor_index=data.get("monitor_index", 1),
             bounding_box=BoundingBox(**bb),
             slot_count=data.get("slots", {}).get("count", 10),
@@ -136,17 +344,38 @@ class AppConfig:
             ),
             cooldown_pixel_fraction=data.get("detection", {}).get("cooldown_pixel_fraction", 0.30),
             cooldown_min_duration_ms=data.get("detection", {}).get("cooldown_min_duration_ms", 2000),
+            cast_detection_enabled=data.get("detection", {}).get("cast_detection_enabled", True),
+            cast_candidate_min_fraction=data.get("detection", {}).get("cast_candidate_min_fraction", 0.05),
+            cast_candidate_max_fraction=data.get("detection", {}).get("cast_candidate_max_fraction", 0.22),
+            cast_confirm_frames=data.get("detection", {}).get("cast_confirm_frames", 2),
+            cast_min_duration_ms=data.get("detection", {}).get("cast_min_duration_ms", 150),
+            cast_max_duration_ms=data.get("detection", {}).get("cast_max_duration_ms", 3000),
+            cast_cancel_grace_ms=data.get("detection", {}).get("cast_cancel_grace_ms", 120),
+            channeling_enabled=data.get("detection", {}).get("channeling_enabled", True),
+            queue_window_ms=data.get("detection", {}).get("queue_window_ms", 120),
+            allow_cast_while_casting=data.get("detection", {}).get("allow_cast_while_casting", False),
+            lock_ready_while_cast_bar_active=data.get("detection", {}).get(
+                "lock_ready_while_cast_bar_active",
+                False,
+            ),
+            cast_bar_region=data.get("detection", {}).get("cast_bar_region", {}),
+            cast_bar_activity_threshold=data.get("detection", {}).get(
+                "cast_bar_activity_threshold",
+                12.0,
+            ),
+            cast_bar_history_frames=data.get("detection", {}).get("cast_bar_history_frames", 8),
             ocr_enabled=data.get("detection", {}).get("ocr_enabled", True),
             overlay_enabled=data.get("overlay", {}).get("enabled", True),
             overlay_border_color=data.get("overlay", {}).get("border_color", "#00FF00"),
             always_on_top=data.get("display", {}).get("always_on_top", False),
-            keybinds=data.get("slots", {}).get("keybinds", []),
+            keybinds=cls._normalize_slot_keybinds(data.get("slots", {}).get("keybinds", [])),
             slot_display_names=data.get("slot_display_names", []),
             slot_baselines=data.get("slot_baselines", []),
             overwritten_baseline_slots=data.get("overwritten_baseline_slots", []),
             priority_order=data.get("priority_order", []),
             automation_enabled=data.get("automation_enabled", False),
             automation_toggle_bind=data.get("automation_toggle_bind", ""),
+            automation_hotkey_mode=hotkey_mode,
             min_press_interval_ms=data.get("min_press_interval_ms", 150),
             target_window_title=data.get("target_window_title", ""),
             profile_name=data.get("profile_name", ""),
@@ -155,6 +384,34 @@ class AppConfig:
             queue_timeout_ms=int(data.get("queue_timeout_ms", 5000)),
             queue_fire_delay_ms=int(data.get("queue_fire_delay_ms", 100)),
         )
+        raw_profiles = data.get("priority_profiles")
+        if isinstance(raw_profiles, list):
+            cfg.priority_profiles = list(raw_profiles)
+            cfg.active_priority_profile_id = str(
+                data.get("active_priority_profile_id", "default") or "default"
+            )
+        else:
+            # Legacy migration path from single priority list + single hotkey.
+            legacy_toggle_bind = normalize_bind(str(data.get("automation_toggle_bind", "") or ""))
+            legacy_mode = (data.get("automation_hotkey_mode", "toggle") or "toggle").strip().lower()
+            cfg.priority_profiles = [
+                {
+                    "id": "default",
+                    "name": "Default",
+                    "priority_order": list(data.get("priority_order", [])),
+                    "priority_items": [
+                        {"type": "slot", "slot_index": int(i)}
+                        for i in list(data.get("priority_order", []))
+                        if isinstance(i, int)
+                    ],
+                    "manual_actions": [],
+                    "toggle_bind": legacy_toggle_bind if legacy_mode == "toggle" else "",
+                    "single_fire_bind": legacy_toggle_bind if legacy_mode == "single_fire" else "",
+                }
+            ]
+            cfg.active_priority_profile_id = "default"
+        cfg._normalize_profiles()
+        return cfg
 
     def to_dict(self) -> dict:
         """Serialize to dict for JSON config file (round-trip with from_dict)."""
@@ -174,6 +431,20 @@ class AppConfig:
                 "brightness_drop_threshold": self.brightness_drop_threshold,
                 "cooldown_pixel_fraction": self.cooldown_pixel_fraction,
                 "cooldown_min_duration_ms": self.cooldown_min_duration_ms,
+                "cast_detection_enabled": self.cast_detection_enabled,
+                "cast_candidate_min_fraction": self.cast_candidate_min_fraction,
+                "cast_candidate_max_fraction": self.cast_candidate_max_fraction,
+                "cast_confirm_frames": self.cast_confirm_frames,
+                "cast_min_duration_ms": self.cast_min_duration_ms,
+                "cast_max_duration_ms": self.cast_max_duration_ms,
+                "cast_cancel_grace_ms": self.cast_cancel_grace_ms,
+                "channeling_enabled": self.channeling_enabled,
+                "queue_window_ms": self.queue_window_ms,
+                "allow_cast_while_casting": self.allow_cast_while_casting,
+                "lock_ready_while_cast_bar_active": self.lock_ready_while_cast_bar_active,
+                "cast_bar_region": self.cast_bar_region,
+                "cast_bar_activity_threshold": self.cast_bar_activity_threshold,
+                "cast_bar_history_frames": self.cast_bar_history_frames,
                 "ocr_enabled": self.ocr_enabled,
             },
             "overlay": {
@@ -186,6 +457,9 @@ class AppConfig:
             "priority_order": self.priority_order,
             "automation_enabled": self.automation_enabled,
             "automation_toggle_bind": self.automation_toggle_bind,
+            "automation_hotkey_mode": self.automation_hotkey_mode,
+            "priority_profiles": self.priority_profiles,
+            "active_priority_profile_id": self.active_priority_profile_id,
             "min_press_interval_ms": self.min_press_interval_ms,
             "target_window_title": self.target_window_title,
             "profile_name": self.profile_name,

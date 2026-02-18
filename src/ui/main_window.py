@@ -1,4 +1,5 @@
 """Main application window — streamlined for gameplay (enable bar, preview, slots, last action, next intention, priority, status bar)."""
+
 from __future__ import annotations
 
 import copy
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
 from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFontMetrics, QImage, QPixmap, QKeySequence
+from PyQt6.QtGui import QFontMetrics, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
@@ -37,6 +38,7 @@ from src.ui.priority_panel import (
     SlotButton,
 )
 from src.automation.global_hotkey import format_bind_for_display
+from src.automation.binds import normalize_bind, normalize_bind_from_parts
 
 if TYPE_CHECKING:
     from src.automation.key_sender import KeySender
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
 KEY_CYAN = "#66eeff"
 KEY_GREEN = "#88ff88"
 KEY_YELLOW = "#eecc55"
+KEY_BLUE = "#7db5ff"
 
 SECTION_BG = "#252535"
 SECTION_BG_DARK = "#1e1e2e"
@@ -55,6 +58,7 @@ def _load_main_window_theme() -> str:
     """Load dark theme QSS for the main window."""
     try:
         from src.ui.themes import load_theme
+
         return load_theme("dark")
     except Exception:
         return ""
@@ -115,9 +119,9 @@ class _LeftPanel(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self._on_priority_drop_remove: Callable[[int], None] = lambda _: None
+        self._on_priority_drop_remove: Callable[[str], None] = lambda _: None
 
-    def set_drop_remove_callback(self, callback: Callable[[int], None]) -> None:
+    def set_drop_remove_callback(self, callback: Callable[[str], None]) -> None:
         self._on_priority_drop_remove = callback
 
     def dragEnterEvent(self, event) -> None:
@@ -127,9 +131,12 @@ class _LeftPanel(QWidget):
     def dropEvent(self, event) -> None:
         if event.mimeData().hasFormat(MIME_PRIORITY_ITEM):
             try:
-                slot_index = int(event.mimeData().data(MIME_PRIORITY_ITEM).data().decode())
-                self._on_priority_drop_remove(slot_index)
-            except (ValueError, TypeError):
+                item_key = str(
+                    event.mimeData().data(MIME_PRIORITY_ITEM).data().decode() or ""
+                )
+                if item_key:
+                    self._on_priority_drop_remove(item_key)
+            except (ValueError, TypeError, UnicodeDecodeError):
                 pass
         event.acceptProposedAction()
 
@@ -137,10 +144,20 @@ class _LeftPanel(QWidget):
 class _ActionEntryRow(QWidget):
     """One row: key (colored), name + status, time. Used for Last Action and Next Intention."""
 
-    def __init__(self, key: str, name: str, status: str, time_text: str = "", key_color: str = KEY_CYAN, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        key: str,
+        name: str,
+        status: str,
+        time_text: str = "",
+        key_color: str = KEY_CYAN,
+        parent: Optional[QWidget] = None,
+    ):
         super().__init__(parent)
         self.setObjectName("actionEntryRow")
-        self.setStyleSheet(f"background: {SECTION_BG}; border-radius: 3px; padding: 4px 6px;")
+        self.setStyleSheet(
+            f"background: {SECTION_BG}; border-radius: 3px; padding: 4px 6px;"
+        )
         self.setMinimumHeight(52)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         layout = QHBoxLayout(self)
@@ -148,7 +165,9 @@ class _ActionEntryRow(QWidget):
         layout.setSpacing(8)
         self._key_label = QLabel(key)
         self._key_label.setObjectName("actionKey")
-        self._key_label.setStyleSheet(f"font-family: monospace; font-size: 14px; font-weight: bold; color: {key_color}; min-width: 24px;")
+        self._key_label.setStyleSheet(
+            f"font-family: monospace; font-size: 14px; font-weight: bold; color: {key_color}; min-width: 24px;"
+        )
         self._key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._key_label)
         info = QVBoxLayout()
@@ -158,29 +177,43 @@ class _ActionEntryRow(QWidget):
         self._name_label.setStyleSheet("font-size: 11px; color: #ccc;")
         self._name_label.setMinimumWidth(0)
         self._name_label.setMinimumHeight(18)
-        self._name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._name_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+        )
         self._name_label.setWordWrap(False)
         info.addWidget(self._name_label)
         self._status_label = QLabel(status)
         self._status_label.setObjectName("actionMeta")
         self._status_label.setMinimumHeight(14)
-        self._status_label.setStyleSheet("font-size: 9px; color: #666; font-family: monospace;")
+        self._status_label.setStyleSheet(
+            "font-size: 9px; color: #666; font-family: monospace;"
+        )
         info.addWidget(self._status_label)
         layout.addLayout(info, 1)
         self._time_label = QLabel(time_text)
         self._time_label.setObjectName("actionTime")
-        self._time_label.setStyleSheet("font-size: 9px; color: #555; font-family: monospace;")
-        self._time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._time_label.setStyleSheet(
+            "font-size: 9px; color: #555; font-family: monospace;"
+        )
+        self._time_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         # Keep row geometry stable while this text updates every 100 ms.
-        self._time_label.setFixedWidth(max(42, QFontMetrics(self._time_label.font()).horizontalAdvance("0000.0s")))
+        self._time_label.setFixedWidth(
+            max(42, QFontMetrics(self._time_label.font()).horizontalAdvance("0000.0s"))
+        )
         layout.addWidget(self._time_label)
 
     def set_time(self, text: str) -> None:
         self._time_label.setText(text)
 
-    def set_content(self, key: str, name: str, status: str, key_color: str = KEY_CYAN) -> None:
+    def set_content(
+        self, key: str, name: str, status: str, key_color: str = KEY_CYAN
+    ) -> None:
         self._key_label.setText(key)
-        self._key_label.setStyleSheet(f"font-family: monospace; font-size: 14px; font-weight: bold; color: {key_color}; min-width: 24px;")
+        self._key_label.setStyleSheet(
+            f"font-family: monospace; font-size: 14px; font-weight: bold; color: {key_color}; min-width: 24px;"
+        )
         self._name_label.setText(name)
         self._status_label.setText(status)
 
@@ -188,10 +221,17 @@ class _ActionEntryRow(QWidget):
 class LastActionHistoryWidget(QWidget):
     """Last Action section: sent actions with fixed duration (time to fire). N placeholder rows when empty; no live counter."""
 
-    def __init__(self, max_rows: int = 3, parent: Optional[QWidget] = None, show_title: bool = True):
+    def __init__(
+        self,
+        max_rows: int = 3,
+        parent: Optional[QWidget] = None,
+        show_title: bool = True,
+    ):
         super().__init__(parent)
         self._max_rows = max(1, max_rows)
-        self._entries: list[tuple[QWidget, QGraphicsOpacityEffect]] = []  # (row, opacity_effect) — time is fixed per row
+        self._entries: list[tuple[QWidget, QGraphicsOpacityEffect]] = (
+            []
+        )  # (row, opacity_effect) — time is fixed per row
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 0)
@@ -201,14 +241,18 @@ class LastActionHistoryWidget(QWidget):
             title.setObjectName("sectionTitle")
             title.setFixedHeight(28)
             title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-            title.setStyleSheet("font-family: monospace; font-size: 10px; color: #666; font-weight: bold; letter-spacing: 1.5px;")
+            title.setStyleSheet(
+                "font-family: monospace; font-size: 10px; color: #666; font-weight: bold; letter-spacing: 1.5px;"
+            )
             layout.addWidget(title)
         self._rows_container = QVBoxLayout()
         self._rows_container.setSpacing(4)
         layout.addLayout(self._rows_container)
         self._placeholder_rows: list[QWidget] = []
         for _ in range(self._max_rows):
-            ph = _ActionEntryRow("—", "No actions recorded", "", "", key_color="#555", parent=self)
+            ph = _ActionEntryRow(
+                "—", "No actions recorded", "", "", key_color="#555", parent=self
+            )
             ph.setStyleSheet(ph.styleSheet() + " opacity: 0.7;")
             self._placeholder_rows.append(ph)
             self._rows_container.addWidget(ph)
@@ -226,7 +270,9 @@ class LastActionHistoryWidget(QWidget):
                 row.deleteLater()
         elif n > self._max_rows:
             for i in range(n - self._max_rows):
-                ph = _ActionEntryRow("—", "No actions recorded", "", "", key_color="#555", parent=self)
+                ph = _ActionEntryRow(
+                    "—", "No actions recorded", "", "", key_color="#555", parent=self
+                )
                 ph.setStyleSheet(ph.styleSheet() + " opacity: 0.7;")
                 self._placeholder_rows.append(ph)
                 self._rows_container.addWidget(ph)
@@ -235,9 +281,18 @@ class LastActionHistoryWidget(QWidget):
             ph.setVisible(i >= len(self._entries))
         self._update_opacities()
 
-    def add_entry(self, keybind: str, display_name: str, duration_seconds: float) -> None:
+    def add_entry(
+        self, keybind: str, display_name: str, duration_seconds: float
+    ) -> None:
         """Add a sent action; duration_seconds is shown once (time since previous fire), not updated."""
-        row = _ActionEntryRow(keybind, display_name or "Unidentified", "sent", f"{duration_seconds:.1f}s", KEY_CYAN, self)
+        row = _ActionEntryRow(
+            keybind,
+            display_name or "Unidentified",
+            "sent",
+            f"{duration_seconds:.1f}s",
+            KEY_CYAN,
+            self,
+        )
         eff = QGraphicsOpacityEffect(self)
         row.setGraphicsEffect(eff)
         self._entries.insert(0, (row, eff))
@@ -270,7 +325,9 @@ class MainWindow(QMainWindow):
     bounding_box_changed = pyqtSignal(BoundingBox)
     config_changed = pyqtSignal(AppConfig)
     # Emitted when slot layout changes (count, gap, padding) for overlay slot outlines
-    slot_layout_changed = pyqtSignal(int, int, int)  # slot_count, slot_gap_pixels, slot_padding
+    slot_layout_changed = pyqtSignal(
+        int, int, int
+    )  # slot_count, slot_gap_pixels, slot_padding
     # Emitted when overlay visibility is toggled (True = show, False = hide)
     overlay_visibility_changed = pyqtSignal(bool)
     monitor_changed = pyqtSignal(int)
@@ -285,10 +342,14 @@ class MainWindow(QMainWindow):
         self._queued_override: Optional[dict] = None
         self._queue_listener: Optional[object] = None
         self._listening_slot_index: Optional[int] = None
-        self._slots_recalibrated: set[int] = set(getattr(config, "overwritten_baseline_slots", []))
+        self._slots_recalibrated: set[int] = set(
+            getattr(config, "overwritten_baseline_slots", [])
+        )
         self._before_save_callback: Optional[Callable[[], None]] = None
         self._last_saved_config: Optional[dict] = None
-        self._last_action_sent_time: Optional[float] = None  # for "time since last fire" on Next Intention + duration for new Last Action
+        self._last_action_sent_time: Optional[float] = (
+            None  # for "time since last fire" on Next Intention + duration for new Last Action
+        )
         self.setWindowTitle("Cooldown Reader")
         self.setMinimumSize(580, 400)
         # Default height: fit full layout without main scrollbar (generous for DPI/fonts)
@@ -300,14 +361,21 @@ class MainWindow(QMainWindow):
             self.setStyleSheet(self.styleSheet() + "\n" + _qss)
         self.setStatusBar(QStatusBar())
         self._profile_status_label = QLabel("Profile: —")
-        self._profile_status_label.setStyleSheet("font-size: 10px; font-family: monospace; color: #555;")
+        self._profile_status_label.setStyleSheet(
+            "font-size: 10px; font-family: monospace; color: #555;"
+        )
         self.statusBar().addWidget(self._profile_status_label)
         self._status_message_label = QLabel()
         self._status_message_label.setStyleSheet("color: #555; font-size: 10px;")
         self.statusBar().addWidget(self._status_message_label, 1)
         self._gcd_label = QLabel("Est. GCD: —")
-        self._gcd_label.setStyleSheet("font-size: 10px; font-family: monospace; color: #555;")
+        self._gcd_label.setStyleSheet(
+            "font-size: 10px; font-family: monospace; color: #555;"
+        )
         self.statusBar().addPermanentWidget(self._gcd_label)
+        self._cast_bar_debug_label = QLabel("Cast ROI: off")
+        self._cast_bar_debug_label.setStyleSheet("font-size: 10px; font-family: monospace; color: #666;")
+        self.statusBar().addPermanentWidget(self._cast_bar_debug_label)
         self._next_intention_timer = QTimer(self)
         self._next_intention_timer.setInterval(100)
         self._next_intention_timer.timeout.connect(self._update_next_intention_time)
@@ -328,7 +396,9 @@ class MainWindow(QMainWindow):
         self._btn_automation_toggle = QPushButton()
         self._btn_automation_toggle.setObjectName("enableToggle")
         self._btn_automation_toggle.setMinimumHeight(32)
-        self._btn_automation_toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._btn_automation_toggle.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         self._btn_automation_toggle.clicked.connect(self._on_automation_toggle_clicked)
         self._btn_automation_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         enable_bar.addWidget(self._btn_automation_toggle)
@@ -342,7 +412,9 @@ class MainWindow(QMainWindow):
         content_split = QHBoxLayout()
         content_split.setSpacing(14)
         left_column = QWidget(central)
-        left_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        left_column.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         left_column_layout = QVBoxLayout(left_column)
         left_column_layout.setContentsMargins(0, 0, 0, 0)
         left_column_layout.setSpacing(10)
@@ -353,7 +425,9 @@ class MainWindow(QMainWindow):
         self._btn_start = QPushButton("▶ Start Capture")
         self._btn_start.setObjectName("btnStartCapture")
         self._btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_start.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._btn_start.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         button_row.addWidget(self._btn_start)
         self._btn_settings = QPushButton("⚙ Settings")
         self._btn_settings.setObjectName("btnSettings")
@@ -364,25 +438,37 @@ class MainWindow(QMainWindow):
         # Live Preview (fixed, not in scroll)
         preview_frame = QFrame(left_column)
         preview_frame.setObjectName("sectionFrame")
-        preview_frame.setStyleSheet(f"background: {SECTION_BG}; border: 1px solid {SECTION_BORDER}; border-radius: 4px; padding: 8px;")
+        preview_frame.setStyleSheet(
+            f"background: {SECTION_BG}; border: 1px solid {SECTION_BORDER}; border-radius: 4px; padding: 8px;"
+        )
         preview_inner = QVBoxLayout(preview_frame)
         preview_inner.setContentsMargins(8, 8, 8, 8)
         title_preview = QLabel("LIVE PREVIEW")
         title_preview.setObjectName("sectionTitle")
         title_preview.setFixedHeight(28)
-        title_preview.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        title_preview.setStyleSheet("font-family: monospace; font-size: 10px; color: #666; font-weight: bold; letter-spacing: 1.5px;")
+        title_preview.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        title_preview.setStyleSheet(
+            "font-family: monospace; font-size: 10px; color: #666; font-weight: bold; letter-spacing: 1.5px;"
+        )
         preview_inner.addWidget(title_preview)
         self._preview_label = QLabel("No capture running")
         self._preview_label.setObjectName("previewLabel")
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_label.setMinimumHeight(42)
-        self._preview_label.setStyleSheet("background: #111; border-radius: 3px; color: #666; font-size: 11px;")
+        self._preview_label.setStyleSheet(
+            "background: #111; border-radius: 3px; color: #666; font-size: 11px;"
+        )
         self._preview_label.setScaledContents(False)
-        self._preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._preview_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         preview_inner.addWidget(self._preview_label)
         preview_frame.setMinimumHeight(96)
-        preview_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        preview_frame.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+        )
         left_column_layout.addWidget(preview_frame)
 
         # Slot States row (fixed, not in scroll)
@@ -393,44 +479,62 @@ class MainWindow(QMainWindow):
 
         # Scroll area: only Last Action + Next Intention
         self._left_panel = _LeftPanel(parent=central)
-        self._left_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self._left_panel.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+        )
         left_layout = QVBoxLayout(self._left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(14)
         last_action_frame = QFrame()
         last_action_frame.setObjectName("sectionFrameDark")
-        last_action_frame.setStyleSheet(f"background: {SECTION_BG_DARK}; border: 1px solid {SECTION_BORDER}; border-radius: 4px; padding: 8px;")
+        last_action_frame.setStyleSheet(
+            f"background: {SECTION_BG_DARK}; border: 1px solid {SECTION_BORDER}; border-radius: 4px; padding: 8px;"
+        )
         last_action_inner = QVBoxLayout(last_action_frame)
         last_action_inner.setContentsMargins(8, 8, 8, 8)
         title_last = QLabel("LAST ACTION")
         title_last.setObjectName("sectionTitle")
         title_last.setFixedHeight(28)
         title_last.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        title_last.setStyleSheet("font-family: monospace; font-size: 10px; color: #666; font-weight: bold; letter-spacing: 1.5px;")
+        title_last.setStyleSheet(
+            "font-family: monospace; font-size: 10px; color: #666; font-weight: bold; letter-spacing: 1.5px;"
+        )
         last_action_inner.addWidget(title_last)
         history_rows = getattr(self._config, "history_rows", 3)
-        self._last_action_history = LastActionHistoryWidget(max_rows=history_rows, parent=last_action_frame, show_title=False)
+        self._last_action_history = LastActionHistoryWidget(
+            max_rows=history_rows, parent=last_action_frame, show_title=False
+        )
         self._last_action_history.setStyleSheet("background: transparent;")
         self._last_action_history.setMinimumHeight(80)
         last_action_inner.addWidget(self._last_action_history)
         last_action_frame.setMinimumHeight(140)
-        last_action_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        last_action_frame.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+        )
         left_layout.addWidget(last_action_frame)
         next_frame = QFrame()
         next_frame.setObjectName("sectionFrameDark")
-        next_frame.setStyleSheet(f"background: {SECTION_BG_DARK}; border: 1px solid {SECTION_BORDER}; border-radius: 4px; padding: 8px 10px;")
+        next_frame.setStyleSheet(
+            f"background: {SECTION_BG_DARK}; border: 1px solid {SECTION_BORDER}; border-radius: 4px; padding: 8px 10px;"
+        )
         next_inner = QVBoxLayout(next_frame)
         next_inner.setContentsMargins(8, 8, 8, 8)
         title_next = QLabel("NEXT INTENTION")
         title_next.setObjectName("sectionTitle")
         title_next.setFixedHeight(28)
         title_next.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        title_next.setStyleSheet("font-family: monospace; font-size: 10px; color: #666; font-weight: bold; letter-spacing: 1.5px;")
+        title_next.setStyleSheet(
+            "font-family: monospace; font-size: 10px; color: #666; font-weight: bold; letter-spacing: 1.5px;"
+        )
         next_inner.addWidget(title_next)
-        self._next_intention_row = _ActionEntryRow("—", "no action", "", "", key_color="#555", parent=next_frame)
+        self._next_intention_row = _ActionEntryRow(
+            "—", "no action", "", "", key_color="#555", parent=next_frame
+        )
         next_inner.addWidget(self._next_intention_row)
         next_frame.setMinimumHeight(28 + 16 + 52)
-        next_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        next_frame.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+        )
         left_layout.addWidget(next_frame)
         left_layout.addStretch(1)
         # When no capture: show centered play button; when capture running: show Last Action + Next Intention
@@ -467,8 +571,12 @@ class MainWindow(QMainWindow):
         left_scroll.setFrameShape(QFrame.Shape.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        left_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        left_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        left_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+        )
+        left_scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         left_column_layout.addWidget(left_scroll, 1)
         content_split.addWidget(left_column, 1)
         self._priority_panel = PriorityPanel(self)
@@ -479,8 +587,83 @@ class MainWindow(QMainWindow):
         top_layout.addLayout(content_split, 1)
 
     def _connect_signals(self) -> None:
-        self._priority_panel.priority_list.order_changed.connect(self._on_priority_order_changed)
+        self._priority_panel.priority_list.items_changed.connect(
+            self._on_priority_items_changed
+        )
+        self._priority_panel.priority_list.manual_action_rename_requested.connect(
+            self._on_rename_manual_action
+        )
+        self._priority_panel.priority_list.manual_action_rebind_requested.connect(
+            self._on_rebind_manual_action
+        )
+        self._priority_panel.priority_list.manual_action_remove_requested.connect(
+            self._on_remove_manual_action
+        )
+        self._priority_panel.add_manual_action_requested.connect(
+            self._on_add_manual_action
+        )
         self._priority_panel.gcd_updated.connect(self._on_gcd_updated)
+
+    def _active_priority_profile(self) -> dict:
+        return self._config.get_active_priority_profile()
+
+    def _active_priority_order(self) -> list[int]:
+        return list(self._active_priority_profile().get("priority_order", []))
+
+    def _active_priority_items(self) -> list[dict]:
+        profile = self._active_priority_profile()
+        items = profile.get("priority_items", [])
+        if isinstance(items, list) and items:
+            return [dict(i) for i in items if isinstance(i, dict)]
+        return [
+            {"type": "slot", "slot_index": i} for i in self._active_priority_order()
+        ]
+
+    def _active_manual_actions(self) -> list[dict]:
+        profile = self._active_priority_profile()
+        actions = profile.get("manual_actions", [])
+        if not isinstance(actions, list):
+            actions = []
+            profile["manual_actions"] = actions
+        return [a for a in actions if isinstance(a, dict)]
+
+    @staticmethod
+    def _slot_order_from_priority_items(items: list[dict]) -> list[int]:
+        return [
+            int(i["slot_index"])
+            for i in list(items or [])
+            if isinstance(i, dict)
+            and str(i.get("type", "") or "").strip().lower() == "slot"
+            and isinstance(i.get("slot_index"), int)
+        ]
+
+    def _set_priority_list_from_active_profile(self) -> None:
+        self._priority_panel.priority_list.blockSignals(True)
+        try:
+            self._priority_panel.priority_list.set_manual_actions(
+                self._active_manual_actions()
+            )
+            self._priority_panel.priority_list.set_items(self._active_priority_items())
+        finally:
+            self._priority_panel.priority_list.blockSignals(False)
+
+    def set_active_priority_profile(
+        self, profile_id: str, persist: bool = False
+    ) -> None:
+        changed = self._config.set_active_priority_profile(profile_id)
+        if (
+            not changed
+            and self._config.active_priority_profile_id
+            != (profile_id or "").strip().lower()
+        ):
+            return
+        profile = self._active_priority_profile()
+        profile_name = str(profile.get("name", "") or "").strip() or "Default"
+        self._profile_status_label.setText(f"Automation: {profile_name}")
+        self._set_priority_list_from_active_profile()
+        self._update_bind_display()
+        if persist:
+            self._save_config()
 
     def _sync_ui_from_config(self) -> None:
         """Set UI to match current config (main window only owns enable, bind display, priority, slots)."""
@@ -489,15 +672,19 @@ class MainWindow(QMainWindow):
         self._config.automation_enabled = False
         self._update_automation_button_text()
         self._update_bind_display()
-        name = (getattr(self._config, "profile_name", "") or "").strip() or "—"
-        self._profile_status_label.setText(f"Profile: {name}")
+        profile_name = (
+            str(self._active_priority_profile().get("name", "") or "").strip()
+            or "Default"
+        )
+        self._profile_status_label.setText(f"Automation: {profile_name}")
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
-        self._priority_panel.priority_list.set_display_names(getattr(self._config, "slot_display_names", []))
-        self._priority_panel.priority_list.blockSignals(True)
-        try:
-            self._priority_panel.priority_list.set_order(getattr(self._config, "priority_order", []))
-        finally:
-            self._priority_panel.priority_list.blockSignals(False)
+        self._priority_panel.priority_list.set_display_names(
+            getattr(self._config, "slot_display_names", [])
+        )
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
+        self._set_priority_list_from_active_profile()
         self._prepopulate_slot_buttons()
         self._last_action_history.set_max_rows(getattr(self._config, "history_rows", 3))
         if CONFIG_PATH.exists():
@@ -510,15 +697,19 @@ class MainWindow(QMainWindow):
         self._update_automation_button_text()
         self._update_bind_display()
         self._last_action_history.set_max_rows(getattr(self._config, "history_rows", 3))
-        name = (getattr(self._config, "profile_name", "") or "").strip() or "—"
-        self._profile_status_label.setText(f"Profile: {name}")
+        profile_name = (
+            str(self._active_priority_profile().get("name", "") or "").strip()
+            or "Default"
+        )
+        self._profile_status_label.setText(f"Automation: {profile_name}")
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
-        self._priority_panel.priority_list.set_display_names(getattr(self._config, "slot_display_names", []))
-        self._priority_panel.priority_list.blockSignals(True)
-        try:
-            self._priority_panel.priority_list.set_order(getattr(self._config, "priority_order", []))
-        finally:
-            self._priority_panel.priority_list.blockSignals(False)
+        self._priority_panel.priority_list.set_display_names(
+            getattr(self._config, "slot_display_names", [])
+        )
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
+        self._set_priority_list_from_active_profile()
 
     def _maybe_auto_save(self) -> None:
         """If there are unsaved changes (compared to _last_saved_config, excluding automation_enabled), save and show status."""
@@ -527,8 +718,14 @@ class MainWindow(QMainWindow):
             return
         try:
             current = self._config.to_dict()
-            current_compare = {k: v for k, v in current.items() if k != "automation_enabled"}
-            last_compare = {k: v for k, v in self._last_saved_config.items() if k != "automation_enabled"}
+            current_compare = {
+                k: v for k, v in current.items() if k != "automation_enabled"
+            }
+            last_compare = {
+                k: v
+                for k, v in self._last_saved_config.items()
+                if k != "automation_enabled"
+            }
             if current_compare != last_compare:
                 self._save_config()
         except Exception:
@@ -546,21 +743,41 @@ class MainWindow(QMainWindow):
             for i in range(n):
                 btn = SlotButton(i, self._slot_states_row)
                 btn.setObjectName("slotButton")
-                btn.setStyleSheet("border: 1px solid #444; padding: 4px; font-family: monospace; font-size: 10px; font-weight: bold;")
+                btn.setStyleSheet(
+                    "border: 1px solid #444; padding: 4px; font-family: monospace; font-size: 10px; font-weight: bold;"
+                )
                 btn.context_menu_requested.connect(self._show_slot_menu)
                 self._slot_buttons.append(btn)
             self._slot_states_row.set_buttons(self._slot_buttons)
         for i, btn in enumerate(self._slot_buttons):
-            keybind = self._config.keybinds[i] if i < len(self._config.keybinds) else "?"
-            self._apply_slot_button_style(btn, "unknown", keybind or "?", None, slot_index=i)
+            keybind = (
+                self._config.keybinds[i] if i < len(self._config.keybinds) else "?"
+            )
+            self._apply_slot_button_style(
+                btn, "unknown", keybind or "?", None, slot_index=i
+            )
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
         self._priority_panel.priority_list.update_states(
-            [{"index": i, "state": "unknown", "keybind": self._config.keybinds[i] if i < len(self._config.keybinds) else None, "cooldown_remaining": None} for i in range(n)]
+            [
+                {
+                    "index": i,
+                    "state": "unknown",
+                    "keybind": (
+                        self._config.keybinds[i]
+                        if i < len(self._config.keybinds)
+                        else None
+                    ),
+                    "cooldown_remaining": None,
+                }
+                for i in range(n)
+            ]
         )
 
     def _update_automation_button_text(self) -> None:
         """Set toggle button to Enabled/Disabled (green/gray) and bind display to Toggle: [key]."""
-        self._btn_automation_toggle.setProperty("enabled", "true" if self._config.automation_enabled else "false")
+        self._btn_automation_toggle.setProperty(
+            "enabled", "true" if self._config.automation_enabled else "false"
+        )
         self._btn_automation_toggle.style().unpolish(self._btn_automation_toggle)
         self._btn_automation_toggle.style().polish(self._btn_automation_toggle)
         if self._config.automation_enabled:
@@ -570,16 +787,26 @@ class MainWindow(QMainWindow):
         self._update_bind_display()
 
     def _update_bind_display(self) -> None:
-        key = getattr(self._config, "automation_toggle_bind", "") or ""
-        display_key = format_bind_for_display(key) if key else "—"
+        profile = self._active_priority_profile()
+        toggle_bind = str(profile.get("toggle_bind", "") or "").strip()
+        single_fire_bind = str(profile.get("single_fire_bind", "") or "").strip()
+        display_toggle = format_bind_for_display(toggle_bind) if toggle_bind else "—"
+        display_single = (
+            format_bind_for_display(single_fire_bind) if single_fire_bind else "—"
+        )
         self._bind_display.setTextFormat(Qt.TextFormat.RichText)
-        self._bind_display.setText(f"Toggle: <span style='color:{KEY_CYAN}'>{display_key}</span>")
+        self._bind_display.setText(
+            f"Toggle: <span style='color:{KEY_CYAN}'>{display_toggle}</span>"
+            f" | Single: <span style='color:{KEY_CYAN}'>{display_single}</span>"
+        )
 
     def _on_automation_toggle_clicked(self) -> None:
         self._config.automation_enabled = not self._config.automation_enabled
         if not self._config.automation_enabled:
             self._priority_panel.stop_last_action_timer()
-            if self._queue_listener is not None and hasattr(self._queue_listener, "clear_queue"):
+            if self._queue_listener is not None and hasattr(
+                self._queue_listener, "clear_queue"
+            ):
                 self._queue_listener.clear_queue()
         self._update_automation_button_text()
         self.config_changed.emit(self._config)
@@ -589,7 +816,9 @@ class MainWindow(QMainWindow):
         self._config.automation_enabled = not self._config.automation_enabled
         if not self._config.automation_enabled:
             self._priority_panel.stop_last_action_timer()
-            if self._queue_listener is not None and hasattr(self._queue_listener, "clear_queue"):
+            if self._queue_listener is not None and hasattr(
+                self._queue_listener, "clear_queue"
+            ):
                 self._queue_listener.clear_queue()
         self._update_automation_button_text()
         self.config_changed.emit(self._config)
@@ -597,8 +826,13 @@ class MainWindow(QMainWindow):
     def set_key_sender(self, key_sender: Optional["KeySender"]) -> None:
         self._key_sender = key_sender
 
-    def _on_priority_order_changed(self, order: list) -> None:
-        self._config.priority_order = list(order)
+    def _on_priority_items_changed(self, items: list) -> None:
+        profile = self._active_priority_profile()
+        normalized_items = [dict(i) for i in list(items or []) if isinstance(i, dict)]
+        slot_order = self._slot_order_from_priority_items(normalized_items)
+        profile["priority_items"] = normalized_items
+        profile["priority_order"] = slot_order
+        self._config.priority_order = list(slot_order)
         self.config_changed.emit(self._config)
         self._maybe_auto_save()
 
@@ -606,17 +840,31 @@ class MainWindow(QMainWindow):
         """Update the estimated GCD display in the status bar."""
         self._gcd_label.setText(f"Est. GCD: {gcd_seconds:.2f}s")
 
-    def record_last_action_sent(self, keybind: str, timestamp: float, display_name: str = "Unidentified") -> None:
+    def record_last_action_sent(
+        self, keybind: str, timestamp: float, display_name: str = "Unidentified"
+    ) -> None:
         """Record a sent action. Duration = time since previous action (only reset here, never when intention appears)."""
         # Elapsed is time between actions; we only update _last_action_sent_time when an action is actually sent
-        elapsed = (timestamp - self._last_action_sent_time) if self._last_action_sent_time is not None else 0.0
-        self._last_action_history.add_entry(keybind, display_name or "Unidentified", elapsed)
-        self._last_action_sent_time = timestamp  # reset only on send; Next Intention counter uses this
+        elapsed = (
+            (timestamp - self._last_action_sent_time)
+            if self._last_action_sent_time is not None
+            else 0.0
+        )
+        self._last_action_history.add_entry(
+            keybind, display_name or "Unidentified", elapsed
+        )
+        self._last_action_sent_time = (
+            timestamp  # reset only on send; Next Intention counter uses this
+        )
         self._priority_panel.record_send_timestamp(timestamp)
 
-    def set_next_intention_blocked(self, keybind: str, display_name: str = "Unidentified") -> None:
+    def set_next_intention_blocked(
+        self, keybind: str, display_name: str = "Unidentified"
+    ) -> None:
         """Show next intention as blocked (wrong window)."""
-        self._next_intention_row.set_content(keybind, display_name or "Unidentified", "ready (window)", KEY_YELLOW)
+        self._next_intention_row.set_content(
+            keybind, display_name or "Unidentified", "ready (window)", KEY_YELLOW
+        )
 
     def set_queued_override(self, q: Optional[dict]) -> None:
         """Update the current spell queue state (dict or None). Next intention row shows queued key when set."""
@@ -627,12 +875,29 @@ class MainWindow(QMainWindow):
         """Set the spell queue listener so we can clear the queue when automation is toggled off."""
         self._queue_listener = listener
 
-    def _on_priority_drop_remove(self, slot_index: int) -> None:
+    def set_next_intention_casting_wait(
+        self,
+        slot_index: Optional[int],
+        cast_ends_at: Optional[float],
+    ) -> None:
+        """Show next intention as waiting for a current cast/channel to finish."""
+        name = "cast/channel"
+        if slot_index is not None:
+            names = getattr(self._config, "slot_display_names", [])
+            if slot_index < len(names) and (names[slot_index] or "").strip():
+                name = (names[slot_index] or "").strip()
+            else:
+                name = f"slot {slot_index + 1}"
+        if cast_ends_at:
+            remaining = max(0.0, cast_ends_at - time.time())
+            status = f"waiting: casting ({remaining:.1f}s)"
+        else:
+            status = "waiting: channeling"
+        self._next_intention_row.set_content("…", name, status, KEY_BLUE)
+
+    def _on_priority_drop_remove(self, item_key: str) -> None:
         """Called when a priority item is dropped on the left panel (remove from list)."""
-        self._priority_panel.priority_list.remove_slot(slot_index)
-        self._config.priority_order = self._priority_panel.priority_list.get_order()
-        self.config_changed.emit(self._config)
-        self._maybe_auto_save()
+        self._priority_panel.priority_list.remove_item_by_key(item_key)
 
     # Padding (px) around the preview image inside the Live Preview panel
     PREVIEW_PADDING = 12
@@ -652,7 +917,9 @@ class MainWindow(QMainWindow):
     def _update_next_intention_time(self) -> None:
         """Live counter: time since last action sent. Only resets when an action is sent (record_last_action_sent), not when intention appears."""
         if self._last_action_sent_time is not None:
-            self._next_intention_row.set_time(f"{time.time() - self._last_action_sent_time:.1f}s")
+            self._next_intention_row.set_time(
+                f"{time.time() - self._last_action_sent_time:.1f}s"
+            )
 
     def update_preview(self, frame: np.ndarray) -> None:
         """Update the live preview with a captured frame (BGR numpy array).
@@ -696,6 +963,9 @@ class MainWindow(QMainWindow):
         color = {
             "ready": "#2d5a2d",
             "on_cooldown": "#5a2d2d",
+            "casting": "#2a3f66",
+            "channeling": "#5a4a1f",
+            "locked": "#3f3f3f",
             "gcd": "#5a5a2d",
             "unknown": "#333333",
         }.get(state, "#333333")
@@ -706,11 +976,84 @@ class MainWindow(QMainWindow):
         font.setBold(idx >= 0 and idx in self._slots_recalibrated)
         btn.setFont(font)
 
+    def _next_priority_candidate(self, states: list[dict]) -> Optional[dict]:
+        """Return first eligible priority item with display fields for Next Intention."""
+        by_index = {s["index"]: s for s in states}
+        manual_by_id = {
+            str(a.get("id", "") or "").strip().lower(): a
+            for a in self._active_manual_actions()
+        }
+        for item in self._active_priority_items():
+            item_type = str(item.get("type", "") or "").strip().lower()
+            if item_type == "slot":
+                slot_index = item.get("slot_index")
+                if not isinstance(slot_index, int):
+                    continue
+                slot = by_index.get(slot_index)
+                if not slot or slot.get("state") != "ready":
+                    continue
+                keybind = (
+                    self._config.keybinds[slot_index]
+                    if slot_index < len(self._config.keybinds)
+                    else "?"
+                )
+                keybind = keybind or "?"
+                names = getattr(self._config, "slot_display_names", [])
+                name = "Unidentified"
+                if slot_index < len(names) and (names[slot_index] or "").strip():
+                    name = (names[slot_index] or "").strip()
+                return {
+                    "item_type": "slot",
+                    "slot_index": slot_index,
+                    "keybind": keybind,
+                    "display_name": name,
+                }
+            if item_type == "manual":
+                action_id = str(item.get("action_id", "") or "").strip().lower()
+                action = manual_by_id.get(action_id)
+                if not isinstance(action, dict):
+                    continue
+                keybind = str(action.get("keybind", "") or "").strip()
+                if not keybind:
+                    continue
+                name = str(action.get("name", "") or "").strip() or "Manual Action"
+                return {
+                    "item_type": "manual",
+                    "slot_index": None,
+                    "keybind": keybind,
+                    "display_name": name,
+                }
+        return None
+
+    def _next_casting_priority_slot(
+        self, states: list[dict]
+    ) -> tuple[Optional[int], Optional[float]]:
+        """First slot in priority order currently casting/channeling and its cast_ends_at."""
+        by_index = {s["index"]: s for s in states}
+        for item in self._active_priority_items():
+            if str(item.get("type", "") or "").strip().lower() != "slot":
+                continue
+            slot_index = item.get("slot_index")
+            if not isinstance(slot_index, int):
+                continue
+            slot = by_index.get(slot_index)
+            if not slot:
+                continue
+            if slot.get("state") in ("casting", "channeling"):
+                return slot_index, slot.get("cast_ends_at")
+        return None, None
+
     def _next_ready_priority_slot(self, states: list[dict]) -> Optional[int]:
-        """First slot in priority_order that is READY; None if none or automation off."""
-        by_index = {s["index"]: s.get("state") for s in states}
-        for slot_index in getattr(self._config, "priority_order", []):
-            if by_index.get(slot_index) == "ready":
+        """Return first READY slot index from active priority items, or None."""
+        by_index = {s["index"]: s for s in states}
+        for item in self._active_priority_items():
+            if str(item.get("type", "") or "").strip().lower() != "slot":
+                continue
+            slot_index = item.get("slot_index")
+            if not isinstance(slot_index, int):
+                continue
+            slot = by_index.get(slot_index)
+            if slot and slot.get("state") == "ready":
                 return slot_index
         return None
 
@@ -721,7 +1064,10 @@ class MainWindow(QMainWindow):
         btn = self._slot_buttons[slot_index]
         menu = QMenu(self)
         menu.addAction("Bind Key", lambda: self._start_listening_for_key(slot_index))
-        menu.addAction("Calibrate This Slot", lambda: self.calibrate_slot_requested.emit(slot_index))
+        menu.addAction(
+            "Calibrate This Slot",
+            lambda: self.calibrate_slot_requested.emit(slot_index),
+        )
         menu.addAction("Rename...", lambda: self._rename_slot(slot_index))
         pos = btn.mapToGlobal(QPoint(0, 0)) - QPoint(0, menu.sizeHint().height())
         menu.popup(pos)
@@ -742,9 +1088,134 @@ class MainWindow(QMainWindow):
             while len(self._config.slot_display_names) <= slot_index:
                 self._config.slot_display_names.append("")
             self._config.slot_display_names[slot_index] = new_name.strip()
-            self._priority_panel.priority_list.set_display_names(self._config.slot_display_names)
+            self._priority_panel.priority_list.set_display_names(
+                self._config.slot_display_names
+            )
             self.config_changed.emit(self._config)
             self._maybe_auto_save()
+
+    def _find_manual_action(self, action_id: str) -> Optional[dict]:
+        aid = (action_id or "").strip().lower()
+        if not aid:
+            return None
+        for action in self._active_manual_actions():
+            if str(action.get("id", "") or "").strip().lower() == aid:
+                return action
+        return None
+
+    def _on_add_manual_action(self) -> None:
+        name, ok = QInputDialog.getText(self, "Add Manual Action", "Action name:")
+        if not ok:
+            return
+        name = (name or "").strip() or "Manual Action"
+        keybind, ok = QInputDialog.getText(
+            self, "Add Manual Action", "Keybind to send:"
+        )
+        if not ok:
+            return
+        keybind = normalize_bind((keybind or "").strip())
+        if not keybind:
+            self._show_status_message("Manual action requires a valid keybind.", 2000)
+            return
+        self._config.ensure_priority_profiles()
+        profile = self._config.get_active_priority_profile()
+        actions = [
+            a for a in list(profile.get("manual_actions", [])) if isinstance(a, dict)
+        ]
+        existing_ids = {
+            str(a.get("id", "") or "").strip().lower()
+            for a in actions
+            if isinstance(a, dict)
+        }
+        i = 1
+        while f"manual_{i}" in existing_ids:
+            i += 1
+        action_id = f"manual_{i}"
+        actions.append({"id": action_id, "name": name, "keybind": keybind})
+        profile["manual_actions"] = actions
+        items = [
+            i for i in list(profile.get("priority_items", [])) if isinstance(i, dict)
+        ]
+        if not items:
+            items = [
+                {"type": "slot", "slot_index": i}
+                for i in list(profile.get("priority_order", []))
+            ]
+        items.append({"type": "manual", "action_id": action_id})
+        profile["priority_items"] = items
+        profile["priority_order"] = self._slot_order_from_priority_items(items)
+        self._config.priority_order = list(profile["priority_order"])
+        self._priority_panel.priority_list.set_manual_actions(actions)
+        self._priority_panel.priority_list.set_items(items)
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
+
+    def _on_rename_manual_action(self, action_id: str) -> None:
+        action = self._find_manual_action(action_id)
+        if not isinstance(action, dict):
+            return
+        current = str(action.get("name", "") or "").strip() or "Manual Action"
+        name, ok = QInputDialog.getText(
+            self, "Rename Manual Action", "Action name:", text=current
+        )
+        if not ok:
+            return
+        action["name"] = (name or "").strip() or "Manual Action"
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
+
+    def _on_rebind_manual_action(self, action_id: str) -> None:
+        action = self._find_manual_action(action_id)
+        if not isinstance(action, dict):
+            return
+        current = str(action.get("keybind", "") or "").strip()
+        keybind, ok = QInputDialog.getText(
+            self, "Rebind Manual Action", "Keybind to send:", text=current
+        )
+        if not ok:
+            return
+        keybind = normalize_bind((keybind or "").strip())
+        if not keybind:
+            self._show_status_message("Manual action requires a valid keybind.", 2000)
+            return
+        action["keybind"] = keybind
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
+
+    def _on_remove_manual_action(self, action_id: str) -> None:
+        aid = (action_id or "").strip().lower()
+        if not aid:
+            return
+        self._config.ensure_priority_profiles()
+        profile = self._config.get_active_priority_profile()
+        actions = [
+            a
+            for a in list(profile.get("manual_actions", []))
+            if str(a.get("id", "") or "").strip().lower() != aid
+        ]
+        items = [
+            i
+            for i in list(profile.get("priority_items", []))
+            if not (
+                str(i.get("type", "") or "").strip().lower() == "manual"
+                and str(i.get("action_id", "") or "").strip().lower() == aid
+            )
+        ]
+        profile["manual_actions"] = actions
+        profile["priority_items"] = items
+        slot_order = self._slot_order_from_priority_items(items)
+        profile["priority_order"] = slot_order
+        self._config.priority_order = list(slot_order)
+        self._priority_panel.priority_list.set_manual_actions(actions)
+        self._priority_panel.priority_list.set_items(items)
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
 
     def _start_listening_for_key(self, slot_index: int) -> None:
         """Turn slot button blue and show status; next keypress will bind (or Esc cancel)."""
@@ -755,8 +1226,52 @@ class MainWindow(QMainWindow):
                 "background-color: #2d2d5a; color: white; border: 1px solid #444; padding: 4px;"
             )
         self._show_status_message(
-            f"Press a key to bind to slot {slot_index + 1}... (Esc to cancel)"
+            f"Press a key/combo to bind to slot {slot_index + 1}... (Esc to cancel)"
         )
+
+    @staticmethod
+    def _qt_key_to_bind_token(event) -> str:
+        key = int(event.key())
+        if int(Qt.Key.Key_0) <= key <= int(Qt.Key.Key_9):
+            return str(key - int(Qt.Key.Key_0))
+        if int(Qt.Key.Key_A) <= key <= int(Qt.Key.Key_Z):
+            return chr(ord("a") + (key - int(Qt.Key.Key_A)))
+        if int(Qt.Key.Key_F1) <= key <= int(Qt.Key.Key_F35):
+            return f"f{key - int(Qt.Key.Key_F1) + 1}"
+        key_map = {
+            int(Qt.Key.Key_Space): "space",
+            int(Qt.Key.Key_Tab): "tab",
+            int(Qt.Key.Key_Backtab): "tab",
+            int(Qt.Key.Key_Return): "enter",
+            int(Qt.Key.Key_Enter): "enter",
+            int(Qt.Key.Key_Backspace): "backspace",
+            int(Qt.Key.Key_Delete): "delete",
+            int(Qt.Key.Key_Insert): "insert",
+            int(Qt.Key.Key_Home): "home",
+            int(Qt.Key.Key_End): "end",
+            int(Qt.Key.Key_PageUp): "page up",
+            int(Qt.Key.Key_PageDown): "page down",
+            int(Qt.Key.Key_Left): "left",
+            int(Qt.Key.Key_Right): "right",
+            int(Qt.Key.Key_Up): "up",
+            int(Qt.Key.Key_Down): "down",
+            int(Qt.Key.Key_Minus): "-",
+            int(Qt.Key.Key_Equal): "=",
+            int(Qt.Key.Key_BracketLeft): "[",
+            int(Qt.Key.Key_BracketRight): "]",
+            int(Qt.Key.Key_Backslash): "\\",
+            int(Qt.Key.Key_Semicolon): ";",
+            int(Qt.Key.Key_Apostrophe): "'",
+            int(Qt.Key.Key_Comma): ",",
+            int(Qt.Key.Key_Period): ".",
+            int(Qt.Key.Key_Slash): "/",
+            int(Qt.Key.Key_QuoteLeft): "`",
+        }
+        token = key_map.get(key, "")
+        if token:
+            return token
+        text = str(event.text() or "").strip().lower()
+        return text if len(text) == 1 else ""
 
     def _cancel_listening(self) -> None:
         """Cancel key-binding mode and revert button / status."""
@@ -766,7 +1281,9 @@ class MainWindow(QMainWindow):
         self._listening_slot_index = None
         self._status_message_label.setText("")
         if idx < len(self._slot_buttons):
-            keybind = self._config.keybinds[idx] if idx < len(self._config.keybinds) else "?"
+            keybind = (
+                self._config.keybinds[idx] if idx < len(self._config.keybinds) else "?"
+            )
             self._apply_slot_button_style(
                 self._slot_buttons[idx], "unknown", keybind or "?", slot_index=idx
             )
@@ -778,7 +1295,19 @@ class MainWindow(QMainWindow):
                 self._cancel_listening()
                 event.accept()
                 return
-            key_str = QKeySequence(event.key()).toString().strip()
+            token = self._qt_key_to_bind_token(event)
+            if not token:
+                event.accept()
+                return
+            mods: set[str] = set()
+            modifiers = event.modifiers()
+            if modifiers & Qt.KeyboardModifier.ControlModifier:
+                mods.add("ctrl")
+            if modifiers & Qt.KeyboardModifier.ShiftModifier:
+                mods.add("shift")
+            if modifiers & Qt.KeyboardModifier.AltModifier:
+                mods.add("alt")
+            key_str = normalize_bind_from_parts(mods, token)
             if key_str:
                 idx = self._listening_slot_index
                 while len(self._config.keybinds) <= idx:
@@ -798,7 +1327,6 @@ class MainWindow(QMainWindow):
 
     def update_slot_states(self, states: list[dict]) -> None:
         """Update the slot state indicators (QPushButtons with keybind + state color).
-
         Args:
             states: List of dicts with keys: index, state, keybind, cooldown_remaining
         """
@@ -806,11 +1334,9 @@ class MainWindow(QMainWindow):
         # rebuilding the slot row and causing visible geometry churn.
         if not states:
             return
-
         # Pad keybinds so we can index by slot
         while len(self._config.keybinds) < len(states):
             self._config.keybinds.append("")
-
         if len(self._slot_buttons) != len(states):
             for b in self._slot_buttons:
                 b.deleteLater()
@@ -818,11 +1344,12 @@ class MainWindow(QMainWindow):
             for i in range(len(states)):
                 btn = SlotButton(i, self._slot_states_row)
                 btn.setObjectName("slotButton")
-                btn.setStyleSheet("border: 1px solid #444; padding: 4px; font-family: monospace; font-size: 10px; font-weight: bold;")
+                btn.setStyleSheet(
+                    "border: 1px solid #444; padding: 4px; font-family: monospace; font-size: 10px; font-weight: bold;"
+                )
                 btn.context_menu_requested.connect(self._show_slot_menu)
                 self._slot_buttons.append(btn)
             self._slot_states_row.set_buttons(self._slot_buttons)
-
         for btn, s in zip(self._slot_buttons, states):
             keybind = s.get("keybind")
             if keybind is None and s["index"] < len(self._config.keybinds):
@@ -830,9 +1357,13 @@ class MainWindow(QMainWindow):
             keybind = keybind or "?"
             state = s.get("state", "unknown")
             cd = s.get("cooldown_remaining")
-            self._apply_slot_button_style(btn, state, keybind, cd, slot_index=s["index"])
-
+            self._apply_slot_button_style(
+                btn, state, keybind, cd, slot_index=s["index"]
+            )
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
+        self._priority_panel.priority_list.set_manual_actions(
+            self._active_manual_actions()
+        )
         self._priority_panel.priority_list.update_states(states)
         if self._queued_override:
             keybind = (self._queued_override.get("key") or "?").strip() or "?"
@@ -848,33 +1379,41 @@ class MainWindow(QMainWindow):
                 si = self._queued_override.get("slot_index")
                 if si is not None:
                     slot_ready = (states_by_idx.get(si) or {}).get("state") == "ready"
-            suffix = "queued (waiting)" if not slot_ready and self._queued_override.get("source") == "tracked" else "queued"
+            suffix = (
+                "queued (waiting)"
+                if not slot_ready and self._queued_override.get("source") == "tracked"
+                else "queued"
+            )
             self._next_intention_row.set_content(keybind, slot_name, suffix, KEY_CYAN)
-        else:
-            next_slot = self._next_ready_priority_slot(states)
-            if next_slot is not None:
-                keybind = (
-                    self._config.keybinds[next_slot]
-                    if next_slot < len(self._config.keybinds)
-                    else "?"
-                )
-                keybind = keybind or "?"
-                names = getattr(self._config, "slot_display_names", [])
-                slot_name = "Unidentified"
-                if next_slot < len(names) and (names[next_slot] or "").strip():
-                    slot_name = (names[next_slot] or "").strip()
-                if not self._config.automation_enabled:
-                    suffix = "ready (paused)"
-                    color = KEY_YELLOW
-                elif self._key_sender is None or not self._key_sender.is_target_window_active():
-                    suffix = "ready (window)"
-                    color = KEY_YELLOW
-                else:
-                    suffix = "ready — next"
-                    color = KEY_GREEN
-                self._next_intention_row.set_content(keybind, slot_name, suffix, color)
+            return
+        casting_slot, cast_ends_at = self._next_casting_priority_slot(states)
+        if casting_slot is not None:
+            self.set_next_intention_casting_wait(casting_slot, cast_ends_at)
+            return
+        next_slot = self._next_ready_priority_slot(states)
+        if next_slot is not None:
+            keybind = (
+                self._config.keybinds[next_slot]
+                if next_slot < len(self._config.keybinds)
+                else "?"
+            )
+            keybind = keybind or "?"
+            names = getattr(self._config, "slot_display_names", [])
+            slot_name = "Unidentified"
+            if next_slot < len(names) and (names[next_slot] or "").strip():
+                slot_name = (names[next_slot] or "").strip()
+            if not self._config.automation_enabled:
+                suffix = "ready (paused)"
+                color = KEY_YELLOW
+            elif self._key_sender is None or not self._key_sender.is_target_window_active():
+                suffix = "ready (window)"
+                color = KEY_YELLOW
             else:
-                self._next_intention_row.set_content("—", "no action", "", "#555")
+                suffix = "ready - next"
+                color = KEY_GREEN
+            self._next_intention_row.set_content(keybind, slot_name, suffix, color)
+            return
+        self._next_intention_row.set_content("-", "no action", "", "#555")
 
     def set_before_save_callback(self, callback: Optional[Callable[[], None]]) -> None:
         """Set a callback run before writing config (e.g. to sync baselines from analyzer)."""
@@ -914,12 +1453,50 @@ class MainWindow(QMainWindow):
         """Show text in the status bar to the right of the Settings button. If timeout_ms > 0, clear after that many ms."""
         self._status_message_label.setText(text)
         if timeout_ms > 0:
-            QTimer.singleShot(timeout_ms, lambda: self._status_message_label.setText(""))
+            QTimer.singleShot(
+                timeout_ms, lambda: self._status_message_label.setText("")
+            )
 
     def _show_status_message(self, text: str, timeout_ms: int = 0) -> None:
         """Internal alias for show_status_message."""
         self.show_status_message(text, timeout_ms)
 
+    def update_cast_bar_debug(self, debug: dict) -> None:
+        """Update live cast-bar ROI motion/status debug in the status bar."""
+        if not isinstance(debug, dict):
+            return
+        status = str(debug.get("status", "off") or "off")
+        motion = float(debug.get("motion", 0.0) or 0.0)
+        activity = float(debug.get("activity", 0.0) or 0.0)
+        threshold = float(debug.get("threshold", 0.0) or 0.0)
+        deactivate_threshold = float(debug.get("deactivate_threshold", 0.0) or 0.0)
+        active = bool(debug.get("active", False))
+        present = bool(debug.get("present", False))
+        directional = bool(debug.get("directional", False))
+        front = float(debug.get("front", 0.0) or 0.0)
+        gate_active = bool(debug.get("gate_active", False))
+        self._cast_bar_debug_label.setText(
+            f"Cast ROI: {status} | m {motion:.1f} a {activity:.1f}/{threshold:.1f}->{deactivate_threshold:.1f} | "
+            f"p {'Y' if present else 'N'} d {'Y' if directional else 'N'} f {front:.2f} | "
+            f"{'ON' if active else 'OFF'} gate {'ON' if gate_active else 'OFF'}"
+        )
+        if status in ("off", "invalid-roi", "out-of-frame", "no-bar"):
+            color = "#777"
+        elif active:
+            color = "#88ff88"
+        elif status == "priming":
+            color = "#eecc55"
+        elif status == "not-directional":
+            color = "#d8b377"
+        elif gate_active:
+            color = "#ffcc66"
+        else:
+            color = "#9aa0a6"
+        self._cast_bar_debug_label.setStyleSheet(
+            f"font-size: 10px; font-family: monospace; color: {color};"
+        )
+
     def _on_settings_clicked(self) -> None:
         """No-op; main.py connects _btn_settings to settings_dialog.show_or_raise."""
         pass
+

@@ -26,6 +26,7 @@ class CalibrationOverlay(QWidget):
         self._bbox = BoundingBox()
         self._border_color = QColor("#00FF00")
         self._border_width = 2
+        self._cast_bar_region: dict = {}
         self._monitor_geometry = monitor_geometry
         self._slot_count = 10
         self._slot_gap = 2
@@ -70,6 +71,11 @@ class CalibrationOverlay(QWidget):
         self._border_color = QColor(color)
         self.update()
 
+    def update_cast_bar_region(self, region: Optional[dict]) -> None:
+        """Update cast-bar ROI (relative to capture bbox) and repaint."""
+        self._cast_bar_region = dict(region or {})
+        self.update()
+
     def _slot_analyzed_rects(self) -> list[QRect]:
         """Compute analyzed region rects (after padding) using same math as SlotAnalyzer."""
         total_width = self._bbox.width
@@ -96,6 +102,19 @@ class CalibrationOverlay(QWidget):
             )
         return rects
 
+    def _cast_bar_rect(self) -> Optional[QRect]:
+        """Compute cast-bar ROI rect in absolute screen coordinates."""
+        region = self._cast_bar_region or {}
+        if not bool(region.get("enabled", False)):
+            return None
+        w = int(region.get("width", 0))
+        h = int(region.get("height", 0))
+        if w <= 0 or h <= 0:
+            return None
+        x = self._bbox.left + int(region.get("left", 0))
+        y = self._bbox.top + int(region.get("top", 0))
+        return QRect(x, y, w, h)
+
     def paintEvent(self, event) -> None:
         """Draw the bounding box and per-slot analyzed regions."""
         painter = QPainter(self)
@@ -118,5 +137,12 @@ class CalibrationOverlay(QWidget):
         for rect in self._slot_analyzed_rects():
             if rect.width() > 0 and rect.height() > 0:
                 painter.drawRect(rect)
+
+        # Cyan 2px outline for cast-bar ROI (if enabled)
+        cast_bar_rect = self._cast_bar_rect()
+        if cast_bar_rect is not None:
+            cast_bar_pen = QPen(QColor("#00E5FF"), 2)
+            painter.setPen(cast_bar_pen)
+            painter.drawRect(cast_bar_rect)
 
         painter.end()
