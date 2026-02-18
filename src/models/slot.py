@@ -170,6 +170,8 @@ class AppConfig:
     active_priority_profile_id: str = "default"
     # Minimum ms between keypresses when automation is sending keys
     min_press_interval_ms: int = 150
+    # GCD duration used for queue suppression timing after queued sends
+    gcd_ms: int = 1500
     # If non-empty, only send keys when foreground window title contains this (case-insensitive)
     target_window_title: str = ""
     # Profile name (e.g. "Default") to distinguish which profile is loaded; used for export default filename
@@ -508,6 +510,7 @@ class AppConfig:
             automation_toggle_bind=data.get("automation_toggle_bind", ""),
             automation_hotkey_mode=hotkey_mode,
             min_press_interval_ms=data.get("min_press_interval_ms", 150),
+            gcd_ms=int(data.get("gcd_ms", 1500)),
             target_window_title=data.get("target_window_title", ""),
             profile_name=data.get("profile_name", ""),
             history_rows=data.get("history_rows", 3),
@@ -616,6 +619,7 @@ class AppConfig:
             "priority_profiles": self.priority_profiles,
             "active_priority_profile_id": self.active_priority_profile_id,
             "min_press_interval_ms": self.min_press_interval_ms,
+            "gcd_ms": self.gcd_ms,
             "target_window_title": self.target_window_title,
             "profile_name": self.profile_name,
             "history_rows": self.history_rows,

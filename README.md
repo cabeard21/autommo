@@ -80,14 +80,16 @@ The right panel also shows:
   - **Single bind** — Switches to that profile and arms exactly one next action (single fire) without enabling continuous automation.
 - **Conflict warning** — If a bind is reused across profiles (or toggle/single collide), Settings shows a red conflict badge so you can resolve it quickly.
 - **Delay (ms)** — Minimum time in milliseconds between any two keypresses (50–2000). Helps avoid spamming faster than the game’s GCD.
+- **GCD (ms)** — Duration used to suppress normal priority after a queued key is sent (default 1500 ms).
 - **Queue (ms)** — Extra wait after detected cast end before sending the next key (default 120 ms).
 - **Allow sends while casting/channeling** — If off (default), automation waits until cast/channel completes.
 - **Window title** — If you type part of the game window title here (e.g. `World of Warcraft`), keypresses are **only** sent when a window whose title contains this text (case-insensitive) is in the foreground. Leave blank to send keys regardless of focus.
+- **Queue timeout / Fire delay** — Queue timeout controls how long a queued input is kept; fire delay adds a small post-ready delay before queued send.
 
 ### Other Settings
 
 - **Always on top** — Check to keep the app window above other windows.
-- **Detection** — **Darken**, **Trigger**, **Yellow frac**, and **Red frac** control cooldown/glow detection sensitivity.
+- **Detection** — **Polling FPS**, **Cooldown min**, **Darken**, **Trigger**, **Yellow frac**, and **Red frac** control responsiveness and cooldown/glow sensitivity.
 - **Red glow threshold** — Tune **Red frac** if DoT-refresh slots are triggering too early or too late on red-glow windows.
 - **Per-slot glow sensitivity (advanced)** — In `config/default_config.json`, set `detection.glow_value_delta_by_slot` (example: `{"4": 55}`) to lower/raise glow brightness delta for one slot without changing others.
 - **Per-slot glow thresholds (advanced)** — Use `detection.glow_ring_fraction_by_slot` (example: `{"5": 0.08}`) and `detection.glow_override_cooldown_by_slot` (example: `[5]`) for proc-style icons that need lower yellow-fraction threshold and optional non-red glow cooldown override.

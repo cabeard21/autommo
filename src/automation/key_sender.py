@@ -157,8 +157,9 @@ class KeySender:
                         logger.warning("keyboard send(queued %r) failed: %s", key, e)
                         return None
                     self._last_send_time = now
-                    # Suppress priority for one full GCD (1.5s) so only the queued key reaches the game.
-                    self._suppress_priority_until = now + 1.5
+                    # Suppress priority for one configured GCD so only the queued key reaches the game.
+                    gcd_sec = (getattr(self._config, "gcd_ms", 1500) or 1500) / 1000.0
+                    self._suppress_priority_until = now + max(0.0, gcd_sec)
                     if on_queued_sent:
                         on_queued_sent()
                     logger.info("Sent queued key: %s", key)
@@ -201,7 +202,8 @@ class KeySender:
                             )
                             return None
                         self._last_send_time = now
-                        self._suppress_priority_until = now + 1.5
+                        gcd_sec = (getattr(self._config, "gcd_ms", 1500) or 1500) / 1000.0
+                        self._suppress_priority_until = now + max(0.0, gcd_sec)
                         if on_queued_sent:
                             on_queued_sent()
                         logger.info("Sent queued key: %s (slot %s)", key, slot_index)

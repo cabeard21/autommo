@@ -275,6 +275,21 @@ class SettingsDialog(QDialog):
     def _detection_section(self) -> QWidget:
         w = QWidget()
         fl = QFormLayout(w)
+        self._spin_polling_fps = QSpinBox()
+        self._spin_polling_fps.setRange(5, 120)
+        self._spin_polling_fps.setMaximumWidth(64)
+        self._spin_polling_fps.setToolTip(
+            "Capture/analyze ticks per second. Higher is more responsive but uses more CPU."
+        )
+        fl.addRow(_row_label("Polling FPS:"), self._spin_polling_fps)
+        self._spin_cooldown_min_ms = QSpinBox()
+        self._spin_cooldown_min_ms.setRange(0, 5000)
+        self._spin_cooldown_min_ms.setSuffix(" ms")
+        self._spin_cooldown_min_ms.setMaximumWidth(92)
+        self._spin_cooldown_min_ms.setToolTip(
+            "Minimum not-ready duration before classifying as full cooldown. Shorter dips are treated as GCD."
+        )
+        fl.addRow(_row_label("Cooldown min:"), self._spin_cooldown_min_ms)
         self._spin_brightness_drop = QSpinBox()
         self._spin_brightness_drop.setRange(0, 255)
         self._spin_brightness_drop.setMaximumWidth(48)
@@ -594,6 +609,14 @@ class SettingsDialog(QDialog):
         self._spin_min_delay.setRange(50, 2000)
         self._spin_min_delay.setMaximumWidth(56)
         fl.addRow(_row_label("Delay (ms):"), self._spin_min_delay)
+        self._spin_gcd_ms = QSpinBox()
+        self._spin_gcd_ms.setRange(500, 3000)
+        self._spin_gcd_ms.setSuffix(" ms")
+        self._spin_gcd_ms.setMaximumWidth(80)
+        self._spin_gcd_ms.setToolTip(
+            "GCD duration used for queue suppression after sending a queued key."
+        )
+        fl.addRow(_row_label("GCD (ms):"), self._spin_gcd_ms)
         self._spin_queue_window = QSpinBox()
         self._spin_queue_window.setRange(0, 500)
         self._spin_queue_window.setMaximumWidth(56)
@@ -702,6 +725,8 @@ class SettingsDialog(QDialog):
         self._spin_slots.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_gap.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_padding.valueChanged.connect(self._on_slot_layout_changed)
+        self._spin_polling_fps.valueChanged.connect(self._on_detection_changed)
+        self._spin_cooldown_min_ms.valueChanged.connect(self._on_detection_changed)
         self._spin_brightness_drop.valueChanged.connect(self._on_detection_changed)
         self._slider_pixel_fraction.valueChanged.connect(self._on_detection_changed)
         self._slider_change_pixel_fraction.valueChanged.connect(self._on_detection_changed)
@@ -745,6 +770,7 @@ class SettingsDialog(QDialog):
         self._btn_single_fire_bind.clicked.connect(self._on_rebind_single_fire_clicked)
         self._btn_single_fire_bind.customContextMenuRequested.connect(self._on_rebind_single_fire_cleared)
         self._spin_min_delay.valueChanged.connect(self._on_min_delay_changed)
+        self._spin_gcd_ms.valueChanged.connect(self._on_gcd_ms_changed)
         self._spin_queue_window.valueChanged.connect(self._on_queue_window_changed)
         self._check_allow_cast_while_casting.toggled.connect(self._on_allow_cast_while_casting_changed)
         self._edit_window_title.textChanged.connect(self._on_window_title_changed)
@@ -790,6 +816,8 @@ class SettingsDialog(QDialog):
         self._spin_slots.blockSignals(False)
         self._spin_gap.blockSignals(False)
         self._spin_padding.blockSignals(False)
+        self._spin_polling_fps.blockSignals(True)
+        self._spin_cooldown_min_ms.blockSignals(True)
         self._spin_brightness_drop.blockSignals(True)
         self._slider_pixel_fraction.blockSignals(True)
         self._slider_change_pixel_fraction.blockSignals(True)
@@ -808,6 +836,8 @@ class SettingsDialog(QDialog):
         self._spin_glow_yellow_hue_max.blockSignals(True)
         self._spin_glow_red_hue_max_low.blockSignals(True)
         self._spin_glow_red_hue_min_high.blockSignals(True)
+        self._spin_polling_fps.setValue(int(getattr(self._config, "polling_fps", 20)))
+        self._spin_cooldown_min_ms.setValue(int(getattr(self._config, "cooldown_min_duration_ms", 2000)))
         self._spin_brightness_drop.setValue(self._config.brightness_drop_threshold)
         self._slider_pixel_fraction.setValue(int(self._config.cooldown_pixel_fraction * 100))
         self._pixel_fraction_label.setText(f"{self._config.cooldown_pixel_fraction:.2f}")
@@ -904,6 +934,8 @@ class SettingsDialog(QDialog):
         self._spin_cast_bar_activity.setValue(
             int(round(getattr(self._config, "cast_bar_activity_threshold", 12.0)))
         )
+        self._spin_polling_fps.blockSignals(False)
+        self._spin_cooldown_min_ms.blockSignals(False)
         self._spin_brightness_drop.blockSignals(False)
         self._slider_pixel_fraction.blockSignals(False)
         self._slider_change_pixel_fraction.blockSignals(False)
@@ -941,6 +973,9 @@ class SettingsDialog(QDialog):
         self._spin_min_delay.blockSignals(True)
         self._spin_min_delay.setValue(getattr(self._config, "min_press_interval_ms", 150))
         self._spin_min_delay.blockSignals(False)
+        self._spin_gcd_ms.blockSignals(True)
+        self._spin_gcd_ms.setValue(int(getattr(self._config, "gcd_ms", 1500)))
+        self._spin_gcd_ms.blockSignals(False)
         self._spin_queue_window.blockSignals(True)
         self._spin_queue_window.setValue(getattr(self._config, "queue_window_ms", 120))
         self._spin_queue_window.blockSignals(False)
@@ -1286,6 +1321,8 @@ class SettingsDialog(QDialog):
         return ", ".join(str(v) for v in sorted(parsed))
 
     def _on_detection_changed(self) -> None:
+        self._config.polling_fps = max(1, min(240, self._spin_polling_fps.value()))
+        self._config.cooldown_min_duration_ms = max(0, min(10000, self._spin_cooldown_min_ms.value()))
         self._config.brightness_drop_threshold = self._spin_brightness_drop.value()
         self._config.cooldown_pixel_fraction = self._slider_pixel_fraction.value() / 100.0
         self._pixel_fraction_label.setText(f"{self._config.cooldown_pixel_fraction:.2f}")
@@ -1467,6 +1504,10 @@ class SettingsDialog(QDialog):
         self._config.min_press_interval_ms = max(50, min(2000, value))
         self._emit_config()
 
+    def _on_gcd_ms_changed(self, value: int) -> None:
+        self._config.gcd_ms = max(500, min(3000, value))
+        self._emit_config()
+
     def _on_queue_window_changed(self, value: int) -> None:
         self._config.queue_window_ms = max(0, min(500, value))
         self._emit_config()
@@ -1574,6 +1615,7 @@ class SettingsDialog(QDialog):
 
     def _on_queue_timeout_changed(self, value: int) -> None:
         self._config.queue_timeout_ms = max(1000, min(30000, value))
+        self._emit_config()
 
     def _on_queue_fire_delay_changed(self, value: int) -> None:
         self._config.queue_fire_delay_ms = max(0, min(300, value))

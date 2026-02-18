@@ -38,6 +38,7 @@ class _SlotRuntime:
     last_cast_start_at: Optional[float] = None
     last_cast_success_at: Optional[float] = None
     last_darkened_fraction: float = 0.0
+    cooldown_candidate_started_at: Optional[float] = None
     glow_candidate_frames: int = 0
     yellow_glow_candidate_frames: int = 0
     red_glow_candidate_frames: int = 0
@@ -580,6 +581,9 @@ class SlotAnalyzer:
         change_frac_thresh = float(
             getattr(self._config, "cooldown_change_pixel_fraction", frac_thresh) or frac_thresh
         )
+        cooldown_min_sec = max(
+            0.0, (getattr(self._config, "cooldown_min_duration_ms", 0) or 0) / 1000.0
+        )
         glow_confirm_frames = max(1, int(getattr(self._config, "glow_confirm_frames", 2) or 2))
         cast_bar_active = self._cast_bar_active(
             frame,
@@ -660,6 +664,18 @@ class SlotAnalyzer:
                         changed_fraction >= change_release_thresh
                     )
                     raw_cooldown = raw_cooldown or hold_dark_cooldown or hold_changed_cooldown
+                cooldown_pending = False
+                if raw_cooldown:
+                    if runtime.cooldown_candidate_started_at is None:
+                        runtime.cooldown_candidate_started_at = now
+                    if (
+                        runtime.state != SlotState.ON_COOLDOWN
+                        and cooldown_min_sec > 0.0
+                        and (now - runtime.cooldown_candidate_started_at) < cooldown_min_sec
+                    ):
+                        cooldown_pending = True
+                else:
+                    runtime.cooldown_candidate_started_at = None
                 (
                     state,
                     cast_progress,
@@ -669,10 +685,12 @@ class SlotAnalyzer:
                 ) = self._next_state_with_cast_logic(
                     slot_cfg.index,
                     darkened_fraction,
-                    raw_cooldown,
+                    raw_cooldown and not cooldown_pending,
                     now,
                     cast_gate_active=cast_gate_active,
                 )
+                if cooldown_pending and state == SlotState.READY:
+                    state = SlotState.GCD
                 (
                     yellow_glow_candidate,
                     yellow_glow_fraction,
