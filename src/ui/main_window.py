@@ -40,7 +40,9 @@ from src.ui.priority_panel import (
 from src.automation.global_hotkey import format_bind_for_display
 from src.automation.binds import normalize_bind, normalize_bind_from_parts
 from src.automation.priority_rules import (
+    manual_item_is_eligible,
     normalize_activation_rule,
+    normalize_ready_source,
     slot_item_is_eligible_for_state_dict,
 )
 
@@ -344,6 +346,7 @@ class MainWindow(QMainWindow):
         self._config = config
         self._key_sender: Optional["KeySender"] = None
         self._queued_override: Optional[dict] = None
+        self._buff_states: dict[str, dict] = {}
         self._queue_listener: Optional[object] = None
         self._listening_slot_index: Optional[int] = None
         self._slots_recalibrated: set[int] = set(
@@ -631,6 +634,19 @@ class MainWindow(QMainWindow):
                     out["activation_rule"] = normalize_activation_rule(
                         out.get("activation_rule")
                     )
+                    out["ready_source"] = normalize_ready_source(
+                        out.get("ready_source"), "slot"
+                    )
+                    out["buff_roi_id"] = str(
+                        out.get("buff_roi_id", "") or ""
+                    ).strip().lower()
+                elif str(out.get("type", "") or "").strip().lower() == "manual":
+                    out["ready_source"] = normalize_ready_source(
+                        out.get("ready_source"), "manual"
+                    )
+                    out["buff_roi_id"] = str(
+                        out.get("buff_roi_id", "") or ""
+                    ).strip().lower()
                 normalized.append(out)
             return normalized
         return [
@@ -659,6 +675,9 @@ class MainWindow(QMainWindow):
     def _set_priority_list_from_active_profile(self) -> None:
         self._priority_panel.priority_list.blockSignals(True)
         try:
+            self._priority_panel.priority_list.set_buff_rois(
+                getattr(self._config, "buff_rois", []) or []
+            )
             self._priority_panel.priority_list.set_manual_actions(
                 self._active_manual_actions()
             )
@@ -700,6 +719,9 @@ class MainWindow(QMainWindow):
         self._priority_panel.priority_list.set_display_names(
             getattr(self._config, "slot_display_names", [])
         )
+        self._priority_panel.priority_list.set_buff_rois(
+            getattr(self._config, "buff_rois", []) or []
+        )
         self._priority_panel.priority_list.set_manual_actions(
             self._active_manual_actions()
         )
@@ -724,6 +746,9 @@ class MainWindow(QMainWindow):
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
         self._priority_panel.priority_list.set_display_names(
             getattr(self._config, "slot_display_names", [])
+        )
+        self._priority_panel.priority_list.set_buff_rois(
+            getattr(self._config, "buff_rois", []) or []
         )
         self._priority_panel.priority_list.set_manual_actions(
             self._active_manual_actions()
@@ -860,6 +885,19 @@ class MainWindow(QMainWindow):
                 out["activation_rule"] = normalize_activation_rule(
                     out.get("activation_rule")
                 )
+                out["ready_source"] = normalize_ready_source(
+                    out.get("ready_source"), "slot"
+                )
+                out["buff_roi_id"] = str(
+                    out.get("buff_roi_id", "") or ""
+                ).strip().lower()
+            elif str(out.get("type", "") or "").strip().lower() == "manual":
+                out["ready_source"] = normalize_ready_source(
+                    out.get("ready_source"), "manual"
+                )
+                out["buff_roi_id"] = str(
+                    out.get("buff_roi_id", "") or ""
+                ).strip().lower()
             normalized_items.append(out)
         slot_order = self._slot_order_from_priority_items(normalized_items)
         profile["priority_items"] = normalized_items
@@ -1022,7 +1060,9 @@ class MainWindow(QMainWindow):
                 if not isinstance(slot_index, int):
                     continue
                 slot = by_index.get(slot_index)
-                if not slot_item_is_eligible_for_state_dict(item, slot):
+                if not slot_item_is_eligible_for_state_dict(
+                    item, slot, buff_states=self._buff_states
+                ):
                     continue
                 keybind = (
                     self._config.keybinds[slot_index]
@@ -1041,6 +1081,8 @@ class MainWindow(QMainWindow):
                     "display_name": name,
                 }
             if item_type == "manual":
+                if not manual_item_is_eligible(item, buff_states=self._buff_states):
+                    continue
                 action_id = str(item.get("action_id", "") or "").strip().lower()
                 action = manual_by_id.get(action_id)
                 if not isinstance(action, dict):
@@ -1085,9 +1127,19 @@ class MainWindow(QMainWindow):
             if not isinstance(slot_index, int):
                 continue
             slot = by_index.get(slot_index)
-            if slot_item_is_eligible_for_state_dict(item, slot):
+            if slot_item_is_eligible_for_state_dict(
+                item, slot, buff_states=self._buff_states
+            ):
                 return slot_index
         return None
+
+    def update_buff_states(self, states: dict) -> None:
+        if not isinstance(states, dict):
+            self._buff_states = {}
+            return
+        self._buff_states = {
+            str(k): dict(v) for k, v in states.items() if isinstance(v, dict)
+        }
 
     def _show_slot_menu(self, slot_index: int) -> None:
         """Show context menu: Bind Key, Calibrate This Slot, Rename (identify skill)."""

@@ -12,7 +12,10 @@ if TYPE_CHECKING:
 
 from src.models import ActionBarState, SlotState
 from src.automation.binds import normalize_bind
-from src.automation.priority_rules import slot_item_is_eligible_for_snapshot
+from src.automation.priority_rules import (
+    manual_item_is_eligible,
+    slot_item_is_eligible_for_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +87,7 @@ class KeySender:
         keybinds: list[str],
         manual_actions: list[dict],
         automation_enabled: bool,
+        buff_states: Optional[dict] = None,
         queued_override: Optional[dict] = None,
         on_queued_sent: Optional[Callable[[], None]] = None,
     ) -> Optional[dict]:
@@ -131,7 +135,7 @@ class KeySender:
                 and str(item.get("type", "") or "").strip().lower() == "slot"
                 and isinstance(item.get("slot_index"), int)
                 and (slots_by_index.get(item["slot_index"]) is not None)
-                and slot_item_is_eligible_for_snapshot(item, slots_by_index[item["slot_index"]])
+                and bool(getattr(slots_by_index[item["slot_index"]], "is_ready", False))
             )
             for item in (priority_items or [])
         )
@@ -157,8 +161,9 @@ class KeySender:
                         logger.warning("keyboard send(queued %r) failed: %s", key, e)
                         return None
                     self._last_send_time = now
-                    # Suppress priority for one full GCD (1.5s) so only the queued key reaches the game.
-                    self._suppress_priority_until = now + 1.5
+                    # Suppress priority for one configured GCD so only the queued key reaches the game.
+                    gcd_sec = (getattr(self._config, "gcd_ms", 1500) or 1500) / 1000.0
+                    self._suppress_priority_until = now + max(0.0, gcd_sec)
                     if on_queued_sent:
                         on_queued_sent()
                     logger.info("Sent queued key: %s", key)
@@ -201,7 +206,8 @@ class KeySender:
                             )
                             return None
                         self._last_send_time = now
-                        self._suppress_priority_until = now + 1.5
+                        gcd_sec = (getattr(self._config, "gcd_ms", 1500) or 1500) / 1000.0
+                        self._suppress_priority_until = now + max(0.0, gcd_sec)
                         if on_queued_sent:
                             on_queued_sent()
                         logger.info("Sent queued key: %s (slot %s)", key, slot_index)
@@ -238,10 +244,14 @@ class KeySender:
                 if not isinstance(slot_index, int):
                     continue
                 slot = slots_by_index.get(slot_index)
-                if not slot_item_is_eligible_for_snapshot(item, slot):
+                if not slot_item_is_eligible_for_snapshot(
+                    item, slot, buff_states=buff_states
+                ):
                     continue
                 keybind = keybinds[slot_index] if slot_index < len(keybinds) else None
             elif item_type == "manual":
+                if not manual_item_is_eligible(item, buff_states=buff_states):
+                    continue
                 action_id = str(item.get("action_id", "") or "").strip().lower()
                 if not action_id:
                     continue

@@ -27,6 +27,8 @@ class CalibrationOverlay(QWidget):
         self._border_color = QColor("#00FF00")
         self._border_width = 2
         self._cast_bar_region: dict = {}
+        self._buff_rois: list[dict] = []
+        self._buff_states: dict[str, dict] = {}
         self._monitor_geometry = monitor_geometry
         self._slot_count = 10
         self._slot_gap = 2
@@ -83,6 +85,16 @@ class CalibrationOverlay(QWidget):
     def update_cast_bar_region(self, region: Optional[dict]) -> None:
         """Update cast-bar ROI (relative to capture bbox) and repaint."""
         self._cast_bar_region = dict(region or {})
+        self.update()
+
+    def update_buff_rois(self, rois: Optional[list[dict]]) -> None:
+        self._buff_rois = [dict(r) for r in list(rois or []) if isinstance(r, dict)]
+        self.update()
+
+    def update_buff_states(self, states: Optional[dict]) -> None:
+        self._buff_states = {
+            str(k): dict(v) for k, v in dict(states or {}).items() if isinstance(v, dict)
+        }
         self.update()
 
     def update_slot_states(self, states: list[dict]) -> None:
@@ -159,6 +171,17 @@ class CalibrationOverlay(QWidget):
             return None
         x = self._bbox.left + int(region.get("left", 0))
         y = self._bbox.top + int(region.get("top", 0))
+        return QRect(x, y, w, h)
+
+    def _buff_rect(self, buff: dict) -> Optional[QRect]:
+        if not bool(buff.get("enabled", True)):
+            return None
+        w = int(buff.get("width", 0))
+        h = int(buff.get("height", 0))
+        if w <= 0 or h <= 0:
+            return None
+        x = self._bbox.left + int(buff.get("left", 0))
+        y = self._bbox.top + int(buff.get("top", 0))
         return QRect(x, y, w, h)
 
     def paintEvent(self, event) -> None:
@@ -257,5 +280,35 @@ class CalibrationOverlay(QWidget):
             cast_bar_pen = QPen(QColor("#00E5FF"), 2)
             painter.setPen(cast_bar_pen)
             painter.drawRect(cast_bar_rect)
+
+        for buff in self._buff_rois:
+            if not isinstance(buff, dict):
+                continue
+            rect = self._buff_rect(buff)
+            if rect is None:
+                continue
+            buff_id = str(buff.get("id", "") or "").strip().lower()
+            state = self._buff_states.get(buff_id, {})
+            present = bool(state.get("present", False))
+            calibrated = bool(state.get("calibrated", False))
+            status = str(state.get("status", "ok") or "ok").strip().lower()
+            similarity = float(state.get("present_similarity", 0.0) or 0.0)
+            red_ready = bool(state.get("red_glow_ready", False))
+            red_candidate = bool(state.get("red_glow_candidate", False))
+            color = QColor("#35D07F") if present else QColor("#FF884D")
+            if not calibrated:
+                color = QColor("#BBBBBB")
+            painter.setPen(QPen(color, 2))
+            painter.drawRect(rect)
+            name = str(buff.get("name", "") or "").strip() or buff_id
+            tag = "P" if present else "M"
+            if not calibrated:
+                tag = "U"
+            red_tag = "R" if red_ready else ("r" if red_candidate else ".")
+            painter.drawText(
+                rect.left() + 2,
+                rect.top() - 4 if rect.top() > 10 else rect.top() + 12,
+                f"BUFF {name}: {tag} {red_tag} {status} S{similarity:.2f}",
+            )
 
         painter.end()

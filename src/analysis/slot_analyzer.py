@@ -8,6 +8,7 @@ ON_COOLDOWN. Per-pixel comparison catches partial GCD sweeps. Phase 2: OCR.
 from __future__ import annotations
 
 from collections import deque
+import base64
 from dataclasses import dataclass
 import logging
 import time
@@ -38,8 +39,17 @@ class _SlotRuntime:
     last_cast_start_at: Optional[float] = None
     last_cast_success_at: Optional[float] = None
     last_darkened_fraction: float = 0.0
+    cooldown_candidate_started_at: Optional[float] = None
     glow_candidate_frames: int = 0
     yellow_glow_candidate_frames: int = 0
+    red_glow_candidate_frames: int = 0
+
+
+@dataclass
+class _BuffRuntime:
+    """Per-buff temporal memory for template match confirmation."""
+
+    candidate_frames: int = 0
     red_glow_candidate_frames: int = 0
 
 
@@ -74,6 +84,9 @@ class SlotAnalyzer:
         self._frame_action_origin_x: int = 0
         self._frame_action_origin_y: int = 0
         self._ring_mask_cache: dict[tuple[int, int, int], np.ndarray] = {}
+        self._buff_runtime: dict[str, _BuffRuntime] = {}
+        self._buff_states: dict[str, dict] = {}
+        self._buff_template_cache: dict[str, np.ndarray] = {}
         self._recompute_slot_layout()
 
     def _recompute_slot_layout(self) -> None:
@@ -114,6 +127,8 @@ class SlotAnalyzer:
             self._baselines.clear()
             self._runtime = {i: _SlotRuntime() for i in range(len(self._slot_configs))}
             logger.info("Slot layout changed; baselines cleared (recalibrate required)")
+        self._buff_runtime = {}
+        self._buff_states = {}
 
     def crop_slot(self, frame: np.ndarray, slot: SlotConfig) -> np.ndarray:
         """Extract a single slot's image from the action bar frame.
@@ -392,6 +407,172 @@ class SlotAnalyzer:
             self._cast_bar_last_status = "idle"
         return active
 
+    def _decode_gray_template(self, template_dict: object) -> Optional[np.ndarray]:
+        if not isinstance(template_dict, dict):
+            return None
+        shape = template_dict.get("shape")
+        raw_b64 = template_dict.get("data")
+        if (
+            not isinstance(shape, list)
+            or len(shape) != 2
+            or not all(isinstance(v, int) and v > 0 for v in shape)
+            or not isinstance(raw_b64, str)
+            or not raw_b64.strip()
+        ):
+            return None
+        try:
+            key = f"{shape[0]}x{shape[1]}:{raw_b64}"
+            cached = self._buff_template_cache.get(key)
+            if cached is not None:
+                return cached
+            arr = np.frombuffer(base64.b64decode(raw_b64), dtype=np.uint8)
+            arr = arr.reshape((int(shape[0]), int(shape[1]))).copy()
+            self._buff_template_cache[key] = arr
+            return arr
+        except Exception:
+            return None
+
+    @staticmethod
+    def _template_similarity(gray_roi: np.ndarray, gray_template: Optional[np.ndarray]) -> float:
+        if gray_template is None or gray_template.size == 0 or gray_roi.size == 0:
+            return 0.0
+        if gray_template.shape != gray_roi.shape:
+            gray_template = cv2.resize(
+                gray_template,
+                (gray_roi.shape[1], gray_roi.shape[0]),
+                interpolation=cv2.INTER_AREA,
+            )
+        diff = cv2.absdiff(gray_roi, gray_template)
+        diff_score = max(0.0, 1.0 - (float(np.mean(diff)) / 255.0))
+
+        # Add normalized correlation so global grayscale similarity alone
+        # does not mark unrelated ROIs as "present" at low thresholds.
+        roi_std = float(np.std(gray_roi))
+        template_std = float(np.std(gray_template))
+        if roi_std < 1e-6 or template_std < 1e-6:
+            return diff_score
+        corr = cv2.matchTemplate(gray_roi, gray_template, cv2.TM_CCOEFF_NORMED)
+        corr_raw = float(corr[0, 0]) if corr.size else -1.0
+        corr_score = max(0.0, min(1.0, (corr_raw + 1.0) * 0.5))
+        return min(diff_score, corr_score)
+
+    def _analyze_buffs(self, frame: np.ndarray, action_origin: tuple[int, int]) -> None:
+        states: dict[str, dict] = {}
+        action_x = int(action_origin[0])
+        action_y = int(action_origin[1])
+        red_h_max_low = int(getattr(self._config, "glow_red_hue_max_low", 12) or 12)
+        red_h_min_high = int(getattr(self._config, "glow_red_hue_min_high", 168) or 168)
+        sat_min = int(getattr(self._config, "glow_saturation_min", 80) or 80)
+        glow_confirm_frames = max(1, int(getattr(self._config, "glow_confirm_frames", 2) or 2))
+        red_frac_thresh = float(getattr(self._config, "glow_red_ring_fraction", 0.18) or 0.18)
+        for raw in list(getattr(self._config, "buff_rois", []) or []):
+            if not isinstance(raw, dict):
+                continue
+            buff_id = str(raw.get("id", "") or "").strip().lower()
+            if not buff_id:
+                continue
+            runtime = self._buff_runtime.setdefault(buff_id, _BuffRuntime())
+            enabled = bool(raw.get("enabled", True))
+            left = int(raw.get("left", 0))
+            top = int(raw.get("top", 0))
+            width = int(raw.get("width", 0))
+            height = int(raw.get("height", 0))
+            threshold = max(0.0, min(1.0, float(raw.get("match_threshold", 0.88))))
+            confirm_frames = max(1, int(raw.get("confirm_frames", 2)))
+            calibration = raw.get("calibration", {})
+            if not isinstance(calibration, dict):
+                calibration = {}
+            present_t = self._decode_gray_template(calibration.get("present_template"))
+            calibrated = present_t is not None
+
+            status = "ok"
+            present_similarity = 0.0
+            missing_similarity = 0.0
+            candidate = False
+            present = False
+            red_glow_candidate = False
+            red_glow_ready = False
+            red_glow_fraction = 0.0
+            if not enabled:
+                status = "off"
+                runtime.candidate_frames = 0
+                runtime.red_glow_candidate_frames = 0
+            elif width <= 1 or height <= 1:
+                status = "invalid-roi"
+                runtime.candidate_frames = 0
+                runtime.red_glow_candidate_frames = 0
+            elif not calibrated:
+                status = "uncalibrated"
+                runtime.candidate_frames = 0
+                runtime.red_glow_candidate_frames = 0
+            else:
+                x1 = action_x + left
+                y1 = action_y + top
+                x2 = x1 + width
+                y2 = y1 + height
+                if x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
+                    status = "out-of-frame"
+                    runtime.candidate_frames = 0
+                    runtime.red_glow_candidate_frames = 0
+                else:
+                    roi = frame[y1:y2, x1:x2]
+                    roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                    present_similarity = self._template_similarity(roi_gray, present_t)
+                    candidate = present_similarity >= threshold
+                    if candidate:
+                        runtime.candidate_frames += 1
+                    else:
+                        runtime.candidate_frames = 0
+                    present = runtime.candidate_frames >= confirm_frames
+
+                    # Buff ROI red-glow detection used by buff-sourced DoT refresh rules.
+                    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+                    hue = hsv[:, :, 0].astype(np.int16)
+                    sat = hsv[:, :, 1].astype(np.int16)
+                    val = hsv[:, :, 2].astype(np.int16)
+                    h, w = roi_gray.shape
+                    ring = self._ring_mask(h, w, int(getattr(self._config, "glow_ring_thickness_px", 4) or 4))
+                    if np.any(ring):
+                        val_floor = max(64, int(np.percentile(val[ring], 60)))
+                        red_cond = (
+                            ((hue <= red_h_max_low) | (hue >= red_h_min_high))
+                            & (sat >= sat_min)
+                            & (val >= val_floor)
+                        )
+                        red_glow_fraction = float(np.mean(red_cond[ring]))
+                        red_glow_candidate = red_glow_fraction >= red_frac_thresh
+                    if red_glow_candidate:
+                        runtime.red_glow_candidate_frames += 1
+                    else:
+                        runtime.red_glow_candidate_frames = 0
+                    red_glow_ready = runtime.red_glow_candidate_frames >= glow_confirm_frames
+
+            states[buff_id] = {
+                "id": buff_id,
+                "name": str(raw.get("name", "") or "").strip() or buff_id,
+                "enabled": enabled,
+                "calibrated": calibrated,
+                "left": left,
+                "top": top,
+                "width": width,
+                "height": height,
+                "status": status,
+                "present_similarity": float(present_similarity),
+                "missing_similarity": float(missing_similarity),
+                "candidate": bool(candidate),
+                "candidate_frames": int(runtime.candidate_frames),
+                "confirm_frames": int(confirm_frames),
+                "present": bool(present),
+                "red_glow_candidate": bool(red_glow_candidate),
+                "red_glow_candidate_frames": int(runtime.red_glow_candidate_frames),
+                "red_glow_fraction": float(red_glow_fraction),
+                "red_glow_ready": bool(red_glow_ready),
+            }
+        self._buff_states = states
+
+    def buff_states(self) -> dict[str, dict]:
+        return {k: dict(v) for k, v in self._buff_states.items()}
+
     def cast_bar_debug(self) -> dict:
         """Latest cast-bar ROI motion debug info for UI."""
         return {
@@ -580,6 +761,9 @@ class SlotAnalyzer:
         change_frac_thresh = float(
             getattr(self._config, "cooldown_change_pixel_fraction", frac_thresh) or frac_thresh
         )
+        cooldown_min_sec = max(
+            0.0, (getattr(self._config, "cooldown_min_duration_ms", 0) or 0) / 1000.0
+        )
         glow_confirm_frames = max(1, int(getattr(self._config, "glow_confirm_frames", 2) or 2))
         cast_bar_active = self._cast_bar_active(
             frame,
@@ -593,6 +777,7 @@ class SlotAnalyzer:
             self._cast_bar_active_until = now + 0.25
         cast_gate_active = (not cast_roi_enabled) or cast_bar_active or (now < self._cast_bar_active_until)
         self._cast_gate_active = cast_gate_active
+        self._analyze_buffs(frame, action_origin)
         override_slots = {
             int(v)
             for v in list(getattr(self._config, "glow_override_cooldown_by_slot", []) or [])
@@ -660,6 +845,18 @@ class SlotAnalyzer:
                         changed_fraction >= change_release_thresh
                     )
                     raw_cooldown = raw_cooldown or hold_dark_cooldown or hold_changed_cooldown
+                cooldown_pending = False
+                if raw_cooldown:
+                    if runtime.cooldown_candidate_started_at is None:
+                        runtime.cooldown_candidate_started_at = now
+                    if (
+                        runtime.state != SlotState.ON_COOLDOWN
+                        and cooldown_min_sec > 0.0
+                        and (now - runtime.cooldown_candidate_started_at) < cooldown_min_sec
+                    ):
+                        cooldown_pending = True
+                else:
+                    runtime.cooldown_candidate_started_at = None
                 (
                     state,
                     cast_progress,
@@ -669,10 +866,12 @@ class SlotAnalyzer:
                 ) = self._next_state_with_cast_logic(
                     slot_cfg.index,
                     darkened_fraction,
-                    raw_cooldown,
+                    raw_cooldown and not cooldown_pending,
                     now,
                     cast_gate_active=cast_gate_active,
                 )
+                if cooldown_pending and state == SlotState.READY:
+                    state = SlotState.GCD
                 (
                     yellow_glow_candidate,
                     yellow_glow_fraction,
