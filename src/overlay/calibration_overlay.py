@@ -29,6 +29,11 @@ class CalibrationOverlay(QWidget):
         self._cast_bar_region: dict = {}
         self._buff_rois: list[dict] = []
         self._buff_states: dict[str, dict] = {}
+        self._form_detector: dict = {}
+        self._form_state: dict = {
+            "active_form_id": "normal",
+            "settling": False,
+        }
         self._monitor_geometry = monitor_geometry
         self._slot_count = 10
         self._slot_gap = 2
@@ -107,6 +112,17 @@ class CalibrationOverlay(QWidget):
         self._buff_states = {
             str(k): dict(v) for k, v in dict(states or {}).items() if isinstance(v, dict)
         }
+        self.update()
+
+    def update_form_detector(self, detector: Optional[dict]) -> None:
+        self._form_detector = dict(detector or {})
+        self.update()
+
+    def update_form_state(self, state: Optional[dict]) -> None:
+        if isinstance(state, dict):
+            self._form_state = dict(state)
+        else:
+            self._form_state = {}
         self.update()
 
     def update_slot_states(self, states: list[dict]) -> None:
@@ -337,5 +353,24 @@ class CalibrationOverlay(QWidget):
                 rect.top() - 4 if rect.top() > 10 else rect.top() + 12,
                 f"BUFF {name}: {tag} {red_tag} {status} S{similarity:.2f}",
             )
+
+        detector = self._form_detector if isinstance(self._form_detector, dict) else {}
+        state = self._form_state if isinstance(self._form_state, dict) else {}
+        det_type = str(detector.get("type", "off") or "off").strip().lower()
+        roi_id = str(detector.get("roi_id", "") or "").strip().lower()
+        present_form = str(detector.get("present_form", "normal") or "normal").strip().lower()
+        absent_form = str(detector.get("absent_form", "normal") or "normal").strip().lower()
+        active_form = str(state.get("active_form_id", "normal") or "normal").strip().lower()
+        settling = bool(state.get("settling", False))
+        settling_tag = "Y" if settling else "N"
+        painter.setPen(QPen(QColor("#86D1FF"), 1))
+        painter.drawText(
+            self._bbox.left + 4,
+            self._bbox.top + self._bbox.height + 16,
+            (
+                f"FORMDBG active={active_form} settle={settling_tag} "
+                f"det={det_type} roi={roi_id} P->{present_form} A->{absent_form}"
+            ),
+        )
 
         painter.end()

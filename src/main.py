@@ -363,6 +363,8 @@ def main() -> None:
     overlay.update_cast_bar_region(getattr(config, "cast_bar_region", {}))
     overlay.update_buff_rois(getattr(config, "buff_rois", []) or [])
     overlay.update_show_active_screen_outline(getattr(config, "show_active_screen_outline", False))
+    overlay.update_form_detector(getattr(config, "form_detector", {}) or {})
+    overlay.update_form_state({"active_form_id": getattr(config, "active_form_id", "normal")})
     if config.overlay_enabled:
         overlay.show()
 
@@ -381,6 +383,7 @@ def main() -> None:
         key_sender.update_config(new_config)
         overlay.update_cast_bar_region(getattr(new_config, "cast_bar_region", {}))
         overlay.update_buff_rois(getattr(new_config, "buff_rois", []) or [])
+        overlay.update_form_detector(getattr(new_config, "form_detector", {}) or {})
         overlay.update_bounding_box(new_config.bounding_box)
         overlay.update_slot_layout(
             new_config.slot_count,
@@ -420,6 +423,7 @@ def main() -> None:
     worker.state_updated.connect(window.update_slot_states)
     worker.state_updated.connect(overlay.update_slot_states)
     worker.form_state_updated.connect(window.update_form_state)
+    worker.form_state_updated.connect(overlay.update_form_state)
     worker.buff_state_updated.connect(window.update_buff_states)
     worker.buff_state_updated.connect(overlay.update_buff_states)
     worker.cast_bar_debug.connect(window.update_cast_bar_debug)
@@ -533,14 +537,16 @@ def main() -> None:
     window.set_queue_listener(queue_listener)
 
     # Calibrate baselines: grab one frame on main thread with short-lived mss
+    def calibration_form_id() -> str:
+        return settings_dialog.selected_active_form_id()
+
     def revert_calibrate_button(btn):
-        active_form = str(getattr(config, "active_form_id", "normal") or "normal").strip().lower() or "normal"
-        btn.setText(f"Calibrate Baselines ({active_form})")
+        btn.setText(f"Calibrate Baselines ({calibration_form_id()})")
         btn.setStyleSheet("")
 
     def calibrate_baselines(button_to_update):
         btn = button_to_update
-        target_form = str(getattr(config, "active_form_id", "normal") or "normal").strip().lower() or "normal"
+        target_form = calibration_form_id()
         baselines = analyzer.get_baselines()
         if target_form == "normal" and baselines:
             reply = QMessageBox.question(
@@ -639,7 +645,7 @@ def main() -> None:
 
     def calibrate_single_slot(slot_index: int) -> None:
         try:
-            target_form = str(getattr(config, "active_form_id", "normal") or "normal").strip().lower() or "normal"
+            target_form = calibration_form_id()
             cap = ScreenCapture(monitor_index=config.monitor_index)
             cap.start()
             frame = cap.grab_region(config.bounding_box)
