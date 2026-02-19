@@ -330,6 +330,7 @@ def main() -> None:
     overlay.update_bounding_box(config.bounding_box)
     overlay.update_cast_bar_region(getattr(config, "cast_bar_region", {}))
     overlay.update_buff_rois(getattr(config, "buff_rois", []) or [])
+    overlay.update_show_active_screen_outline(getattr(config, "show_active_screen_outline", False))
     if config.overlay_enabled:
         overlay.show()
 
@@ -355,6 +356,7 @@ def main() -> None:
             new_config.slot_padding,
         )
         overlay.update_monitor_geometry(monitor_rect_for_index(new_config.monitor_index, monitors))
+        overlay.update_show_active_screen_outline(getattr(new_config, "show_active_screen_outline", False))
         if getattr(new_config, "overlay_enabled", True):
             overlay.show()
         else:
@@ -425,11 +427,13 @@ def main() -> None:
             worker.stop()
             window._btn_start.setText("▶ Start Capture")
             window.set_capture_running(False)
+            overlay.set_capture_active(False)
             is_running[0] = False
         else:
             worker.start()
             window._btn_start.setText("⏹ Stop Capture")
             window.set_capture_running(True)
+            overlay.set_capture_active(True)
             is_running[0] = True
 
     window._btn_start.clicked.connect(toggle_capture)
@@ -439,6 +443,7 @@ def main() -> None:
             worker.start()
             window._btn_start.setText("⏹ Stop Capture")
             window.set_capture_running(True)
+            overlay.set_capture_active(True)
             is_running[0] = True
 
     window.start_capture_requested.connect(on_start_capture_requested)

@@ -1,0 +1,403 @@
+# Phase 1: Module System Foundation + Cooldown Rotation Migration
+
+## Overview
+
+Implement the module system architecture and migrate ALL existing cooldown/detection/queue/automation code into the first module: `cooldown_rotation`. After this refactor, the app should behave identically to the user — same UI, same behavior, same config — but the code is organized into a pluggable module structure.
+
+Read the architecture document at `./docs/module-architecture.md` first. It defines the full system design. This prompt implements Phase 1: the foundation.
+
+---
+
+## What to Build
+
+### 1. Core Infrastructure
+
+**`src/core/core.py` — Core class**
+
+The central service provider passed to every module:
+
+```python
+class Core:
+    def __init__(self, config_manager, screen_capture, key_sender):
+        self._config = config_manager
+        self._capture = screen_capture
+        self._key_sender = key_sender
+        self._modules: dict[str, BaseModule] = {}
+        self._extensions: dict[str, list[Callable]] = {}
+        self._hooks: dict[str, list[Callable]] = {}
+    
+    # Config
+    def get_config(self, module_key: str) -> dict: ...
+    def save_config(self, module_key: str, data: dict): ...
+    
+    # Shared services
+    def get_capture(self) -> ScreenCapture: ...
+    def get_key_sender(self) -> KeySender: ...
+    
+    # Module access
+    def get_module(self, key: str) -> BaseModule | None: ...
+    def is_module_loaded(self, key: str) -> bool: ...
+    
+    # Services (cross-module data)
+    def get_service(self, module_key: str, service_name: str) -> Any: ...
+    
+    # Extensions (UI injection)
+    def register_extension(self, point: str, widget_factory: Callable): ...
+    def get_extensions(self, point: str) -> list[Callable]: ...
+    
+    # Hooks (events)
+    def subscribe(self, hook: str, callback: Callable): ...
+    def emit(self, hook: str, **kwargs): ...
+```
+
+Implementation notes:
+- `get_service()` calls `self._modules[module_key].get_service_value(service_name)`. Return None if module not loaded or service not found. Don't raise.
+- `register_extension()` stores callables in `self._extensions[point]`. The point name is namespaced: `"{module_key}.{point_name}"`.
+- `get_extensions()` returns the list of callables for that point (empty list if none).
+- `subscribe()` appends to `self._hooks[hook]`. Hook names namespaced: `"{module_key}.{hook_name}"`.
+- `emit()` calls all subscribers. Catch exceptions per-subscriber and log them — one bad subscriber shouldn't break others.
+
+**`src/core/base_module.py` — BaseModule ABC**
+
+```python
+from abc import ABC
+
+class BaseModule(ABC):
+    name: str = ""
+    key: str = ""
+    version: str = "1.0.0"
+    description: str = ""
+    requires: list[str] = []
+    optional: list[str] = []
+    provides_services: list[str] = []
+    extension_points: list[str] = []
+    hooks: list[str] = []
+    
+    def __init__(self):
+        self.core: Core | None = None
+        self.enabled: bool = True
+    
+    def setup(self, core: Core) -> None:
+        self.core = core
+    
+    def ready(self) -> None:
+        pass
+    
+    def get_settings_widget(self) -> QWidget | None:
+        return None
+    
+    def get_status_widget(self) -> QWidget | None:
+        return None
+    
+    def get_service_value(self, service_name: str) -> Any:
+        return None
+    
+    def on_enable(self) -> None:
+        pass
+    
+    def on_disable(self) -> None:
+        pass
+    
+    def on_config_changed(self, key: str, value: Any) -> None:
+        pass
+    
+    def on_frame(self, frame) -> None:
+        pass
+    
+    def teardown(self) -> None:
+        pass
+```
+
+**`src/core/module_manager.py` — ModuleManager**
+
+```python
+class ModuleManager:
+    def __init__(self, core: Core):
+        self.core = core
+        self.modules: dict[str, BaseModule] = {}
+        self._load_order: list[str] = []
+    
+    def discover(self, modules_dir: str) -> list[str]: ...
+    def load(self, module_keys: list[str] | None = None) -> None: ...
+    def get(self, key: str) -> BaseModule | None: ...
+    def process_frame(self, frame) -> None: ...
+    def get_settings_widgets(self) -> list[tuple[str, QWidget]]: ...
+    def get_status_widgets(self) -> list[tuple[str, QWidget]]: ...
+    def shutdown(self) -> None: ...
+```
+
+Implementation notes:
+- `discover()`: Scan `modules_dir` for subdirectories containing `__init__.py`. Import each package and look for a class that subclasses `BaseModule`. Store discovered module classes (not instances) keyed by their `key` attribute.
+- `load()`: Instantiate modules, validate `requires` (all must be in the discovered set — log error and skip if not), topological sort by dependency graph (requires + optional that are present), call `setup()` in order, then `ready()` in order. Store sorted order in `_load_order`.
+- `process_frame()`: Iterate `_load_order`, call `on_frame()` on each enabled module. Dependencies process first.
+- `shutdown()`: Call `teardown()` on each module in reverse load order.
+- Circular dependency detection: if topological sort fails, log error and refuse to load the cycle participants.
+
+---
+
+### 2. Config Migration
+
+Current config is a flat structure. Migrate to namespaced:
+
+**Before:**
+```json
+{
+  "monitor_index": 2,
+  "capture_region": { ... },
+  "trigger_threshold": 0.4,
+  "priority_order": [0, 1, 2],
+  "queue_whitelist": ["v"],
+  ...
+}
+```
+
+**After:**
+```json
+{
+  "core": {
+    "monitor_index": 2,
+    "capture_region": { ... },
+    "display": { "history_rows": 3, "always_on_top": true, "show_overlay": false },
+    "modules_enabled": ["cooldown_rotation"]
+  },
+  "cooldown_rotation": {
+    "trigger_threshold": 0.4,
+    "darken_threshold": 30,
+    "detection_region": "top_left",
+    "change_threshold": 0.4,
+    "change_ignore": [],
+    "ready_baseline": 0.08,
+    "glow_enabled": true,
+    "glow_ring": 4,
+    "glow_v_plus": 35,
+    "glow_s_min": 80,
+    "glow_n": 2,
+    "glow_by_slot": "",
+    "y_frac_by_slot": "",
+    "glow_ready": "",
+    "yellow_frac": 0.18,
+    "red_frac": 0.18,
+    "glow_hue_y_min": 18,
+    "glow_hue_y_max": 42,
+    "glow_hue_r_min": 9,
+    "glow_hue_r_max": 168,
+    "cast_detection_enabled": false,
+    "cast_band_min": 5,
+    "cast_band_max": 22,
+    "cast_confirm": 5,
+    "cast_min_ms": 150,
+    "cast_max_ms": 3000,
+    "cancel_grace_ms": 120,
+    "allow_channeling": false,
+    "lock_ready_during_cast": false,
+    "cast_bar_roi_enabled": false,
+    "cast_bar_l": 5,
+    "cast_bar_t": 0,
+    "cast_bar_w": 100,
+    "cast_bar_h": 35,
+    "cast_bar_d": 12,
+    "toggle_bind": "f24",
+    "single_bind": "",
+    "delay_ms": 150,
+    "queue_ms": 120,
+    "allow_send_during_cast": false,
+    "window_title": "",
+    "list_profiles": { ... },
+    "active_list_profile": "Default",
+    "priority_order": [],
+    "keybinds": {},
+    "slot_baselines": [],
+    "queue_whitelist": [],
+    "queue_timeout_ms": 5000,
+    "queue_fire_delay_ms": 100
+  }
+}
+```
+
+**Migration**: On startup, if config is in the old flat format (no "core" key), automatically migrate it to the new namespaced format. Map each existing key to its correct namespace. Save the migrated config. Log that migration occurred. This should be transparent — user doesn't need to do anything.
+
+Write a `migrate_config(old_config: dict) -> dict` function that handles this. It should be safe to run on already-migrated configs (no-op if "core" key exists).
+
+---
+
+### 3. Module: cooldown_rotation
+
+Move all existing detection/automation/queue code into:
+
+```
+modules/
+  cooldown_rotation/
+    __init__.py
+    module.py
+    settings_widget.py
+    status_widget.py
+```
+
+**`module.py` — CooldownRotationModule**
+
+```python
+class CooldownRotationModule(BaseModule):
+    name = "Cooldown Rotation"
+    key = "cooldown_rotation"
+    version = "1.0.0"
+    description = "Monitors action bar cooldowns and sends keys based on priority"
+    
+    requires = []
+    optional = []
+    
+    provides_services = [
+        "slot_states",       # list of SlotState enums
+        "priority_order",    # current priority list
+        "gcd_estimate",      # estimated GCD in seconds
+        "is_active",         # whether automation is currently running
+    ]
+    
+    extension_points = [
+        "settings.detection",    # inject into detection settings
+        "settings.automation",   # inject into automation settings
+    ]
+    
+    hooks = [
+        "slot_states_updated",   # emitted each frame with slot states
+        "key_sent",              # emitted when a key is sent (key, slot_index, queued)
+        "rotation_toggled",      # emitted when automation enabled/disabled
+    ]
+```
+
+This module:
+- Owns SlotAnalyzer, QueueListener, and automation evaluation logic
+- Manages its own config namespace (`"cooldown_rotation"`)
+- Builds its own settings widget (Detection tab + Automation tab as a QTabWidget, or two sections in a single scrollable widget — match whatever the current settings layout does)
+- Builds its own status widget (slot states display, live preview, last action, next intention, priority list — everything currently in the main window's left and right columns)
+- Emits hooks when things happen
+- Exposes services for other modules to read
+
+**Moving existing code**: The SlotAnalyzer, QueueListener, KeySender interaction, and CaptureWorker frame processing logic that currently lives in `main.py` and `src/automation/` moves into this module. The module's `on_frame()` replaces whatever the current capture worker does for cooldown analysis. The module's `setup()` initializes its SlotAnalyzer and QueueListener. The module's `get_service_value()` returns current slot states, priority order, etc.
+
+**`settings_widget.py`**: Extract the Detection and Automation tab contents from the current settings dialog into this file. The module's `get_settings_widget()` returns this widget. It should use the shared QSS theme variables for consistent styling. If the current settings dialog builds these sections inline, extract them into a standalone widget class here.
+
+**`status_widget.py`**: Extract the main window's cooldown-specific widgets (slot states row, live preview, last action, next intention, priority list) into a standalone widget class. The module's `get_status_widget()` returns this. The main window embeds it in its layout.
+
+---
+
+### 4. Settings Dialog Refactor
+
+The settings dialog becomes a thin shell:
+
+```python
+class SettingsDialog(QDialog):
+    def __init__(self, core, module_manager):
+        # Build General tab (core settings only):
+        #   Profile, Display, Capture Region, Calibration
+        
+        # Add module tabs:
+        for name, widget in module_manager.get_settings_widgets():
+            self.tabs.addTab(widget, name)
+        
+        # Status bar at bottom (auto-save indicator)
+```
+
+**General tab keeps**: Profile (name, export, import), Display (monitor, overlay, always on top, history rows), Capture Region (top/left/width/height, slots/gap/padding), Calibration (calibrate all baselines button + tip).
+
+**Everything else moves out**: Detection settings, glow settings, cast settings, automation settings, priority lists, spell queue — all owned by cooldown_rotation module's settings widget.
+
+---
+
+### 5. Main Window Refactor
+
+The main window becomes a shell that hosts module status widgets:
+
+```python
+class MainWindow(QMainWindow):
+    def __init__(self, core, module_manager):
+        # Top: enable/disable button + bind display (core)
+        # Middle: module status widgets area
+        for name, widget in module_manager.get_status_widgets():
+            self.module_area.addWidget(widget)
+        # Bottom: status bar (profile name, est. GCD — from module service)
+```
+
+The cooldown_rotation module's status widget contains everything currently in the main window: live preview, slot states, last action, next intention, priority list. The main window just provides the container and the enable/disable toggle.
+
+The enable/disable toggle in the main window should:
+1. Tell the active module(s) to enable/disable
+2. For cooldown_rotation specifically, this starts/stops the automation loop
+3. The toggle bind (F24) handling stays in core (global hotkey listener) but it calls module_manager to toggle the appropriate module(s)
+
+---
+
+### 6. Startup Flow (main.py)
+
+```python
+def main():
+    app = QApplication(sys.argv)
+    
+    # 1. Load config (with migration if needed)
+    config = load_config("config/default_config.json")
+    if needs_migration(config):
+        config = migrate_config(config)
+        save_config(config)
+    
+    # 2. Initialize core services
+    capture = ScreenCapture(config["core"])
+    key_sender = KeySender()
+    core = Core(config, capture, key_sender)
+    
+    # 3. Discover and load modules
+    module_manager = ModuleManager(core)
+    module_manager.discover("./modules/")
+    enabled = config["core"].get("modules_enabled", ["cooldown_rotation"])
+    module_manager.load(enabled)
+    
+    # 4. Build UI
+    main_window = MainWindow(core, module_manager)
+    
+    # 5. Start capture loop
+    #    Each frame: capture → module_manager.process_frame(frame) → update UI
+    
+    main_window.show()
+    app.exec()
+    
+    # 6. Shutdown
+    module_manager.shutdown()
+```
+
+---
+
+## Implementation Order
+
+1. **Create directory structure**: `src/core/`, `modules/cooldown_rotation/`
+2. **Implement Core, BaseModule, ModuleManager** in `src/core/`
+3. **Write config migration** function
+4. **Move SlotAnalyzer, QueueListener, automation logic** into `modules/cooldown_rotation/`
+5. **Extract settings widget** from current settings dialog into `modules/cooldown_rotation/settings_widget.py`
+6. **Extract status widget** from current main window into `modules/cooldown_rotation/status_widget.py`
+7. **Refactor settings dialog** to thin shell + General tab + module tabs
+8. **Refactor main window** to thin shell + module status area
+9. **Refactor main.py** startup flow
+10. **Test**: App should behave identically. Same UI, same automation, same config (auto-migrated).
+
+---
+
+## What NOT to Change
+
+- **Detection algorithms**: SlotAnalyzer logic stays exactly the same, just moves to a new file location.
+- **Key sending logic**: KeySender stays in core. The module calls `core.get_key_sender()`.
+- **Queue system**: QueueListener moves into the module but works the same.
+- **Visual appearance**: The UI should look identical. Same widgets, same styling, same layout. Just organized differently in code.
+- **Config values**: All existing config values are preserved, just namespaced. Migration is automatic.
+
+## Critical Constraints
+
+- **No feature changes**: This is purely a structural refactor. If something works now, it must work after.
+- **No new settings**: Don't add module management UI yet (enable/disable modules from settings). That's Phase 2. For now, `modules_enabled` in config is the only way to control which modules load.
+- **Backward compat**: If the old flat config is detected, migrate it silently. Don't make users manually fix their config.
+- **QSS theming**: Module settings widgets must use the same QSS theme variables as core. Modules import the theme from the shared theme module — they don't define their own colors.
+
+---
+
+## Reference
+
+Architecture doc: `./docs/module-architecture.md`
+Settings mockup: `./mockup/settings-redesign-mockup-v2.html`
+Current codebase: examine existing `src/` structure for what moves where.

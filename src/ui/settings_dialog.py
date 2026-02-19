@@ -217,8 +217,13 @@ class SettingsDialog(QDialog):
         cb_row = QHBoxLayout()
         self._check_overlay = QCheckBox("Show Region Overlay")
         self._check_always_on_top = QCheckBox("Always on Top")
+        self._check_active_screen_outline = QCheckBox("Show screen outline when active")
+        self._check_active_screen_outline.setToolTip(
+            "Draws a 1px green outline with a slight glow around the entire screen while capture is running."
+        )
         cb_row.addWidget(self._check_overlay)
         cb_row.addWidget(self._check_always_on_top)
+        cb_row.addWidget(self._check_active_screen_outline)
         fl.addRow("", cb_row)
         history_row = QHBoxLayout()
         self._spin_history_rows = QSpinBox()
@@ -793,6 +798,7 @@ class SettingsDialog(QDialog):
         self._monitor_combo.currentIndexChanged.connect(self._on_monitor_changed)
         self._check_overlay.toggled.connect(self._on_overlay_changed)
         self._check_always_on_top.toggled.connect(self._on_always_on_top_changed)
+        self._check_active_screen_outline.toggled.connect(self._on_active_screen_outline_changed)
         self._spin_history_rows.valueChanged.connect(self._on_history_rows_changed)
         self._spin_top.valueChanged.connect(self._on_bbox_changed)
         self._spin_left.valueChanged.connect(self._on_bbox_changed)
@@ -881,6 +887,9 @@ class SettingsDialog(QDialog):
         self._check_always_on_top.blockSignals(True)
         self._check_always_on_top.setChecked(getattr(self._config, "always_on_top", False))
         self._check_always_on_top.blockSignals(False)
+        self._check_active_screen_outline.blockSignals(True)
+        self._check_active_screen_outline.setChecked(getattr(self._config, "show_active_screen_outline", False))
+        self._check_active_screen_outline.blockSignals(False)
         self._spin_history_rows.blockSignals(True)
         self._spin_history_rows.setValue(getattr(self._config, "history_rows", 3))
         self._spin_history_rows.blockSignals(False)
@@ -1290,6 +1299,10 @@ class SettingsDialog(QDialog):
 
     def _on_always_on_top_changed(self, checked: bool) -> None:
         self._config.always_on_top = checked
+        self._emit_config()
+
+    def _on_active_screen_outline_changed(self, checked: bool) -> None:
+        self._config.show_active_screen_outline = checked
         self._emit_config()
 
     def _on_history_rows_changed(self, value: int) -> None:

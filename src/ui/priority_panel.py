@@ -129,6 +129,7 @@ class PriorityItemWidget(QFrame):
         self._key_label = QLabel(f"[{key_display}]")
         self._key_label.setObjectName("priorityKey")
         self._key_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._key_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self._key_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._name_label = QLabel(self._display_name)
@@ -138,18 +139,21 @@ class PriorityItemWidget(QFrame):
         self._name_label.setMinimumWidth(0)
         self._name_label.setMinimumHeight(20)
         self._name_label.setWordWrap(False)
+        self._name_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self._name_label, 1, Qt.AlignmentFlag.AlignVCenter)
 
         self._rule_label = QLabel("")
         self._rule_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._rule_label.setStyleSheet("font-family: monospace; font-size: 9px; color: #d3a75b;")
         self._rule_label.setMaximumWidth(80)
+        self._rule_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self._rule_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._time_since_label = QLabel("-")
         self._time_since_label.setObjectName("priorityTimeSince")
         self._time_since_label.setMinimumWidth(28)
         self._time_since_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._time_since_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         font = QFont("Consolas")
         if not font.exactMatch():
             font = QFont("Courier New")

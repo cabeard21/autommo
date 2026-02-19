@@ -155,6 +155,7 @@ class AppConfig:
     ocr_enabled: bool = True
     overlay_enabled: bool = True
     overlay_border_color: str = "#00FF00"
+    show_active_screen_outline: bool = False
     always_on_top: bool = False
     keybinds: list[str] = field(default_factory=list)  # keybinds[slot_index] = key string, e.g. "5", "F"
     # User-defined display names per slot (e.g. "Fireball"); empty/missing = "Unidentified"
@@ -616,6 +617,7 @@ class AppConfig:
             ocr_enabled=data.get("detection", {}).get("ocr_enabled", True),
             overlay_enabled=data.get("overlay", {}).get("enabled", True),
             overlay_border_color=data.get("overlay", {}).get("border_color", "#00FF00"),
+            show_active_screen_outline=data.get("overlay", {}).get("show_active_screen_outline", False),
             always_on_top=data.get("display", {}).get("always_on_top", False),
             keybinds=cls._normalize_slot_keybinds(data.get("slots", {}).get("keybinds", [])),
             slot_display_names=data.get("slot_display_names", []),
@@ -736,6 +738,7 @@ class AppConfig:
             "overlay": {
                 "enabled": self.overlay_enabled,
                 "border_color": self.overlay_border_color,
+                "show_active_screen_outline": self.show_active_screen_outline,
             },
             "display": {"always_on_top": self.always_on_top},
             "slot_baselines": self.slot_baselines,

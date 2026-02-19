@@ -42,6 +42,8 @@ class CalibrationOverlay(QWidget):
         self._slot_red_glow_ready: dict[int, bool] = {}
         self._slot_red_glow_candidate: dict[int, bool] = {}
         self._slot_red_glow_fraction: dict[int, float] = {}
+        self._show_active_screen_outline: bool = False
+        self._capture_active: bool = False
 
         self._setup_window()
 
@@ -80,6 +82,16 @@ class CalibrationOverlay(QWidget):
     def update_border_color(self, color: str) -> None:
         """Update the overlay border color."""
         self._border_color = QColor(color)
+        self.update()
+
+    def update_show_active_screen_outline(self, enabled: bool) -> None:
+        """Enable/disable the full-screen 1px outline with glow when capture is active."""
+        self._show_active_screen_outline = bool(enabled)
+        self.update()
+
+    def set_capture_active(self, active: bool) -> None:
+        """Mark whether capture is running (used to show/hide active screen outline)."""
+        self._capture_active = bool(active)
         self.update()
 
     def update_cast_bar_region(self, region: Optional[dict]) -> None:
@@ -188,6 +200,21 @@ class CalibrationOverlay(QWidget):
         """Draw the bounding box and per-slot analyzed regions."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Full-screen 1px green outline with slight glow when capture is active (if enabled)
+        if self._show_active_screen_outline and self._capture_active:
+            w, h = self.width(), self.height()
+            if w > 0 and h > 0:
+                green = QColor(self._border_color)
+                # Glow: faint inner strokes then solid 1px edge
+                for inset, alpha in [(4, 35), (3, 60), (2, 100), (1, 160)]:
+                    green.setAlpha(alpha)
+                    painter.setPen(QPen(green, 1))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawRect(inset, inset, w - 1 - 2 * inset, h - 1 - 2 * inset)
+                green.setAlpha(255)
+                painter.setPen(QPen(green, 1))
+                painter.drawRect(0, 0, w - 1, h - 1)
 
         monitor_local = QRect(0, 0, self.width(), self.height())
         bbox_local = QRect(
