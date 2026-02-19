@@ -598,16 +598,50 @@ def main() -> None:
         if roi_width <= 1 or roi_height <= 1:
             window.show_status_message("Buff ROI size must be > 1x1", 2000)
             return
-        left = min(int(action.left), int(action.left) + roi_left)
-        top = min(int(action.top), int(action.top) + roi_top)
-        right = max(int(action.left + action.width), int(action.left) + roi_left + roi_width)
-        bottom = max(int(action.top + action.height), int(action.top) + roi_top + roi_height)
         try:
             cap = ScreenCapture(monitor_index=config.monitor_index)
             cap.start()
             monitor = cap.monitor_info
             mw = int(monitor["width"])
             mh = int(monitor["height"])
+
+            # Match runtime capture expansion exactly so calibrated templates align
+            # with live buff ROI crops even when other ROIs/cast ROI expand bounds.
+            left = int(action.left)
+            top = int(action.top)
+            right = int(action.left + action.width)
+            bottom = int(action.top + action.height)
+
+            cast_region = getattr(config, "cast_bar_region", {}) or {}
+            if bool(cast_region.get("enabled", False)):
+                cast_w = int(cast_region.get("width", 0))
+                cast_h = int(cast_region.get("height", 0))
+                if cast_w > 1 and cast_h > 1:
+                    cast_left = int(action.left) + int(cast_region.get("left", 0))
+                    cast_top = int(action.top) + int(cast_region.get("top", 0))
+                    cast_right = cast_left + cast_w
+                    cast_bottom = cast_top + cast_h
+                    left = min(left, cast_left)
+                    top = min(top, cast_top)
+                    right = max(right, cast_right)
+                    bottom = max(bottom, cast_bottom)
+
+            for raw_buff in rois:
+                if not bool(raw_buff.get("enabled", True)):
+                    continue
+                buff_w = int(raw_buff.get("width", 0))
+                buff_h = int(raw_buff.get("height", 0))
+                if buff_w <= 1 or buff_h <= 1:
+                    continue
+                buff_left = int(action.left) + int(raw_buff.get("left", 0))
+                buff_top = int(action.top) + int(raw_buff.get("top", 0))
+                buff_right = buff_left + buff_w
+                buff_bottom = buff_top + buff_h
+                left = min(left, buff_left)
+                top = min(top, buff_top)
+                right = max(right, buff_right)
+                bottom = max(bottom, buff_bottom)
+
             left = max(0, min(left, mw - 1))
             top = max(0, min(top, mh - 1))
             right = max(left + 1, min(right, mw))
