@@ -291,6 +291,18 @@ class SettingsDialog(QDialog):
             "Minimum not-ready duration before classifying as full cooldown. Shorter dips are treated as GCD."
         )
         fl.addRow(_row_label("Cooldown min:"), self._spin_cooldown_min_ms)
+        self._combo_detection_region = QComboBox()
+        self._combo_detection_region.addItem("Top-Left Quadrant", "top_left")
+        self._combo_detection_region.addItem("Full Slot", "full")
+        region_help = QLabel("(?)")
+        region_help.setObjectName("hint")
+        region_help.setToolTip(
+            "Which area of each slot to check for cooldown darkness. Top-Left Quadrant is more precise for WoW's clockwise cooldown wipe."
+        )
+        region_row = QHBoxLayout()
+        region_row.addWidget(self._combo_detection_region)
+        region_row.addWidget(region_help)
+        fl.addRow(_row_label("Region:"), region_row)
         self._spin_brightness_drop = QSpinBox()
         self._spin_brightness_drop.setRange(0, 255)
         self._spin_brightness_drop.setMaximumWidth(48)
@@ -791,6 +803,7 @@ class SettingsDialog(QDialog):
         self._spin_padding.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_polling_fps.valueChanged.connect(self._on_detection_changed)
         self._spin_cooldown_min_ms.valueChanged.connect(self._on_detection_changed)
+        self._combo_detection_region.currentIndexChanged.connect(self._on_detection_changed)
         self._spin_brightness_drop.valueChanged.connect(self._on_detection_changed)
         self._slider_pixel_fraction.valueChanged.connect(self._on_detection_changed)
         self._slider_change_pixel_fraction.valueChanged.connect(self._on_detection_changed)
@@ -898,6 +911,7 @@ class SettingsDialog(QDialog):
         self._spin_brightness_drop.blockSignals(True)
         self._slider_pixel_fraction.blockSignals(True)
         self._slider_change_pixel_fraction.blockSignals(True)
+        self._combo_detection_region.blockSignals(True)
         self._edit_cooldown_change_ignore_by_slot.blockSignals(True)
         self._check_glow_enabled.blockSignals(True)
         self._spin_glow_ring_thickness.blockSignals(True)
@@ -916,6 +930,11 @@ class SettingsDialog(QDialog):
         self._spin_polling_fps.setValue(int(getattr(self._config, "polling_fps", 20)))
         self._spin_cooldown_min_ms.setValue(int(getattr(self._config, "cooldown_min_duration_ms", 2000)))
         self._spin_brightness_drop.setValue(self._config.brightness_drop_threshold)
+        region = (getattr(self._config, "detection_region", None) or "top_left").strip().lower()
+        if region not in ("full", "top_left"):
+            region = "top_left"
+        idx = self._combo_detection_region.findData(region)
+        self._combo_detection_region.setCurrentIndex(idx if idx >= 0 else 0)
         self._slider_pixel_fraction.setValue(int(self._config.cooldown_pixel_fraction * 100))
         self._pixel_fraction_label.setText(f"{self._config.cooldown_pixel_fraction:.2f}")
         self._slider_change_pixel_fraction.setValue(
@@ -1016,6 +1035,7 @@ class SettingsDialog(QDialog):
         self._spin_brightness_drop.blockSignals(False)
         self._slider_pixel_fraction.blockSignals(False)
         self._slider_change_pixel_fraction.blockSignals(False)
+        self._combo_detection_region.blockSignals(False)
         self._edit_cooldown_change_ignore_by_slot.blockSignals(False)
         self._check_glow_enabled.blockSignals(False)
         self._spin_glow_ring_thickness.blockSignals(False)
@@ -1556,6 +1576,10 @@ class SettingsDialog(QDialog):
     def _on_detection_changed(self) -> None:
         self._config.polling_fps = max(1, min(240, self._spin_polling_fps.value()))
         self._config.cooldown_min_duration_ms = max(0, min(10000, self._spin_cooldown_min_ms.value()))
+        region = (self._combo_detection_region.currentData() or "top_left")
+        if region not in ("full", "top_left"):
+            region = "top_left"
+        self._config.detection_region = region
         self._config.brightness_drop_threshold = self._spin_brightness_drop.value()
         self._config.cooldown_pixel_fraction = self._slider_pixel_fraction.value() / 100.0
         self._pixel_fraction_label.setText(f"{self._config.cooldown_pixel_fraction:.2f}")

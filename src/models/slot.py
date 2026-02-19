@@ -117,6 +117,10 @@ class AppConfig:
     cooldown_change_pixel_fraction: float = 0.30
     # Optional slot indexes where cooldown-change detector is ignored (dark detector still applies).
     cooldown_change_ignore_by_slot: list[int] = field(default_factory=list)
+    # Which sub-region of each slot to use for cooldown fraction: "full" or "top_left" (quadrant last cleared by WoW wipe).
+    detection_region: str = "top_left"
+    # Per-slot override (slot_index -> "full"|"top_left"). Empty for now; allows future per-slot region.
+    detection_region_overrides: dict[int, str] = field(default_factory=dict)
     cast_detection_enabled: bool = True
     cast_candidate_min_fraction: float = 0.05
     cast_candidate_max_fraction: float = 0.22
@@ -532,6 +536,20 @@ class AppConfig:
                 continue
             seen_change_ignore_slots.add(slot_idx)
             parsed_cooldown_change_ignore_slots.append(slot_idx)
+        raw_detection_region = (data.get("detection", {}).get("detection_region") or "top_left").strip().lower()
+        if raw_detection_region not in ("full", "top_left"):
+            raw_detection_region = "top_left"
+        raw_region_overrides = data.get("detection", {}).get("detection_region_overrides") or {}
+        parsed_region_overrides: dict[int, str] = {}
+        if isinstance(raw_region_overrides, dict):
+            for k, v in raw_region_overrides.items():
+                try:
+                    slot_idx = int(k)
+                    mode = (str(v) or "full").strip().lower()
+                    if mode in ("full", "top_left"):
+                        parsed_region_overrides[slot_idx] = mode
+                except (ValueError, TypeError):
+                    continue
         hotkey_mode = (data.get("automation_hotkey_mode", "toggle") or "toggle").strip().lower()
         if hotkey_mode not in ("toggle", "single_fire"):
             hotkey_mode = "toggle"
@@ -554,6 +572,8 @@ class AppConfig:
                 data.get("detection", {}).get("cooldown_pixel_fraction", 0.30),
             ),
             cooldown_change_ignore_by_slot=parsed_cooldown_change_ignore_slots,
+            detection_region=raw_detection_region,
+            detection_region_overrides=parsed_region_overrides,
             cast_detection_enabled=data.get("detection", {}).get("cast_detection_enabled", True),
             cast_candidate_min_fraction=data.get("detection", {}).get("cast_candidate_min_fraction", 0.05),
             cast_candidate_max_fraction=data.get("detection", {}).get("cast_candidate_max_fraction", 0.22),
@@ -672,6 +692,11 @@ class AppConfig:
                 "cooldown_change_ignore_by_slot": [
                     int(v) for v in list(self.cooldown_change_ignore_by_slot or [])
                 ],
+                "detection_region": self.detection_region,
+                "detection_region_overrides": {
+                    str(int(k)): str(v)
+                    for k, v in dict(self.detection_region_overrides or {}).items()
+                },
                 "cast_detection_enabled": self.cast_detection_enabled,
                 "cast_candidate_min_fraction": self.cast_candidate_min_fraction,
                 "cast_candidate_max_fraction": self.cast_candidate_max_fraction,
