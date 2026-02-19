@@ -133,6 +133,10 @@ class AppConfig:
     cooldown_min_duration_ms: int = 2000
     # Extra detector: absolute baseline change fraction (captures bright overlays).
     cooldown_change_pixel_fraction: float = 0.30
+    # Cooldown-release hysteresis controls to avoid early-ready flips.
+    cooldown_release_factor: float = 0.70
+    cooldown_release_confirm_ms: int = 260
+    cooldown_release_quadrant_fraction: float = 0.22
     # Optional slot indexes where cooldown-change detector is ignored (dark detector still applies).
     cooldown_change_ignore_by_slot: list[int] = field(default_factory=list)
     # Which sub-region of each slot to use for cooldown fraction: "full" or "top_left" (quadrant last cleared by WoW wipe).
@@ -156,6 +160,7 @@ class AppConfig:
     cast_bar_activity_threshold: float = 12.0
     cast_bar_history_frames: int = 8
     glow_enabled: bool = True
+    glow_mode: str = "color"
     glow_ring_thickness_px: int = 4
     glow_value_delta: int = 35
     # Optional per-slot override for glow_value_delta: {slot_index: delta}.
@@ -172,6 +177,19 @@ class AppConfig:
     glow_yellow_hue_max: int = 42
     glow_red_hue_max_low: int = 12
     glow_red_hue_min_high: int = 168
+    # Hybrid glow mode (movement-aware) tunables.
+    glow_motion_score_enter: float = 0.62
+    glow_motion_score_exit: float = 0.42
+    glow_motion_smoothing: float = 0.45
+    glow_motion_weight_color: float = 0.35
+    glow_motion_weight_ring: float = 0.55
+    glow_motion_weight_rotation: float = 0.45
+    glow_motion_center_penalty_weight: float = 0.35
+    glow_motion_cooldown_penalty_weight: float = 0.25
+    glow_motion_ring_delta_threshold: float = 14.0
+    glow_motion_rotation_bins: int = 24
+    glow_motion_min_hold_ms: int = 140
+    glow_motion_min_off_ms: int = 80
     ocr_enabled: bool = True
     overlay_enabled: bool = True
     overlay_border_color: str = "#00FF00"
@@ -752,6 +770,18 @@ class AppConfig:
                 "cooldown_change_pixel_fraction",
                 data.get("detection", {}).get("cooldown_pixel_fraction", 0.30),
             ),
+            cooldown_release_factor=float(
+                data.get("detection", {}).get("cooldown_release_factor", 0.70)
+            ),
+            cooldown_release_confirm_ms=int(
+                data.get("detection", {}).get("cooldown_release_confirm_ms", 260)
+            ),
+            cooldown_release_quadrant_fraction=float(
+                data.get("detection", {}).get(
+                    "cooldown_release_quadrant_fraction",
+                    0.22,
+                )
+            ),
             cooldown_change_ignore_by_slot=parsed_cooldown_change_ignore_slots,
             detection_region=raw_detection_region,
             detection_region_overrides=parsed_region_overrides,
@@ -795,6 +825,9 @@ class AppConfig:
                 "cast_bar_history_frames", 8
             ),
             glow_enabled=data.get("detection", {}).get("glow_enabled", True),
+            glow_mode=str(data.get("detection", {}).get("glow_mode", "color") or "color")
+            .strip()
+            .lower(),
             glow_ring_thickness_px=int(
                 data.get("detection", {}).get("glow_ring_thickness_px", 4)
             ),
@@ -828,6 +861,48 @@ class AppConfig:
             ),
             glow_red_hue_min_high=int(
                 data.get("detection", {}).get("glow_red_hue_min_high", 168)
+            ),
+            glow_motion_score_enter=float(
+                data.get("detection", {}).get("glow_motion_score_enter", 0.62)
+            ),
+            glow_motion_score_exit=float(
+                data.get("detection", {}).get("glow_motion_score_exit", 0.42)
+            ),
+            glow_motion_smoothing=float(
+                data.get("detection", {}).get("glow_motion_smoothing", 0.45)
+            ),
+            glow_motion_weight_color=float(
+                data.get("detection", {}).get("glow_motion_weight_color", 0.35)
+            ),
+            glow_motion_weight_ring=float(
+                data.get("detection", {}).get("glow_motion_weight_ring", 0.55)
+            ),
+            glow_motion_weight_rotation=float(
+                data.get("detection", {}).get("glow_motion_weight_rotation", 0.45)
+            ),
+            glow_motion_center_penalty_weight=float(
+                data.get("detection", {}).get(
+                    "glow_motion_center_penalty_weight", 0.35
+                )
+            ),
+            glow_motion_cooldown_penalty_weight=float(
+                data.get("detection", {}).get(
+                    "glow_motion_cooldown_penalty_weight", 0.25
+                )
+            ),
+            glow_motion_ring_delta_threshold=float(
+                data.get("detection", {}).get(
+                    "glow_motion_ring_delta_threshold", 14.0
+                )
+            ),
+            glow_motion_rotation_bins=int(
+                data.get("detection", {}).get("glow_motion_rotation_bins", 24)
+            ),
+            glow_motion_min_hold_ms=int(
+                data.get("detection", {}).get("glow_motion_min_hold_ms", 140)
+            ),
+            glow_motion_min_off_ms=int(
+                data.get("detection", {}).get("glow_motion_min_off_ms", 80)
             ),
             ocr_enabled=data.get("detection", {}).get("ocr_enabled", True),
             overlay_enabled=data.get("overlay", {}).get("enabled", True),
@@ -906,6 +981,33 @@ class AppConfig:
             ]
             cfg.active_priority_profile_id = "default"
         cfg._normalize_profiles()
+        if cfg.glow_mode not in ("color", "hybrid_motion"):
+            cfg.glow_mode = "color"
+        cfg.cooldown_release_factor = max(0.25, min(1.0, float(cfg.cooldown_release_factor)))
+        cfg.cooldown_release_confirm_ms = max(0, int(cfg.cooldown_release_confirm_ms))
+        cfg.cooldown_release_quadrant_fraction = max(
+            0.0, min(1.0, float(cfg.cooldown_release_quadrant_fraction))
+        )
+        cfg.glow_motion_score_enter = max(0.1, float(cfg.glow_motion_score_enter))
+        cfg.glow_motion_score_exit = max(0.05, float(cfg.glow_motion_score_exit))
+        if cfg.glow_motion_score_exit >= cfg.glow_motion_score_enter:
+            cfg.glow_motion_score_exit = max(0.05, cfg.glow_motion_score_enter * 0.75)
+        cfg.glow_motion_smoothing = max(0.0, min(1.0, float(cfg.glow_motion_smoothing)))
+        cfg.glow_motion_weight_color = max(0.0, float(cfg.glow_motion_weight_color))
+        cfg.glow_motion_weight_ring = max(0.0, float(cfg.glow_motion_weight_ring))
+        cfg.glow_motion_weight_rotation = max(0.0, float(cfg.glow_motion_weight_rotation))
+        cfg.glow_motion_center_penalty_weight = max(
+            0.0, float(cfg.glow_motion_center_penalty_weight)
+        )
+        cfg.glow_motion_cooldown_penalty_weight = max(
+            0.0, float(cfg.glow_motion_cooldown_penalty_weight)
+        )
+        cfg.glow_motion_ring_delta_threshold = max(
+            1.0, float(cfg.glow_motion_ring_delta_threshold)
+        )
+        cfg.glow_motion_rotation_bins = max(8, int(cfg.glow_motion_rotation_bins))
+        cfg.glow_motion_min_hold_ms = max(0, int(cfg.glow_motion_min_hold_ms))
+        cfg.glow_motion_min_off_ms = max(0, int(cfg.glow_motion_min_off_ms))
         return cfg
 
     def to_dict(self) -> dict:
@@ -927,6 +1029,9 @@ class AppConfig:
                 "cooldown_pixel_fraction": self.cooldown_pixel_fraction,
                 "cooldown_min_duration_ms": self.cooldown_min_duration_ms,
                 "cooldown_change_pixel_fraction": self.cooldown_change_pixel_fraction,
+                "cooldown_release_factor": self.cooldown_release_factor,
+                "cooldown_release_confirm_ms": self.cooldown_release_confirm_ms,
+                "cooldown_release_quadrant_fraction": self.cooldown_release_quadrant_fraction,
                 "cooldown_change_ignore_by_slot": [
                     int(v) for v in list(self.cooldown_change_ignore_by_slot or [])
                 ],
@@ -955,6 +1060,7 @@ class AppConfig:
                 "cast_bar_activity_threshold": self.cast_bar_activity_threshold,
                 "cast_bar_history_frames": self.cast_bar_history_frames,
                 "glow_enabled": self.glow_enabled,
+                "glow_mode": self.glow_mode,
                 "glow_ring_thickness_px": self.glow_ring_thickness_px,
                 "glow_value_delta": self.glow_value_delta,
                 "glow_value_delta_by_slot": {
@@ -976,6 +1082,18 @@ class AppConfig:
                 "glow_yellow_hue_max": self.glow_yellow_hue_max,
                 "glow_red_hue_max_low": self.glow_red_hue_max_low,
                 "glow_red_hue_min_high": self.glow_red_hue_min_high,
+                "glow_motion_score_enter": self.glow_motion_score_enter,
+                "glow_motion_score_exit": self.glow_motion_score_exit,
+                "glow_motion_smoothing": self.glow_motion_smoothing,
+                "glow_motion_weight_color": self.glow_motion_weight_color,
+                "glow_motion_weight_ring": self.glow_motion_weight_ring,
+                "glow_motion_weight_rotation": self.glow_motion_weight_rotation,
+                "glow_motion_center_penalty_weight": self.glow_motion_center_penalty_weight,
+                "glow_motion_cooldown_penalty_weight": self.glow_motion_cooldown_penalty_weight,
+                "glow_motion_ring_delta_threshold": self.glow_motion_ring_delta_threshold,
+                "glow_motion_rotation_bins": self.glow_motion_rotation_bins,
+                "glow_motion_min_hold_ms": self.glow_motion_min_hold_ms,
+                "glow_motion_min_off_ms": self.glow_motion_min_off_ms,
                 "ocr_enabled": self.ocr_enabled,
             },
             "overlay": {

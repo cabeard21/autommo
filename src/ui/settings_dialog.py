@@ -383,6 +383,13 @@ class SettingsDialog(QDialog):
             "If enabled, confirmed icon glow can mark a slot ready even when generic change-delta says not-ready."
         )
         fl.addRow("", self._check_glow_enabled)
+        self._combo_glow_mode = QComboBox()
+        self._combo_glow_mode.addItem("Color (legacy)", "color")
+        self._combo_glow_mode.addItem("Hybrid motion", "hybrid_motion")
+        self._combo_glow_mode.setToolTip(
+            "Glow detection mode. Hybrid motion combines color with ring movement and rotation cues."
+        )
+        fl.addRow(_row_label("Glow mode:"), self._combo_glow_mode)
         glow_row = QHBoxLayout()
         self._spin_glow_ring_thickness = QSpinBox()
         self._spin_glow_ring_thickness.setRange(1, 12)
@@ -882,6 +889,7 @@ class SettingsDialog(QDialog):
         self._edit_cooldown_change_ignore_by_slot.editingFinished.connect(self._on_detection_changed)
         self._edit_cooldown_group_by_slot.editingFinished.connect(self._on_detection_changed)
         self._check_glow_enabled.toggled.connect(self._on_detection_changed)
+        self._combo_glow_mode.currentIndexChanged.connect(self._on_detection_changed)
         self._spin_glow_ring_thickness.valueChanged.connect(self._on_detection_changed)
         self._spin_glow_value_delta.valueChanged.connect(self._on_detection_changed)
         self._spin_glow_saturation_min.valueChanged.connect(self._on_detection_changed)
@@ -1002,6 +1010,7 @@ class SettingsDialog(QDialog):
         self._edit_cooldown_change_ignore_by_slot.blockSignals(True)
         self._edit_cooldown_group_by_slot.blockSignals(True)
         self._check_glow_enabled.blockSignals(True)
+        self._combo_glow_mode.blockSignals(True)
         self._spin_glow_ring_thickness.blockSignals(True)
         self._spin_glow_value_delta.blockSignals(True)
         self._spin_glow_saturation_min.blockSignals(True)
@@ -1042,6 +1051,11 @@ class SettingsDialog(QDialog):
             )
         )
         self._check_glow_enabled.setChecked(bool(getattr(self._config, "glow_enabled", True)))
+        glow_mode = str(getattr(self._config, "glow_mode", "color") or "color").strip().lower()
+        if glow_mode not in ("color", "hybrid_motion"):
+            glow_mode = "color"
+        idx = self._combo_glow_mode.findData(glow_mode)
+        self._combo_glow_mode.setCurrentIndex(idx if idx >= 0 else 0)
         self._spin_glow_ring_thickness.setValue(int(getattr(self._config, "glow_ring_thickness_px", 4)))
         self._spin_glow_value_delta.setValue(int(getattr(self._config, "glow_value_delta", 35)))
         self._spin_glow_saturation_min.setValue(int(getattr(self._config, "glow_saturation_min", 80)))
@@ -1132,6 +1146,7 @@ class SettingsDialog(QDialog):
         self._edit_cooldown_change_ignore_by_slot.blockSignals(False)
         self._edit_cooldown_group_by_slot.blockSignals(False)
         self._check_glow_enabled.blockSignals(False)
+        self._combo_glow_mode.blockSignals(False)
         self._spin_glow_ring_thickness.blockSignals(False)
         self._spin_glow_value_delta.blockSignals(False)
         self._spin_glow_saturation_min.blockSignals(False)
@@ -1302,6 +1317,13 @@ class SettingsDialog(QDialog):
                 self._monitor_combo.setCurrentIndex(clamped - 1)
         finally:
             self._monitor_combo.blockSignals(False)
+
+    def selected_active_form_id(self) -> str:
+        """Return the form selected in Settings for manual calibration actions."""
+        form_id = str(self._combo_active_form.currentData() or "").strip().lower()
+        if form_id:
+            return form_id
+        return str(getattr(self._config, "active_form_id", "normal") or "normal").strip().lower() or "normal"
 
     def _emit_config(self) -> None:
         self.config_updated.emit(self._config)
@@ -1875,6 +1897,10 @@ class SettingsDialog(QDialog):
             self._edit_cooldown_group_by_slot.text()
         )
         self._config.glow_enabled = self._check_glow_enabled.isChecked()
+        glow_mode = str(self._combo_glow_mode.currentData() or "color").strip().lower()
+        if glow_mode not in ("color", "hybrid_motion"):
+            glow_mode = "color"
+        self._config.glow_mode = glow_mode
         self._config.glow_ring_thickness_px = self._spin_glow_ring_thickness.value()
         self._config.glow_value_delta = self._spin_glow_value_delta.value()
         self._config.glow_value_delta_by_slot = self._parse_glow_value_delta_by_slot(

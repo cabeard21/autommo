@@ -44,6 +44,11 @@ class _SlotRuntime:
     glow_candidate_frames: int = 0
     yellow_glow_candidate_frames: int = 0
     red_glow_candidate_frames: int = 0
+    prev_glow_gray: Optional[np.ndarray] = None
+    prev_glow_ring_bins: Optional[np.ndarray] = None
+    glow_motion_score: float = 0.0
+    glow_motion_ready: bool = False
+    glow_motion_last_change_at: float = 0.0
 
 
 @dataclass
@@ -58,6 +63,7 @@ class _BuffRuntime:
 class _CooldownGroupRuntime:
     was_cooldown: bool = False
     cooldown_candidate_started_at: Optional[float] = None
+    cooldown_release_candidate_started_at: Optional[float] = None
 
 
 class SlotAnalyzer:
@@ -273,6 +279,206 @@ class SlotAnalyzer:
             red_fraction >= red_glow_frac_thresh,
             red_fraction,
         )
+
+    def _glow_mode(self) -> str:
+        mode = str(getattr(self._config, "glow_mode", "color") or "color").strip().lower()
+        return mode if mode in ("color", "hybrid_motion") else "color"
+
+    @staticmethod
+    def _angular_ring_bins(
+        gray: np.ndarray,
+        ring_mask: np.ndarray,
+        bins: int,
+    ) -> np.ndarray:
+        h, w = gray.shape
+        if h <= 1 or w <= 1 or bins <= 1:
+            return np.zeros((max(1, bins),), dtype=np.float32)
+        yy, xx = np.indices((h, w))
+        cy = (h - 1) * 0.5
+        cx = (w - 1) * 0.5
+        ang = np.arctan2(yy - cy, xx - cx)  # [-pi, pi]
+        ang_n = (ang + np.pi) / (2.0 * np.pi)  # [0, 1)
+        idx = np.floor(ang_n * bins).astype(np.int32)
+        idx = np.clip(idx, 0, bins - 1)
+        vals = gray.astype(np.float32)[ring_mask]
+        ids = idx[ring_mask]
+        sums = np.bincount(ids, weights=vals, minlength=bins).astype(np.float32)
+        counts = np.bincount(ids, minlength=bins).astype(np.float32)
+        return sums / np.maximum(counts, 1.0)
+
+    @staticmethod
+    def _rotation_motion_score(
+        curr_bins: np.ndarray,
+        prev_bins: Optional[np.ndarray],
+    ) -> float:
+        if prev_bins is None or prev_bins.shape != curr_bins.shape or curr_bins.size < 4:
+            return 0.0
+        d0 = float(np.mean(np.abs(curr_bins - prev_bins)))
+        if d0 <= 1e-6:
+            return 0.0
+        shift_limit = max(1, min(3, curr_bins.size // 8))
+        best_shift = d0
+        for s in range(1, shift_limit + 1):
+            ds_pos = float(np.mean(np.abs(curr_bins - np.roll(prev_bins, s))))
+            ds_neg = float(np.mean(np.abs(curr_bins - np.roll(prev_bins, -s))))
+            best_shift = min(best_shift, ds_pos, ds_neg)
+        gain = max(0.0, d0 - best_shift)
+        return max(0.0, min(1.0, gain / max(1.0, d0)))
+
+    @staticmethod
+    def _max_quadrant_fraction(mask: np.ndarray) -> float:
+        if mask.size == 0:
+            return 0.0
+        h, w = mask.shape
+        if h < 2 or w < 2:
+            return float(np.mean(mask))
+        hh = h // 2
+        ww = w // 2
+        q1 = mask[:hh, :ww]
+        q2 = mask[:hh, ww:]
+        q3 = mask[hh:, :ww]
+        q4 = mask[hh:, ww:]
+        parts = [q1, q2, q3, q4]
+        vals = [float(np.mean(q)) for q in parts if q.size > 0]
+        return max(vals) if vals else 0.0
+
+    def _hybrid_glow_signal(
+        self,
+        slot_index: int,
+        slot_img: np.ndarray,
+        baseline_bright: np.ndarray,
+        yellow_glow_fraction: float,
+        red_glow_fraction: float,
+        darkened_fraction: float,
+        changed_fraction: float,
+        raw_cooldown: bool,
+        now: float,
+    ) -> tuple[bool, bool]:
+        runtime = self._runtime.setdefault(slot_index, _SlotRuntime())
+        h, w = baseline_bright.shape
+        if slot_img.shape[0] != h or slot_img.shape[1] != w:
+            runtime.prev_glow_gray = None
+            runtime.prev_glow_ring_bins = None
+            runtime.glow_motion_score = 0.0
+            runtime.glow_motion_ready = False
+            return False, False
+
+        gray = cv2.cvtColor(slot_img, cv2.COLOR_BGR2GRAY)
+        ring_thickness = int(getattr(self._config, "glow_ring_thickness_px", 4) or 4)
+        ring = self._ring_mask(h, w, ring_thickness)
+        if not np.any(ring):
+            runtime.prev_glow_gray = None
+            runtime.prev_glow_ring_bins = None
+            runtime.glow_motion_score = 0.0
+            runtime.glow_motion_ready = False
+            return False, False
+
+        ring_delta = 0.0
+        center_delta = 0.0
+        prev_gray = runtime.prev_glow_gray
+        if prev_gray is not None and prev_gray.shape == gray.shape:
+            abs_diff = np.abs(gray.astype(np.int16) - prev_gray.astype(np.int16)).astype(
+                np.float32
+            )
+            ring_vals = abs_diff[ring]
+            if ring_vals.size > 0:
+                ring_delta = float(np.mean(ring_vals))
+            center = np.logical_not(ring)
+            center_vals = abs_diff[center]
+            if center_vals.size > 0:
+                center_delta = float(np.mean(center_vals))
+
+        bins = max(8, int(getattr(self._config, "glow_motion_rotation_bins", 24) or 24))
+        curr_ring_bins = self._angular_ring_bins(gray, ring, bins)
+        rot_score = self._rotation_motion_score(curr_ring_bins, runtime.prev_glow_ring_bins)
+
+        ring_delta_thresh = float(
+            getattr(self._config, "glow_motion_ring_delta_threshold", 14.0) or 14.0
+        )
+        ring_score = max(0.0, min(1.5, ring_delta / max(1.0, ring_delta_thresh)))
+
+        # Bright ring fraction independent of hue, for white/blue rotating procs.
+        val = cv2.cvtColor(slot_img, cv2.COLOR_BGR2HSV)[:, :, 2].astype(np.int16)
+        base = baseline_bright.astype(np.int16)
+        value_delta = int(getattr(self._config, "glow_value_delta", 35) or 35)
+        slot_overrides = getattr(self._config, "glow_value_delta_by_slot", {}) or {}
+        if slot_index in slot_overrides:
+            value_delta = int(slot_overrides[slot_index])
+        # Hybrid uses a softer bright delta than pure color mode.
+        hybrid_value_delta = max(10, int(round(value_delta * 0.35)))
+        bright_ring_fraction = (
+            float(np.mean((val >= (base + hybrid_value_delta))[ring])) if np.any(ring) else 0.0
+        )
+        bright_score = max(0.0, min(1.6, bright_ring_fraction / 0.14))
+
+        y_thresh = float(getattr(self._config, "glow_ring_fraction", 0.18) or 0.18)
+        ring_frac_overrides = getattr(self._config, "glow_ring_fraction_by_slot", {}) or {}
+        if slot_index in ring_frac_overrides:
+            y_thresh = float(ring_frac_overrides[slot_index])
+        r_thresh = float(getattr(self._config, "glow_red_ring_fraction", y_thresh) or y_thresh)
+        color_score = max(
+            yellow_glow_fraction / max(1e-6, y_thresh),
+            red_glow_fraction / max(1e-6, r_thresh),
+        )
+        color_score = max(0.0, min(1.6, float(color_score)))
+        color_score = max(color_score, bright_score)
+
+        center_penalty = max(0.0, center_delta - (ring_delta * 1.10)) / max(
+            1.0, ring_delta_thresh
+        )
+        center_penalty = max(0.0, min(1.5, center_penalty))
+
+        cooldown_penalty = 0.0
+        if raw_cooldown and (darkened_fraction >= 0.22 or changed_fraction >= 0.75):
+            cooldown_penalty = max(darkened_fraction, changed_fraction)
+            cooldown_penalty = max(0.0, min(1.5, cooldown_penalty * 2.0))
+
+        raw_score = (
+            float(getattr(self._config, "glow_motion_weight_color", 0.35) or 0.35)
+            * color_score
+            + float(getattr(self._config, "glow_motion_weight_ring", 0.55) or 0.55)
+            * ring_score
+            + float(getattr(self._config, "glow_motion_weight_rotation", 0.45) or 0.45)
+            * rot_score
+            - float(
+                getattr(self._config, "glow_motion_center_penalty_weight", 0.35) or 0.35
+            )
+            * center_penalty
+            - float(
+                getattr(self._config, "glow_motion_cooldown_penalty_weight", 0.25) or 0.25
+            )
+            * cooldown_penalty
+        )
+
+        alpha = float(getattr(self._config, "glow_motion_smoothing", 0.45) or 0.45)
+        alpha = max(0.0, min(1.0, alpha))
+        runtime.glow_motion_score = ((1.0 - alpha) * runtime.glow_motion_score) + (
+            alpha * raw_score
+        )
+
+        enter = float(getattr(self._config, "glow_motion_score_enter", 0.62) or 0.62)
+        exit_ = float(getattr(self._config, "glow_motion_score_exit", 0.42) or 0.42)
+        if exit_ >= enter:
+            exit_ = enter * 0.75
+        hold_ms = max(0.0, float(getattr(self._config, "glow_motion_min_hold_ms", 140) or 140))
+        off_ms = max(0.0, float(getattr(self._config, "glow_motion_min_off_ms", 80) or 80))
+        elapsed_ms = (now - runtime.glow_motion_last_change_at) * 1000.0
+
+        if runtime.glow_motion_ready:
+            if runtime.glow_motion_score <= exit_ and elapsed_ms >= hold_ms:
+                runtime.glow_motion_ready = False
+                runtime.glow_motion_last_change_at = now
+        else:
+            if runtime.glow_motion_score >= enter and elapsed_ms >= off_ms:
+                runtime.glow_motion_ready = True
+                runtime.glow_motion_last_change_at = now
+
+        candidate = runtime.glow_motion_score >= exit_
+        ready = runtime.glow_motion_ready
+
+        runtime.prev_glow_gray = gray.copy()
+        runtime.prev_glow_ring_bins = curr_ring_bins.copy()
+        return candidate, ready
 
     def _forms_from_config(self) -> set[str]:
         raw_forms = list(getattr(self._config, "forms", []) or [])
@@ -1046,6 +1252,7 @@ class SlotAnalyzer:
         glow_confirm_frames = max(
             1, int(getattr(self._config, "glow_confirm_frames", 2) or 2)
         )
+        glow_mode = self._glow_mode()
         cast_bar_active = self._cast_bar_active(
             frame,
             self._frame_action_origin_x,
@@ -1083,7 +1290,7 @@ class SlotAnalyzer:
 
         for slot_cfg in self._slot_configs:
             slot_img = self.crop_slot(frame, slot_cfg)
-            baseline_bright = self._baselines.get(slot_cfg.index)
+            baseline_bright = self._baseline_for_slot(slot_cfg.index)
             region_mode = self._detection_region_overrides.get(
                 slot_cfg.index, self._detection_region
             )
@@ -1111,6 +1318,11 @@ class SlotAnalyzer:
                 or baseline_bright_for_frac is None
                 or baseline_bright_for_frac.shape != current_bright.shape
             ):
+                runtime = self._runtime.setdefault(slot_cfg.index, _SlotRuntime())
+                runtime.prev_glow_gray = None
+                runtime.prev_glow_ring_bins = None
+                runtime.glow_motion_score = 0.0
+                runtime.glow_motion_ready = False
                 state = SlotState.UNKNOWN
                 darkened_fraction = 0.0
                 cast_progress = None
@@ -1146,21 +1358,61 @@ class SlotAnalyzer:
                     group_id,
                     _CooldownGroupRuntime(),
                 )
-                cooldown_groups_raw_seen[group_id] = cooldown_groups_raw_seen.get(
-                    group_id, False
-                ) or bool(raw_cooldown)
                 prev_state = runtime.state
                 if runtime.state == SlotState.ON_COOLDOWN or group_runtime.was_cooldown:
-                    release_factor = 0.5
+                    release_factor = float(
+                        getattr(self._config, "cooldown_release_factor", 0.70) or 0.70
+                    )
+                    release_factor = max(0.25, min(1.0, release_factor))
                     dark_release_thresh = frac_thresh * release_factor
                     change_release_thresh = change_frac_thresh * release_factor
                     hold_dark_cooldown = darkened_fraction >= dark_release_thresh
                     hold_changed_cooldown = (not ignore_change_for_slot) and (
                         changed_fraction >= change_release_thresh
                     )
-                    raw_cooldown = (
-                        raw_cooldown or hold_dark_cooldown or hold_changed_cooldown
+                    dark_mask = drop > thresh
+                    max_quad_dark_fraction = self._max_quadrant_fraction(dark_mask)
+                    quad_release_thresh = float(
+                        getattr(
+                            self._config,
+                            "cooldown_release_quadrant_fraction",
+                            max(frac_thresh, 0.22),
+                        )
+                        or max(frac_thresh, 0.22)
                     )
+                    hold_quadrant_cooldown = (
+                        max_quad_dark_fraction >= quad_release_thresh
+                    )
+                    raw_cooldown = (
+                        raw_cooldown
+                        or hold_dark_cooldown
+                        or hold_changed_cooldown
+                        or hold_quadrant_cooldown
+                    )
+                release_confirm_sec = max(
+                    0.0,
+                    (
+                        getattr(self._config, "cooldown_release_confirm_ms", 260) or 260
+                    )
+                    / 1000.0,
+                )
+                if group_runtime.was_cooldown:
+                    if raw_cooldown:
+                        group_runtime.cooldown_release_candidate_started_at = None
+                    else:
+                        if group_runtime.cooldown_release_candidate_started_at is None:
+                            group_runtime.cooldown_release_candidate_started_at = now
+                        if (
+                            now - group_runtime.cooldown_release_candidate_started_at
+                        ) < release_confirm_sec:
+                            raw_cooldown = True
+                        else:
+                            group_runtime.cooldown_release_candidate_started_at = None
+                else:
+                    group_runtime.cooldown_release_candidate_started_at = None
+                cooldown_groups_raw_seen[group_id] = cooldown_groups_raw_seen.get(
+                    group_id, False
+                ) or bool(raw_cooldown)
                 cooldown_pending = False
                 if raw_cooldown:
                     if group_runtime.cooldown_candidate_started_at is None:
@@ -1173,7 +1425,7 @@ class SlotAnalyzer:
                     ):
                         cooldown_pending = True
                 else:
-                    runtime.cooldown_candidate_started_at = None
+                    group_runtime.cooldown_candidate_started_at = None
                 (
                     state,
                     cast_progress,
@@ -1202,27 +1454,52 @@ class SlotAnalyzer:
                     red_glow_candidate,
                     red_glow_fraction,
                 ) = self._glow_signal(slot_cfg.index, slot_img, baseline_bright)
-                glow_candidate = yellow_glow_candidate or red_glow_candidate
-                glow_fraction = max(yellow_glow_fraction, red_glow_fraction)
-                if glow_candidate:
-                    runtime.glow_candidate_frames += 1
+
+                if glow_mode == "hybrid_motion":
+                    hybrid_candidate, hybrid_ready = self._hybrid_glow_signal(
+                        slot_cfg.index,
+                        slot_img,
+                        baseline_bright,
+                        yellow_glow_fraction,
+                        red_glow_fraction,
+                        darkened_fraction,
+                        changed_fraction,
+                        raw_cooldown,
+                        now,
+                    )
+                    yellow_glow_candidate = hybrid_candidate
+                    yellow_glow_ready = hybrid_ready
                 else:
-                    runtime.glow_candidate_frames = 0
-                if yellow_glow_candidate:
-                    runtime.yellow_glow_candidate_frames += 1
-                else:
-                    runtime.yellow_glow_candidate_frames = 0
+                    if yellow_glow_candidate:
+                        runtime.yellow_glow_candidate_frames += 1
+                    else:
+                        runtime.yellow_glow_candidate_frames = 0
+                    yellow_glow_ready = (
+                        runtime.yellow_glow_candidate_frames >= glow_confirm_frames
+                    )
+                    runtime.prev_glow_gray = None
+                    runtime.prev_glow_ring_bins = None
+                    runtime.glow_motion_score = 0.0
+                    runtime.glow_motion_ready = False
+
                 if red_glow_candidate:
                     runtime.red_glow_candidate_frames += 1
                 else:
                     runtime.red_glow_candidate_frames = 0
-                glow_ready = runtime.glow_candidate_frames >= glow_confirm_frames
-                yellow_glow_ready = (
-                    runtime.yellow_glow_candidate_frames >= glow_confirm_frames
-                )
                 red_glow_ready = (
                     runtime.red_glow_candidate_frames >= glow_confirm_frames
                 )
+                glow_candidate = yellow_glow_candidate or red_glow_candidate
+                glow_fraction = max(yellow_glow_fraction, red_glow_fraction)
+                if glow_mode == "hybrid_motion":
+                    glow_ready = bool(yellow_glow_ready or red_glow_ready)
+                    runtime.glow_candidate_frames = int(yellow_glow_candidate)
+                else:
+                    if glow_candidate:
+                        runtime.glow_candidate_frames += 1
+                    else:
+                        runtime.glow_candidate_frames = 0
+                    glow_ready = runtime.glow_candidate_frames >= glow_confirm_frames
                 allow_any_glow_override = slot_cfg.index in override_slots
                 # Red glow is an explicit "refresh now" cue for DoT-style rules.
                 # Allow it to override ON_COOLDOWN regardless of darkening source.
@@ -1270,6 +1547,7 @@ class SlotAnalyzer:
             raw_seen = cooldown_groups_raw_seen.get(group_id, False)
             if not raw_seen:
                 group_runtime.cooldown_candidate_started_at = None
+                group_runtime.cooldown_release_candidate_started_at = None
                 group_runtime.was_cooldown = False
         self._analyze_frame_count += 1
         if logger.isEnabledFor(logging.DEBUG) and self._analyze_frame_count % 30 == 0:
