@@ -114,6 +114,24 @@ class SlotAnalyzer:
         self._detection_region_overrides: dict[int, str] = dict(
             getattr(config, "detection_region_overrides", None) or {}
         )
+        self._detection_region_overrides_by_form: dict[str, dict[int, str]] = {}
+        for form_id, overrides in dict(
+            getattr(config, "detection_region_overrides_by_form", None) or {}
+        ).items():
+            fid = str(form_id or "").strip().lower()
+            if not fid or not isinstance(overrides, dict):
+                continue
+            parsed: dict[int, str] = {}
+            for slot_idx, mode in overrides.items():
+                try:
+                    idx = int(slot_idx)
+                except Exception:
+                    continue
+                normalized_mode = str(mode or "").strip().lower()
+                if normalized_mode in ("full", "top_left"):
+                    parsed[idx] = normalized_mode
+            if parsed:
+                self._detection_region_overrides_by_form[fid] = parsed
         self._active_form_id: str = "normal"
         self._pending_form_id: str = "normal"
         self._pending_form_frames: int = 0
@@ -164,6 +182,24 @@ class SlotAnalyzer:
         self._detection_region_overrides = dict(
             getattr(config, "detection_region_overrides", None) or {}
         )
+        self._detection_region_overrides_by_form = {}
+        for form_id, overrides in dict(
+            getattr(config, "detection_region_overrides_by_form", None) or {}
+        ).items():
+            fid = str(form_id or "").strip().lower()
+            if not fid or not isinstance(overrides, dict):
+                continue
+            parsed: dict[int, str] = {}
+            for slot_idx, mode in overrides.items():
+                try:
+                    idx = int(slot_idx)
+                except Exception:
+                    continue
+                normalized_mode = str(mode or "").strip().lower()
+                if normalized_mode in ("full", "top_left"):
+                    parsed[idx] = normalized_mode
+            if parsed:
+                self._detection_region_overrides_by_form[fid] = parsed
         self._recompute_slot_layout()
         if layout_changed:
             self._baselines.clear()
@@ -587,6 +623,14 @@ class SlotAnalyzer:
         if not group_id:
             return f"slot:{slot_index}"
         return str(group_id).strip().lower() or f"slot:{slot_index}"
+
+    def _effective_region_mode_overrides(self) -> dict[int, str]:
+        active_form = self.active_form_id()
+        merged = dict(self._detection_region_overrides or {})
+        form_overrides = self._detection_region_overrides_by_form.get(active_form, {})
+        if isinstance(form_overrides, dict):
+            merged.update(form_overrides)
+        return merged
 
     def calibrate_baselines(
         self, frame: np.ndarray, form_id: Optional[str] = None
@@ -1287,13 +1331,12 @@ class SlotAnalyzer:
             if str(v).strip()
         }
         cooldown_groups_raw_seen: dict[str, bool] = {}
+        region_overrides = self._effective_region_mode_overrides()
 
         for slot_cfg in self._slot_configs:
             slot_img = self.crop_slot(frame, slot_cfg)
             baseline_bright = self._baseline_for_slot(slot_cfg.index)
-            region_mode = self._detection_region_overrides.get(
-                slot_cfg.index, self._detection_region
-            )
+            region_mode = region_overrides.get(slot_cfg.index, self._detection_region)
             if region_mode == "top_left" and baseline_bright is not None:
                 h, w = slot_img.shape[:2]
                 slot_detect = slot_img[: h // 2, : w // 2]

@@ -143,6 +143,11 @@ class AppConfig:
     detection_region: str = "top_left"
     # Per-slot override (slot_index -> "full"|"top_left"). Empty for now; allows future per-slot region.
     detection_region_overrides: dict[int, str] = field(default_factory=dict)
+    # Per-form per-slot detection-region override:
+    # {form_id: {slot_index: "full"|"top_left"}}.
+    detection_region_overrides_by_form: dict[str, dict[int, str]] = field(
+        default_factory=dict
+    )
     # Optional cooldown group sharing across slots: {slot_index: "group_id"}.
     cooldown_group_by_slot: dict[int, str] = field(default_factory=dict)
     cast_detection_enabled: bool = True
@@ -731,6 +736,26 @@ class AppConfig:
                         parsed_region_overrides[slot_idx] = mode
                 except (ValueError, TypeError):
                     continue
+        raw_region_overrides_by_form = (
+            data.get("detection", {}).get("detection_region_overrides_by_form") or {}
+        )
+        parsed_region_overrides_by_form: dict[str, dict[int, str]] = {}
+        if isinstance(raw_region_overrides_by_form, dict):
+            for raw_form_id, raw_form_overrides in raw_region_overrides_by_form.items():
+                form_id = str(raw_form_id or "").strip().lower()
+                if not form_id or not isinstance(raw_form_overrides, dict):
+                    continue
+                parsed_form_overrides: dict[int, str] = {}
+                for k, v in raw_form_overrides.items():
+                    try:
+                        slot_idx = int(k)
+                        mode = (str(v) or "full").strip().lower()
+                        if mode in ("full", "top_left"):
+                            parsed_form_overrides[slot_idx] = mode
+                    except (ValueError, TypeError):
+                        continue
+                if parsed_form_overrides:
+                    parsed_region_overrides_by_form[form_id] = parsed_form_overrides
         parsed_cooldown_group_by_slot: dict[int, str] = {}
         for k, v in raw_cooldown_group_by_slot.items():
             try:
@@ -785,6 +810,7 @@ class AppConfig:
             cooldown_change_ignore_by_slot=parsed_cooldown_change_ignore_slots,
             detection_region=raw_detection_region,
             detection_region_overrides=parsed_region_overrides,
+            detection_region_overrides_by_form=parsed_region_overrides_by_form,
             cooldown_group_by_slot=parsed_cooldown_group_by_slot,
             cast_detection_enabled=data.get("detection", {}).get(
                 "cast_detection_enabled", True
@@ -1039,6 +1065,17 @@ class AppConfig:
                 "detection_region_overrides": {
                     str(int(k)): str(v)
                     for k, v in dict(self.detection_region_overrides or {}).items()
+                },
+                "detection_region_overrides_by_form": {
+                    str(form_id): {
+                        str(int(slot_idx)): str(mode)
+                        for slot_idx, mode in dict(form_overrides or {}).items()
+                        if str(mode) in ("full", "top_left")
+                    }
+                    for form_id, form_overrides in dict(
+                        self.detection_region_overrides_by_form or {}
+                    ).items()
+                    if str(form_id or "").strip()
                 },
                 "cooldown_group_by_slot": {
                     str(int(k)): str(v)

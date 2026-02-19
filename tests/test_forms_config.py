@@ -70,6 +70,38 @@ class FormsConfigTests(unittest.TestCase):
         self.assertEqual(cfg.cooldown_group_by_slot.get(0), "builders")
         self.assertEqual(cfg.cooldown_group_by_slot.get(1), "builders")
 
+    def test_from_dict_parses_detection_region_overrides_by_form(self) -> None:
+        cfg = AppConfig.from_dict(
+            {
+                "slots": {"count": 10, "gap_pixels": 2, "padding": 3, "keybinds": []},
+                "forms": [
+                    {"id": "normal", "name": "Normal"},
+                    {"id": "form_1", "name": "Meta"},
+                ],
+                "detection": {
+                    "detection_region_overrides": {"1": "top_left"},
+                    "detection_region_overrides_by_form": {
+                        "normal": {"1": "top_left"},
+                        "form_1": {"1": "full"},
+                    },
+                },
+            }
+        )
+        self.assertEqual(cfg.detection_region_overrides.get(1), "top_left")
+        self.assertEqual(
+            cfg.detection_region_overrides_by_form.get("normal", {}).get(1), "top_left"
+        )
+        self.assertEqual(
+            cfg.detection_region_overrides_by_form.get("form_1", {}).get(1), "full"
+        )
+
+        serialized = cfg.to_dict()
+        by_form = serialized.get("detection", {}).get(
+            "detection_region_overrides_by_form", {}
+        )
+        self.assertEqual(by_form.get("normal", {}).get("1"), "top_left")
+        self.assertEqual(by_form.get("form_1", {}).get("1"), "full")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -392,6 +392,23 @@ class SettingsDialog(QDialog):
         region_override_row.addWidget(self._edit_detection_region_overrides)
         region_override_row.addWidget(region_override_help)
         fl.addRow(_row_label("Region by slot:"), region_override_row)
+        self._edit_detection_region_overrides_by_form = QLineEdit()
+        self._edit_detection_region_overrides_by_form.setPlaceholderText(
+            "e.g. normal=1:top_left; form_1=1:full"
+        )
+        self._edit_detection_region_overrides_by_form.setToolTip(
+            "Optional per-form slot overrides as form=slot:mode lists, separated by ';'. "
+            "Example: normal=1:top_left; form_1=1:full"
+        )
+        region_form_override_help = QLabel("(?)")
+        region_form_override_help.setObjectName("hint")
+        region_form_override_help.setToolTip(
+            "Per-form overrides merge on top of Region by slot using active form id."
+        )
+        region_form_override_row = QHBoxLayout()
+        region_form_override_row.addWidget(self._edit_detection_region_overrides_by_form)
+        region_form_override_row.addWidget(region_form_override_help)
+        fl.addRow(_row_label("Region by form:"), region_form_override_row)
         self._check_glow_enabled = QCheckBox("Enable glow ready override")
         self._check_glow_enabled.setToolTip(
             "If enabled, confirmed icon glow can mark a slot ready even when generic change-delta says not-ready."
@@ -903,6 +920,7 @@ class SettingsDialog(QDialog):
         self._edit_cooldown_change_ignore_by_slot.editingFinished.connect(self._on_detection_changed)
         self._edit_cooldown_group_by_slot.editingFinished.connect(self._on_detection_changed)
         self._edit_detection_region_overrides.editingFinished.connect(self._on_detection_changed)
+        self._edit_detection_region_overrides_by_form.editingFinished.connect(self._on_detection_changed)
         self._check_glow_enabled.toggled.connect(self._on_detection_changed)
         self._combo_glow_mode.currentIndexChanged.connect(self._on_detection_changed)
         self._spin_glow_ring_thickness.valueChanged.connect(self._on_detection_changed)
@@ -1025,6 +1043,7 @@ class SettingsDialog(QDialog):
         self._edit_cooldown_change_ignore_by_slot.blockSignals(True)
         self._edit_cooldown_group_by_slot.blockSignals(True)
         self._edit_detection_region_overrides.blockSignals(True)
+        self._edit_detection_region_overrides_by_form.blockSignals(True)
         self._check_glow_enabled.blockSignals(True)
         self._combo_glow_mode.blockSignals(True)
         self._spin_glow_ring_thickness.blockSignals(True)
@@ -1069,6 +1088,11 @@ class SettingsDialog(QDialog):
         self._edit_detection_region_overrides.setText(
             self._format_detection_region_overrides(
                 getattr(self._config, "detection_region_overrides", {}) or {}
+            )
+        )
+        self._edit_detection_region_overrides_by_form.setText(
+            self._format_detection_region_overrides_by_form(
+                getattr(self._config, "detection_region_overrides_by_form", {}) or {}
             )
         )
         self._check_glow_enabled.setChecked(bool(getattr(self._config, "glow_enabled", True)))
@@ -1167,6 +1191,7 @@ class SettingsDialog(QDialog):
         self._edit_cooldown_change_ignore_by_slot.blockSignals(False)
         self._edit_cooldown_group_by_slot.blockSignals(False)
         self._edit_detection_region_overrides.blockSignals(False)
+        self._edit_detection_region_overrides_by_form.blockSignals(False)
         self._check_glow_enabled.blockSignals(False)
         self._combo_glow_mode.blockSignals(False)
         self._spin_glow_ring_thickness.blockSignals(False)
@@ -1627,6 +1652,41 @@ class SettingsDialog(QDialog):
             parsed.append((slot_idx, mode))
         return ", ".join(f"{slot}:{mode}" for slot, mode in sorted(parsed, key=lambda t: t[0]))
 
+    @staticmethod
+    def _parse_detection_region_overrides_by_form(raw_text: str) -> dict[str, dict[int, str]]:
+        out: dict[str, dict[int, str]] = {}
+        raw = str(raw_text or "").strip()
+        if not raw:
+            return out
+        for token in raw.split(";"):
+            part = token.strip()
+            if not part or "=" not in part:
+                continue
+            left, right = part.split("=", 1)
+            form_id = str(left or "").strip().lower()
+            if not form_id:
+                continue
+            overrides = SettingsDialog._parse_detection_region_overrides(right)
+            if overrides:
+                out[form_id] = overrides
+        return out
+
+    @staticmethod
+    def _format_detection_region_overrides_by_form(values: dict) -> str:
+        chunks: list[str] = []
+        parsed: list[tuple[str, str]] = []
+        for form_id, overrides in dict(values or {}).items():
+            fid = str(form_id or "").strip().lower()
+            if not fid:
+                continue
+            rhs = SettingsDialog._format_detection_region_overrides(overrides)
+            if not rhs:
+                continue
+            parsed.append((fid, rhs))
+        for fid, rhs in sorted(parsed, key=lambda t: t[0]):
+            chunks.append(f"{fid}={rhs}")
+        return "; ".join(chunks)
+
     def _selected_form_index(self) -> int:
         idx = self._combo_form.currentIndex()
         if idx < 0:
@@ -1952,6 +2012,11 @@ class SettingsDialog(QDialog):
         )
         self._config.detection_region_overrides = self._parse_detection_region_overrides(
             self._edit_detection_region_overrides.text()
+        )
+        self._config.detection_region_overrides_by_form = (
+            self._parse_detection_region_overrides_by_form(
+                self._edit_detection_region_overrides_by_form.text()
+            )
         )
         self._config.glow_enabled = self._check_glow_enabled.isChecked()
         glow_mode = str(self._combo_glow_mode.currentData() or "color").strip().lower()
