@@ -1,0 +1,140 @@
+# Quadrant-Based Cooldown Detection
+
+## Context
+
+This is a fresh branch — no sweep detection logic exists. The current detection scans the **entire slot** to compute the darkened fraction, which causes false ready states during the cooldown wipe animation. WoW uses a clockwise radial wipe starting from 12 o'clock, so the last area to clear is the wedge ending just before 12 o'clock — the **top-left quadrant**. By the time the full-slot fraction drops below the trigger threshold, most of the button is already clear but the cooldown isn't actually finished yet. This creates a long ambiguous zone where the slot looks "ready" to the detector for several frames before the game actually unlocks the ability, causing duplicate key sends and queue misfires.
+
+## Solution
+
+For detection purposes only, compute the darkened fraction from a **sub-region** of each slot instead of the full slot. The default sub-region is the top-left quadrant — the last area the clockwise wipe clears. This makes the fraction transition from "clearly on cooldown" to "clearly ready" happen in 1-2 frames instead of 5-6, eliminating the ambiguous zone.
+
+**Important:** This only affects the fraction calculation used for state decisions. The live preview, baseline calibration visualization, and any other visual display of slots should continue to use the full slot image. The user should see no visual difference.
+
+---
+
+## Detection Region Modes
+
+Two modes for now:
+
+**`full`** — Use the entire slot area for fraction calculation. This is the legacy behavior.
+
+**`top_left`** — Use only the top-left quadrant (top 50% of height, left 50% of width). This is the new default.
+
+### Config
+
+```python
+detection_region: str = "top_left"  # "full" or "top_left"
+```
+
+Add to the existing detection config section. Load/save like other detection parameters.
+
+### Future: Per-Slot Override (stub only)
+
+Plan the data model to support per-slot region overrides in the future (e.g. a slot with a different wipe direction, or a proc ability that lights up differently). For now, just structure the code so a per-slot override *could* be added without refactoring:
+
+- In the detection loop, resolve the region for each slot: check if a per-slot override exists, fall back to the global `detection_region` setting.
+- The per-slot override data structure can be an empty dict for now: `detection_region_overrides: dict = {}` in config. Key would be slot index, value would be region mode string.
+- Don't build any UI for per-slot overrides. Don't implement the override lookup beyond a simple `overrides.get(slot_index, global_default)` pattern. Just make sure the code path exists so it's a one-line addition later.
+
+---
+
+## Implementation
+
+### SlotAnalyzer Changes
+
+In `src/analysis/slot_analyzer.py`, in the method that computes the darkened fraction for each slot:
+
+1. **After extracting the full slot image** (the cropped region for one slot from the captured frame), compute a sub-region based on the active detection region mode:
+
+```python
+# slot_img is the full slot image (e.g. 36x35 pixels)
+h, w = slot_img.shape[:2]
+
+# Resolve region for this slot
+region_mode = self._detection_region_overrides.get(slot_index, self._detection_region)
+
+if region_mode == "top_left":
+    # Top-left quadrant: top 50% height, left 50% width
+    detect_img = slot_img[:h // 2, :w // 2]
+elif region_mode == "full":
+    detect_img = slot_img
+else:
+    detect_img = slot_img  # unknown mode, fall back to full
+
+# Use detect_img for the darkened fraction calculation
+# Use slot_img (full) for everything else (preview, baseline display, etc.)
+```
+
+2. **The fraction calculation uses `detect_img`**: Whatever code currently computes `frac` by comparing pixels to baseline brightness — that code should operate on `detect_img` instead of `slot_img`. Everything else (passing the slot image to the UI for preview, storing for calibration display) continues to use the full `slot_img`.
+
+3. **Baseline calibration also needs to use the sub-region**: When calibrating a slot's baseline, store the baseline for the detection sub-region, not the full slot. Otherwise the fraction comparison will be against wrong reference pixels. This means:
+   - When computing baselines, extract the same sub-region and store that as the baseline.
+   - If the user switches from `full` to `top_left` (or vice versa), existing baselines become invalid for the detection region and need recalibration. Either auto-recalibrate on mode change, or show a warning prompting the user to recalibrate.
+   - The full-slot baseline (if stored separately) should still be kept for preview purposes. If currently only one baseline is stored per slot, the simplest approach is: always store the full-slot image as the baseline source, and at detection time extract the sub-region from it dynamically. This way changing detection mode doesn't invalidate baselines.
+
+   **Recommended approach**: Store baselines as full-slot data (no change to calibration). At detection time, crop both the live frame's slot AND the baseline to the detection sub-region before comparing. This means:
+   ```python
+   # At detection time:
+   baseline_full = self._baselines[slot_index]  # full slot baseline
+   
+   if region_mode == "top_left":
+       baseline_detect = baseline_full[:h // 2, :w // 2]
+       live_detect = slot_img[:h // 2, :w // 2]
+   else:
+       baseline_detect = baseline_full
+       live_detect = slot_img
+   
+   # Compare baseline_detect vs live_detect for fraction calculation
+   ```
+   This is the cleanest approach — baselines stay the same, no recalibration needed on mode switch.
+
+4. **Store `_detection_region` and `_detection_region_overrides`**: Load from config on init and on config update. `_detection_region: str` and `_detection_region_overrides: dict[int, str]`.
+
+### Settings UI Changes
+
+In the Detection tab → Cooldown Thresholds section, add a new row:
+
+```
+Region:  [dropdown: Top-Left Quadrant ▾]  (?)
+```
+
+- Label: "Region:" (85px, right-aligned, same as other labels)
+- Widget: QComboBox with two entries:
+  - `"Top-Left Quadrant"` (value: `"top_left"`)
+  - `"Full Slot"` (value: `"full"`)
+- Default selection: "Top-Left Quadrant"
+- Help tooltip: "Which area of each slot to check for cooldown darkness. Top-Left Quadrant is more precise for WoW's clockwise cooldown wipe."
+- Position: as the first row in the Cooldown Thresholds section (above Darken), since it fundamentally changes what area all the other thresholds apply to.
+
+Wire to config `detection_region` the same way other dropdowns are wired.
+
+### Debug Logging
+
+In the periodic slot debug log line, no changes needed to the format. The logged `frac` values will naturally reflect the sub-region fractions when `top_left` mode is active. If you want to make it obvious which mode is in use, optionally prepend the mode to the log line:
+
+```
+Slots: region=top_left thresh=30 frac_thresh=0.1 | s0=0.03(ready), s1=0.85(on_cooldown), ...
+```
+
+This is optional but helpful for debugging.
+
+---
+
+## What NOT to Change
+
+- **Live Preview**: The slot preview in the main window should still show the full slot image. Don't crop the preview.
+- **Baseline Calibration UI**: If there's a visual display of baselines, keep showing the full slot. The sub-region cropping is internal to the detection math only.
+- **Glow Detection**: If glow detection examines the slot border/ring area, it should continue using the full slot image (or its own specific region). Quadrant detection only applies to the cooldown fraction calculation.
+- **KeySender / Queue System**: No changes. They read slot states which will now be more accurate.
+- **Action Logging**: No changes. Duplicate entries will disappear because slots won't false-trigger READY during the wipe.
+
+---
+
+## Testing
+
+1. Set mode to "Top-Left Quadrant", start automation in WoW.
+2. Watch the action log — each ability should appear only once per GCD cycle. No more "Deconstruct 1.2s → Deconstruct 0.2s" duplicates.
+3. Queue a whitelist key (V) — it should fire once and actually cast in-game, not get overridden.
+4. Switch to "Full Slot" mode — should behave exactly like before (including the duplicate sends, confirming the mode switch works).
+5. Verify the live preview still shows full slot images in both modes.
+6. Verify calibration still works in both modes without needing to recalibrate when switching.

@@ -87,6 +87,14 @@ class SlotAnalyzer:
         self._buff_runtime: dict[str, _BuffRuntime] = {}
         self._buff_states: dict[str, dict] = {}
         self._buff_template_cache: dict[str, np.ndarray] = {}
+        self._detection_region: str = (
+            (getattr(config, "detection_region", None) or "top_left").strip().lower()
+        )
+        if self._detection_region not in ("full", "top_left"):
+            self._detection_region = "top_left"
+        self._detection_region_overrides: dict[int, str] = dict(
+            getattr(config, "detection_region_overrides", None) or {}
+        )
         self._recompute_slot_layout()
 
     def _recompute_slot_layout(self) -> None:
@@ -122,6 +130,14 @@ class SlotAnalyzer:
             or config.slot_padding != self._config.slot_padding
         )
         self._config = config
+        self._detection_region = (
+            (getattr(config, "detection_region", None) or "top_left").strip().lower()
+        )
+        if self._detection_region not in ("full", "top_left"):
+            self._detection_region = "top_left"
+        self._detection_region_overrides = dict(
+            getattr(config, "detection_region_overrides", None) or {}
+        )
         self._recompute_slot_layout()
         if layout_changed:
             self._baselines.clear()
@@ -791,8 +807,19 @@ class SlotAnalyzer:
 
         for slot_cfg in self._slot_configs:
             slot_img = self.crop_slot(frame, slot_cfg)
-            current_bright = self._get_brightness_channel(slot_img)
             baseline_bright = self._baselines.get(slot_cfg.index)
+            region_mode = self._detection_region_overrides.get(
+                slot_cfg.index, self._detection_region
+            )
+            if region_mode == "top_left" and baseline_bright is not None:
+                h, w = slot_img.shape[:2]
+                slot_detect = slot_img[: h // 2, : w // 2]
+                baseline_detect = baseline_bright[: h // 2, : w // 2]
+                current_bright = self._get_brightness_channel(slot_detect)
+                baseline_bright_for_frac = baseline_detect
+            else:
+                current_bright = self._get_brightness_channel(slot_img)
+                baseline_bright_for_frac = baseline_bright
             glow_ready = False
             glow_candidate = False
             glow_fraction = 0.0
@@ -805,8 +832,8 @@ class SlotAnalyzer:
 
             if (
                 current_bright.size == 0
-                or baseline_bright is None
-                or baseline_bright.shape != current_bright.shape
+                or baseline_bright_for_frac is None
+                or baseline_bright_for_frac.shape != current_bright.shape
             ):
                 state = SlotState.UNKNOWN
                 darkened_fraction = 0.0
@@ -815,8 +842,8 @@ class SlotAnalyzer:
                 last_cast_start_at = None
                 last_cast_success_at = None
             else:
-                # Pixels where brightness dropped by more than threshold
-                drop = baseline_bright.astype(np.int16) - current_bright.astype(np.int16)
+                # Pixels where brightness dropped by more than threshold (uses detection region only)
+                drop = baseline_bright_for_frac.astype(np.int16) - current_bright.astype(np.int16)
                 darkened_count = np.sum(drop > thresh)
                 total = current_bright.size
                 darkened_fraction = darkened_count / total if total else 0.0
@@ -938,6 +965,8 @@ class SlotAnalyzer:
             summary = ", ".join(
                 f"s{s.index}={s.brightness:.2f}({s.state.value})" for s in snapshots
             )
-            logger.debug(f"Slots: thresh={thresh} frac_thresh={frac_thresh} | {summary}")
+            logger.debug(
+                f"Slots: region={self._detection_region} thresh={thresh} frac_thresh={frac_thresh} | {summary}"
+            )
 
         return ActionBarState(slots=snapshots, timestamp=now)
