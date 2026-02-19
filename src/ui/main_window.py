@@ -367,6 +367,7 @@ class MainWindow(QMainWindow):
         self._last_action_sent_time: Optional[float] = (
             None  # for "time since last fire" on Next Intention + duration for new Last Action
         )
+        self._last_fired_by_keybind: dict[str, float] = {}  # keybind -> timestamp for priority list "Xs" display
         self.setWindowTitle("Cooldown Reader")
         self.setMinimumSize(580, 400)
         # Default height: fit full layout without main scrollbar (generous for DPI/fonts)
@@ -939,6 +940,8 @@ class MainWindow(QMainWindow):
         self._last_action_sent_time = (
             timestamp  # reset only on send; Next Intention counter uses this
         )
+        self._last_fired_by_keybind[keybind] = timestamp
+        self._priority_panel.priority_list.set_last_fired_timestamps(self._last_fired_by_keybind)
         self._priority_panel.record_send_timestamp(timestamp)
 
     def set_next_intention_blocked(

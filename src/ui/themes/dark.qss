@@ -193,14 +193,14 @@ QLabel#priorityHandle {
 QLabel#priorityRank {
     font-family: monospace;
     font-size: 9px;
-    color: #555;
+    color: #ffffff;
     min-width: 12px;
 }
 QLabel#priorityKey {
     font-family: monospace;
     font-size: 10px;
     font-weight: bold;
-    color: #aaa;
+    color: #ffffff;
     min-width: 18px;
 }
 QLabel#priorityName {
