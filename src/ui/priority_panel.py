@@ -20,7 +20,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.automation.priority_rules import normalize_activation_rule, normalize_ready_source
+from src.automation.priority_rules import (
+    manual_item_is_eligible,
+    normalize_activation_rule,
+    normalize_ready_source,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -115,6 +119,7 @@ class PriorityItemWidget(QFrame):
 
         self.setAcceptDrops(False)
         self.setObjectName("priorityItem")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 5, 6, 5)
         layout.setSpacing(6)
@@ -134,6 +139,12 @@ class PriorityItemWidget(QFrame):
         self._name_label.setMinimumHeight(20)
         self._name_label.setWordWrap(False)
         layout.addWidget(self._name_label, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        self._rule_label = QLabel("")
+        self._rule_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._rule_label.setStyleSheet("font-family: monospace; font-size: 9px; color: #d3a75b;")
+        self._rule_label.setMaximumWidth(80)
+        layout.addWidget(self._rule_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._time_since_label = QLabel("-")
         self._time_since_label.setObjectName("priorityTimeSince")
@@ -176,10 +187,12 @@ class PriorityItemWidget(QFrame):
 
     def set_activation_rule(self, activation_rule: str) -> None:
         self._activation_rule = normalize_activation_rule(activation_rule)
+        self._update_rule_label()
 
     def set_ready_source(self, ready_source: str, buff_roi_id: str) -> None:
         self._ready_source = normalize_ready_source(ready_source, self._item_type)
         self._buff_roi_id = str(buff_roi_id or "").strip().lower()
+        self._update_rule_label()
 
     def _buff_name(self, buff_id: str) -> str:
         bid = str(buff_id or "").strip().lower()
@@ -187,6 +200,18 @@ class PriorityItemWidget(QFrame):
             if str(b.get("id", "") or "").strip().lower() == bid:
                 return str(b.get("name", "") or "").strip() or bid
         return bid
+
+    def _update_rule_label(self) -> None:
+        tokens: list[str] = []
+        if self._item_type == "slot" and self._activation_rule == "dot_refresh":
+            tokens.append("DOT")
+        if self._item_type == "slot" and self._activation_rule == "require_glow":
+            tokens.append("GLW")
+        if self._ready_source == "buff_present":
+            tokens.append(f"B+:{self._buff_name(self._buff_roi_id)}")
+        elif self._ready_source == "buff_missing":
+            tokens.append(f"B-:{self._buff_name(self._buff_roi_id)}")
+        self._rule_label.setText(" ".join(tokens))
 
     def set_last_fired_timestamp(self, timestamp: Optional[float]) -> None:
         self._last_fired_timestamp = timestamp
@@ -299,11 +324,36 @@ class PriorityItemWidget(QFrame):
         remove_action = None
         always_action = None
         dot_refresh_action = None
+        require_glow_action = None
+        ready_always_action = None
         slot_ready_action = None
         ready_actions: dict[object, tuple[str, str]] = {}
         if self._item_type == "manual" and self._action_id:
             rename_action = menu.addAction("Rename...")
             rebind_action = menu.addAction("Rebind...")
+            menu.addSeparator()
+            ready_menu = menu.addMenu("Ready Source")
+            ready_always_action = ready_menu.addAction("Always")
+            ready_always_action.setCheckable(True)
+            ready_always_action.setChecked(self._ready_source == "always")
+            for buff in self._buff_rois:
+                buff_id = str(buff.get("id", "") or "").strip().lower()
+                buff_name = str(buff.get("name", "") or "").strip() or buff_id
+                if not buff_id:
+                    continue
+                a_present = ready_menu.addAction(f"Buff present: {buff_name}")
+                a_present.setCheckable(True)
+                a_present.setChecked(
+                    self._ready_source == "buff_present" and self._buff_roi_id == buff_id
+                )
+                ready_actions[a_present] = ("buff_present", buff_id)
+                a_missing = ready_menu.addAction(f"Buff missing: {buff_name}")
+                a_missing.setCheckable(True)
+                a_missing.setChecked(
+                    self._ready_source == "buff_missing" and self._buff_roi_id == buff_id
+                )
+                ready_actions[a_missing] = ("buff_missing", buff_id)
+            menu.addSeparator()
             remove_action = menu.addAction("Remove")
         elif self._item_type == "slot":
             always_action = menu.addAction("Activation: Always")
@@ -314,8 +364,16 @@ class PriorityItemWidget(QFrame):
             )
             dot_refresh_action.setCheckable(True)
             dot_refresh_action.setChecked(self._activation_rule == "dot_refresh")
+            require_glow_action = menu.addAction(
+                "Activation: Require glow (confirmed yellow/red ring required)"
+            )
+            require_glow_action.setCheckable(True)
+            require_glow_action.setChecked(self._activation_rule == "require_glow")
             menu.addSeparator()
             ready_menu = menu.addMenu("Ready Source")
+            ready_always_action = ready_menu.addAction("Always")
+            ready_always_action.setCheckable(True)
+            ready_always_action.setChecked(self._ready_source == "always")
             slot_ready_action = ready_menu.addAction("Use slot icon state")
             slot_ready_action.setCheckable(True)
             slot_ready_action.setChecked(self._ready_source == "slot")
@@ -357,6 +415,10 @@ class PriorityItemWidget(QFrame):
             parent._on_slot_item_activation_rule_changed(self._item_key, "always")
         elif chosen == dot_refresh_action:
             parent._on_slot_item_activation_rule_changed(self._item_key, "dot_refresh")
+        elif chosen == require_glow_action:
+            parent._on_slot_item_activation_rule_changed(self._item_key, "require_glow")
+        elif chosen == ready_always_action:
+            parent._on_item_ready_source_changed(self._item_key, "always", "")
         elif chosen == slot_ready_action:
             parent._on_item_ready_source_changed(self._item_key, "slot", "")
         elif chosen in ready_actions:
@@ -380,6 +442,7 @@ class PriorityListWidget(QWidget):
         self._display_names: list[str] = []
         self._manual_actions: list[dict] = []
         self._buff_rois: list[dict] = []
+        self._buff_states: dict[str, dict] = {}
         self._states_by_index: dict[int, tuple[str, Optional[float], Optional[float], Optional[float]]] = {}
         self._last_fired_by_keybind: dict[str, float] = {}
         self._time_since_timer = QTimer(self)
@@ -430,6 +493,12 @@ class PriorityListWidget(QWidget):
     def set_buff_rois(self, rois: list[dict]) -> None:
         self._buff_rois = [dict(r) for r in list(rois or []) if isinstance(r, dict)]
         self._rebuild_items()
+
+    def set_buff_states(self, states: dict) -> None:
+        self._buff_states = {
+            str(k): dict(v) for k, v in dict(states or {}).items() if isinstance(v, dict)
+        }
+        self._apply_manual_item_states()
 
     def set_items(self, items: list[dict]) -> None:
         normalized: list[dict] = []
@@ -490,8 +559,7 @@ class PriorityListWidget(QWidget):
                     ("unknown", None, None, None),
                 )
                 w.set_state(state, cd, cast_progress, cast_ends_at)
-            else:
-                w.set_state("ready", None, None, None)
+        self._apply_manual_item_states()
 
     def _manual_action_by_id(self, action_id: str) -> Optional[dict]:
         aid = str(action_id or "").strip().lower()
@@ -550,11 +618,29 @@ class PriorityListWidget(QWidget):
                 )
                 w.set_state(state, cd, cast_progress, cast_ends_at)
             else:
-                w.set_state("ready", None, None, None)
+                w.set_state("unknown", None, None, None)
             self._list_layout.insertWidget(self._list_layout.count() - 1, w)
             w.remove_requested.connect(self.remove_item_by_key)
             self._item_widgets.append(w)
         self._apply_last_fired_to_widgets()
+        self._apply_manual_item_states()
+
+    def _item_by_key(self, item_key: str) -> Optional[dict]:
+        for item in self._items:
+            if self._item_key(item) == item_key:
+                return item
+        return None
+
+    def _apply_manual_item_states(self) -> None:
+        for w in self._item_widgets:
+            if w.item_type != "manual":
+                continue
+            item = self._item_by_key(w.item_key)
+            if not isinstance(item, dict):
+                w.set_state("unknown", None, None, None)
+                continue
+            eligible = manual_item_is_eligible(item, buff_states=self._buff_states)
+            w.set_state("ready" if eligible else "on_cooldown", None, None, None)
 
     def _emit_items(self) -> None:
         self.items_changed.emit(self.get_items())

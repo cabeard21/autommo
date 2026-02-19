@@ -216,7 +216,7 @@ class AppConfig:
     @staticmethod
     def _normalize_activation_rule(raw_rule: object) -> str:
         rule = str(raw_rule or "").strip().lower()
-        if rule in ("always", "dot_refresh"):
+        if rule in ("always", "dot_refresh", "require_glow"):
             return rule
         return "always"
 

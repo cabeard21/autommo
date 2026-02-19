@@ -9,7 +9,7 @@ from src.models import SlotSnapshot
 
 def normalize_activation_rule(raw_rule: object) -> str:
     rule = str(raw_rule or "").strip().lower()
-    if rule in ("always", "dot_refresh"):
+    if rule in ("always", "dot_refresh", "require_glow"):
         return rule
     return "always"
 
@@ -36,12 +36,15 @@ def _red_glow_ready_from_state_dict(slot_state: dict[str, Any]) -> bool:
 
 def _activation_allows(
     item: dict,
+    glow_ready: bool,
     yellow_glow_ready: bool,
     red_glow_ready: bool,
 ) -> bool:
     rule = normalize_activation_rule(item.get("activation_rule"))
     if rule == "always":
         return True
+    if rule == "require_glow":
+        return bool(glow_ready)
     return dot_refresh_eligible(yellow_glow_ready, red_glow_ready)
 
 
@@ -106,6 +109,7 @@ def slot_item_is_eligible_for_snapshot(
     ready_source = normalize_ready_source(item.get("ready_source"), "slot")
     buff_gate_ready = _buff_ready(item, buff_states, "slot")
     slot_ready = bool(getattr(slot, "is_ready", False))
+    glow_ready = bool(getattr(slot, "glow_ready", False))
     yellow_glow_ready = bool(getattr(slot, "yellow_glow_ready", False))
     red_glow_ready = _red_glow_ready_from_snapshot(slot)
     if ready_source == "slot":
@@ -113,7 +117,7 @@ def slot_item_is_eligible_for_snapshot(
             return False
         if not slot_ready:
             return False
-        return _activation_allows(item, yellow_glow_ready, red_glow_ready)
+        return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
     if ready_source in ("buff_present", "buff_missing"):
         red_glow_ready = _red_glow_ready_from_buff_state(item, buff_states) or red_glow_ready
         if not buff_gate_ready:
@@ -124,13 +128,13 @@ def slot_item_is_eligible_for_snapshot(
             return True
         if not slot_ready:
             return False
-        return _activation_allows(item, yellow_glow_ready, red_glow_ready)
+        return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
         return False
     if not buff_gate_ready:
         return False
     if not slot_ready:
         return False
-    return _activation_allows(item, yellow_glow_ready, red_glow_ready)
+    return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
 
 
 def slot_item_is_eligible_for_state_dict(
@@ -143,6 +147,7 @@ def slot_item_is_eligible_for_state_dict(
     ready_source = normalize_ready_source(item.get("ready_source"), "slot")
     buff_gate_ready = _buff_ready(item, buff_states, "slot")
     slot_ready = str(slot_state.get("state", "") or "").strip().lower() == "ready"
+    glow_ready = bool(slot_state.get("glow_ready", False))
     yellow_glow_ready = bool(slot_state.get("yellow_glow_ready", False))
     red_glow_ready = _red_glow_ready_from_state_dict(slot_state)
     if ready_source == "slot":
@@ -150,7 +155,7 @@ def slot_item_is_eligible_for_state_dict(
             return False
         if not slot_ready:
             return False
-        return _activation_allows(item, yellow_glow_ready, red_glow_ready)
+        return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
     if ready_source in ("buff_present", "buff_missing"):
         red_glow_ready = _red_glow_ready_from_buff_state(item, buff_states) or red_glow_ready
         if not buff_gate_ready:
@@ -161,13 +166,13 @@ def slot_item_is_eligible_for_state_dict(
             return True
         if not slot_ready:
             return False
-        return _activation_allows(item, yellow_glow_ready, red_glow_ready)
+        return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
         return False
     if not buff_gate_ready:
         return False
     if not slot_ready:
         return False
-    return _activation_allows(item, yellow_glow_ready, red_glow_ready)
+    return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
 
 
 def manual_item_is_eligible(item: dict, buff_states: Optional[dict[str, Any]] = None) -> bool:
