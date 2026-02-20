@@ -60,3 +60,6 @@ config/local_*.json
 
 # Optional: uncomment if you want to avoid committing saved config
 config/default_config.json
+
+
+/v1/

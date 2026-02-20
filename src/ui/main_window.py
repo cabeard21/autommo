@@ -134,6 +134,10 @@ class _LeftPanel(QWidget):
         if event.mimeData().hasFormat(MIME_PRIORITY_ITEM):
             event.acceptProposedAction()
 
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(MIME_PRIORITY_ITEM):
+            event.acceptProposedAction()
+
     def dropEvent(self, event) -> None:
         if event.mimeData().hasFormat(MIME_PRIORITY_ITEM):
             try:

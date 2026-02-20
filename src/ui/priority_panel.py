@@ -430,6 +430,40 @@ class PriorityItemWidget(QFrame):
             parent._on_item_ready_source_changed(self._item_key, source, buff_id)
 
 
+class _DropForwardScrollArea(QScrollArea):
+    """QScrollArea that forwards drag/drop events to its parent widget.
+
+    QAbstractScrollArea intercepts drag events on its viewport via an event
+    filter, preventing them from propagating to parent widgets normally.
+    This subclass forwards them so PriorityListWidget can handle drops.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event) -> None:
+        p = self.parentWidget()
+        if p and p.acceptDrops():
+            p.dragEnterEvent(event)
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        p = self.parentWidget()
+        if p and p.acceptDrops():
+            p.dragMoveEvent(event)
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        p = self.parentWidget()
+        if p and p.acceptDrops():
+            p.dropEvent(event)
+        else:
+            super().dropEvent(event)
+
+
 class PriorityListWidget(QWidget):
     """Vertical list of priority items. Accepts slot drops (add) and priority-item drops (reorder)."""
 
@@ -455,7 +489,7 @@ class PriorityListWidget(QWidget):
         self._time_since_timer.start()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self._scroll = QScrollArea()
+        self._scroll = _DropForwardScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -650,6 +684,10 @@ class PriorityListWidget(QWidget):
         self.items_changed.emit(self.get_items())
 
     def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(MIME_SLOT) or event.mimeData().hasFormat(MIME_PRIORITY_ITEM):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
         if event.mimeData().hasFormat(MIME_SLOT) or event.mimeData().hasFormat(MIME_PRIORITY_ITEM):
             event.acceptProposedAction()
 
