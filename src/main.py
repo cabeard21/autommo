@@ -693,7 +693,7 @@ def main() -> None:
 
     def calibrate_single_slot(slot_index: int) -> None:
         try:
-            target_form = calibration_form_id()
+            target_form = analyzer.active_form_id()
             cap = ScreenCapture(monitor_index=config.monitor_index)
             cap.start()
             frame = cap.grab_region(config.bounding_box)

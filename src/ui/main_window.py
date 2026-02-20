@@ -1230,8 +1230,9 @@ class MainWindow(QMainWindow):
         btn = self._slot_buttons[slot_index]
         menu = QMenu(self)
         menu.addAction("Bind Key", lambda: self._start_listening_for_key(slot_index))
+        form_id = self._active_form_id()
         menu.addAction(
-            "Calibrate This Slot",
+            f"Calibrate This Slot ({form_id})",
             lambda: self.calibrate_slot_requested.emit(slot_index),
         )
         menu.addAction("Rename...", lambda: self._rename_slot(slot_index))
