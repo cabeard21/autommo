@@ -365,6 +365,7 @@ class MainWindow(QMainWindow):
         self._key_sender: Optional["KeySender"] = None
         self._queued_override: Optional[dict] = None
         self._buff_states: dict[str, dict] = {}
+        self._cast_gate_active: bool = False
         self._queue_listener: Optional[object] = None
         self._listening_slot_index: Optional[int] = None
         self._slots_recalibrated: set[int] = set(
@@ -1020,7 +1021,7 @@ class MainWindow(QMainWindow):
             remaining = max(0.0, cast_ends_at - time.time())
             status = f"waiting: casting ({remaining:.1f}s)"
         else:
-            status = "waiting: channeling"
+            status = "waiting: casting"
         self._next_intention_row.set_content("…", name, status, KEY_BLUE)
 
     def _on_priority_drop_remove(self, item_key: str) -> None:
@@ -1566,9 +1567,11 @@ class MainWindow(QMainWindow):
             )
             self._next_intention_row.set_content(keybind, slot_name, suffix, KEY_CYAN)
             return
-        casting_slot, cast_ends_at = self._next_casting_priority_slot(states)
-        if casting_slot is not None:
-            self.set_next_intention_casting_wait(casting_slot, cast_ends_at)
+        allow_while_casting = bool(
+            getattr(self._config, "allow_cast_while_casting", False)
+        )
+        if self._cast_gate_active and not allow_while_casting:
+            self.set_next_intention_casting_wait(slot_index=None, cast_ends_at=None)
             return
         next_slot = self._next_ready_priority_slot(states)
         if next_slot is not None:
@@ -1658,6 +1661,7 @@ class MainWindow(QMainWindow):
         directional = bool(debug.get("directional", False))
         front = float(debug.get("front", 0.0) or 0.0)
         gate_active = bool(debug.get("gate_active", False))
+        self._cast_gate_active = gate_active
         self._cast_bar_debug_label.setText(
             f"Cast ROI: {status} | m {motion:.1f} a {activity:.1f}/{threshold:.1f}->{deactivate_threshold:.1f} | "
             f"p {'Y' if present else 'N'} d {'Y' if directional else 'N'} f {front:.2f} | "

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 if TYPE_CHECKING:
     from src.models import AppConfig
 
-from src.models import ActionBarState, SlotState
+from src.models import ActionBarState
 from src.automation.binds import normalize_bind
 from src.automation.priority_rules import (
     item_matches_form,
@@ -72,14 +72,11 @@ class KeySender:
             getattr(self._config, "target_window_title", "") or ""
         )
 
-    def _find_blocking_cast(
+    def _blocking_cast_state(
         self, state: ActionBarState
-    ) -> Optional[tuple[int, object]]:
-        """Return first slot currently casting/channeling, if any."""
-        for slot in state.slots:
-            if slot.state in (SlotState.CASTING, SlotState.CHANNELING):
-                return slot.index, slot
-        return None
+    ) -> tuple[bool, Optional[float]]:
+        """Return global cast-bar gate state and optional end timestamp."""
+        return bool(getattr(state, "cast_active", False)), getattr(state, "cast_ends_at", None)
 
     def evaluate_and_send(
         self,
@@ -112,18 +109,16 @@ class KeySender:
             getattr(self._config, "allow_cast_while_casting", False)
         )
         if not allow_while_casting:
-            blocking = self._find_blocking_cast(state)
-            if blocking is not None:
-                blocking_index, blocking_slot = blocking
+            cast_active, cast_ends_at = self._blocking_cast_state(state)
+            if cast_active:
                 queue_window_sec = (
                     getattr(self._config, "queue_window_ms", 120) or 120
                 ) / 1000.0
-                cast_ends_at = getattr(blocking_slot, "cast_ends_at", None)
                 if cast_ends_at is None or now < (cast_ends_at + queue_window_sec):
                     return {
                         "action": "blocked",
                         "reason": "casting",
-                        "slot_index": blocking_index,
+                        "slot_index": None,
                         "cast_ends_at": cast_ends_at,
                     }
 

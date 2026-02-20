@@ -31,14 +31,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _SlotRuntime:
-    """Per-slot temporal memory used by cast-state transition logic."""
+    """Per-slot temporal memory for cooldown/glow hysteresis."""
 
     state: SlotState = SlotState.UNKNOWN
-    cast_candidate_frames: int = 0
-    cast_started_at: Optional[float] = None
-    cast_ends_at: Optional[float] = None
-    last_cast_start_at: Optional[float] = None
-    last_cast_success_at: Optional[float] = None
     last_darkened_fraction: float = 0.0
     cooldown_candidate_started_at: Optional[float] = None
     glow_candidate_frames: int = 0
@@ -317,7 +312,9 @@ class SlotAnalyzer:
         )
 
     def _glow_mode(self) -> str:
-        mode = str(getattr(self._config, "glow_mode", "color") or "color").strip().lower()
+        mode = (
+            str(getattr(self._config, "glow_mode", "color") or "color").strip().lower()
+        )
         return mode if mode in ("color", "hybrid_motion") else "color"
 
     @staticmethod
@@ -347,7 +344,11 @@ class SlotAnalyzer:
         curr_bins: np.ndarray,
         prev_bins: Optional[np.ndarray],
     ) -> float:
-        if prev_bins is None or prev_bins.shape != curr_bins.shape or curr_bins.size < 4:
+        if (
+            prev_bins is None
+            or prev_bins.shape != curr_bins.shape
+            or curr_bins.size < 4
+        ):
             return 0.0
         d0 = float(np.mean(np.abs(curr_bins - prev_bins)))
         if d0 <= 1e-6:
@@ -413,9 +414,9 @@ class SlotAnalyzer:
         center_delta = 0.0
         prev_gray = runtime.prev_glow_gray
         if prev_gray is not None and prev_gray.shape == gray.shape:
-            abs_diff = np.abs(gray.astype(np.int16) - prev_gray.astype(np.int16)).astype(
-                np.float32
-            )
+            abs_diff = np.abs(
+                gray.astype(np.int16) - prev_gray.astype(np.int16)
+            ).astype(np.float32)
             ring_vals = abs_diff[ring]
             if ring_vals.size > 0:
                 ring_delta = float(np.mean(ring_vals))
@@ -426,7 +427,9 @@ class SlotAnalyzer:
 
         bins = max(8, int(getattr(self._config, "glow_motion_rotation_bins", 24) or 24))
         curr_ring_bins = self._angular_ring_bins(gray, ring, bins)
-        rot_score = self._rotation_motion_score(curr_ring_bins, runtime.prev_glow_ring_bins)
+        rot_score = self._rotation_motion_score(
+            curr_ring_bins, runtime.prev_glow_ring_bins
+        )
 
         ring_delta_thresh = float(
             getattr(self._config, "glow_motion_ring_delta_threshold", 14.0) or 14.0
@@ -443,15 +446,21 @@ class SlotAnalyzer:
         # Hybrid uses a softer bright delta than pure color mode.
         hybrid_value_delta = max(10, int(round(value_delta * 0.35)))
         bright_ring_fraction = (
-            float(np.mean((val >= (base + hybrid_value_delta))[ring])) if np.any(ring) else 0.0
+            float(np.mean((val >= (base + hybrid_value_delta))[ring]))
+            if np.any(ring)
+            else 0.0
         )
         bright_score = max(0.0, min(1.6, bright_ring_fraction / 0.14))
 
         y_thresh = float(getattr(self._config, "glow_ring_fraction", 0.18) or 0.18)
-        ring_frac_overrides = getattr(self._config, "glow_ring_fraction_by_slot", {}) or {}
+        ring_frac_overrides = (
+            getattr(self._config, "glow_ring_fraction_by_slot", {}) or {}
+        )
         if slot_index in ring_frac_overrides:
             y_thresh = float(ring_frac_overrides[slot_index])
-        r_thresh = float(getattr(self._config, "glow_red_ring_fraction", y_thresh) or y_thresh)
+        r_thresh = float(
+            getattr(self._config, "glow_red_ring_fraction", y_thresh) or y_thresh
+        )
         color_score = max(
             yellow_glow_fraction / max(1e-6, y_thresh),
             red_glow_fraction / max(1e-6, r_thresh),
@@ -481,7 +490,8 @@ class SlotAnalyzer:
             )
             * center_penalty
             - float(
-                getattr(self._config, "glow_motion_cooldown_penalty_weight", 0.25) or 0.25
+                getattr(self._config, "glow_motion_cooldown_penalty_weight", 0.25)
+                or 0.25
             )
             * cooldown_penalty
         )
@@ -496,8 +506,12 @@ class SlotAnalyzer:
         exit_ = float(getattr(self._config, "glow_motion_score_exit", 0.42) or 0.42)
         if exit_ >= enter:
             exit_ = enter * 0.75
-        hold_ms = max(0.0, float(getattr(self._config, "glow_motion_min_hold_ms", 140) or 140))
-        off_ms = max(0.0, float(getattr(self._config, "glow_motion_min_off_ms", 80) or 80))
+        hold_ms = max(
+            0.0, float(getattr(self._config, "glow_motion_min_hold_ms", 140) or 140)
+        )
+        off_ms = max(
+            0.0, float(getattr(self._config, "glow_motion_min_off_ms", 80) or 80)
+        )
         elapsed_ms = (now - runtime.glow_motion_last_change_at) * 1000.0
 
         if runtime.glow_motion_ready:
@@ -1109,160 +1123,19 @@ class SlotAnalyzer:
     ) -> tuple[
         SlotState, Optional[float], Optional[float], Optional[float], Optional[float]
     ]:
-        """Return cast-aware state and timing metadata for one slot."""
+        """Return per-slot state without icon-based cast detection."""
         runtime = self._runtime.setdefault(slot_index, _SlotRuntime())
-        cast_enabled = bool(getattr(self._config, "cast_detection_enabled", True))
-        min_frac = float(
-            getattr(self._config, "cast_candidate_min_fraction", 0.05) or 0.05
-        )
-        max_frac = float(
-            getattr(self._config, "cast_candidate_max_fraction", 0.22) or 0.22
-        )
-        confirm_frames = max(
-            1, int(getattr(self._config, "cast_confirm_frames", 2) or 2)
-        )
-        cast_min_sec = max(
-            0.05, (getattr(self._config, "cast_min_duration_ms", 150) or 150) / 1000.0
-        )
-        cast_max_sec = max(
-            cast_min_sec,
-            (getattr(self._config, "cast_max_duration_ms", 3000) or 3000) / 1000.0,
-        )
-        cancel_grace_sec = max(
-            0.0, (getattr(self._config, "cast_cancel_grace_ms", 120) or 120) / 1000.0
-        )
-        channeling_enabled = bool(getattr(self._config, "channeling_enabled", True))
-        cast_candidate = min_frac <= darkened_fraction < max_frac
-
-        if not cast_enabled:
-            runtime.state = (
-                SlotState.ON_COOLDOWN if is_raw_cooldown else SlotState.READY
-            )
-            runtime.cast_candidate_frames = 0
-            runtime.cast_started_at = None
-            runtime.cast_ends_at = None
-            runtime.last_darkened_fraction = darkened_fraction
-            return (
-                runtime.state,
-                None,
-                None,
-                runtime.last_cast_start_at,
-                runtime.last_cast_success_at,
-            )
-
         if is_raw_cooldown:
             runtime.state = SlotState.ON_COOLDOWN
-            runtime.cast_candidate_frames = 0
-            if runtime.cast_started_at is not None:
-                runtime.last_cast_success_at = now
-            runtime.cast_started_at = None
-            runtime.cast_ends_at = None
-            runtime.last_darkened_fraction = darkened_fraction
-            return (
-                runtime.state,
-                None,
-                None,
-                runtime.last_cast_start_at,
-                runtime.last_cast_success_at,
-            )
-
-        if runtime.state in (SlotState.CASTING, SlotState.CHANNELING):
-            cast_started_at = runtime.cast_started_at or now
-            elapsed = now - cast_started_at
-            cast_ends_at = runtime.cast_ends_at
-            if cast_candidate:
-                if (
-                    channeling_enabled
-                    and runtime.state == SlotState.CASTING
-                    and elapsed >= cast_max_sec
-                ):
-                    runtime.state = SlotState.CHANNELING
-                    cast_ends_at = None
-                    runtime.cast_ends_at = None
-                runtime.last_darkened_fraction = darkened_fraction
-                progress = None
-                if runtime.state == SlotState.CASTING and cast_ends_at is not None:
-                    progress = min(1.0, max(0.0, elapsed / cast_max_sec))
-                return (
-                    runtime.state,
-                    progress,
-                    cast_ends_at,
-                    runtime.last_cast_start_at,
-                    runtime.last_cast_success_at,
-                )
-            if elapsed < (cast_min_sec + cancel_grace_sec):
-                runtime.last_darkened_fraction = darkened_fraction
-                progress = min(1.0, max(0.0, elapsed / cast_max_sec))
-                return (
-                    runtime.state,
-                    progress,
-                    cast_ends_at,
-                    runtime.last_cast_start_at,
-                    runtime.last_cast_success_at,
-                )
+        else:
             runtime.state = SlotState.READY
-            runtime.cast_started_at = None
-            runtime.cast_ends_at = None
-            runtime.cast_candidate_frames = 0
-            runtime.last_darkened_fraction = darkened_fraction
-            return (
-                runtime.state,
-                None,
-                None,
-                runtime.last_cast_start_at,
-                runtime.last_cast_success_at,
-            )
-
-        if cast_candidate:
-            if not cast_gate_active:
-                # If cast-bar ROI gating is enabled and inactive, suppress entering cast state.
-                runtime.cast_candidate_frames = 0
-                runtime.state = SlotState.READY
-                runtime.cast_started_at = None
-                runtime.cast_ends_at = None
-                runtime.last_darkened_fraction = darkened_fraction
-                return (
-                    runtime.state,
-                    None,
-                    None,
-                    runtime.last_cast_start_at,
-                    runtime.last_cast_success_at,
-                )
-            runtime.cast_candidate_frames += 1
-            if runtime.cast_candidate_frames >= confirm_frames:
-                runtime.state = SlotState.CASTING
-                runtime.cast_started_at = now
-                runtime.last_cast_start_at = now
-                runtime.cast_ends_at = now + cast_max_sec
-                runtime.last_darkened_fraction = darkened_fraction
-                return (
-                    runtime.state,
-                    0.0,
-                    runtime.cast_ends_at,
-                    runtime.last_cast_start_at,
-                    runtime.last_cast_success_at,
-                )
-            runtime.state = SlotState.READY
-            runtime.last_darkened_fraction = darkened_fraction
-            return (
-                runtime.state,
-                None,
-                None,
-                runtime.last_cast_start_at,
-                runtime.last_cast_success_at,
-            )
-
-        runtime.cast_candidate_frames = 0
-        runtime.state = SlotState.READY
-        runtime.cast_started_at = None
-        runtime.cast_ends_at = None
         runtime.last_darkened_fraction = darkened_fraction
         return (
             runtime.state,
             None,
             None,
-            runtime.last_cast_start_at,
-            runtime.last_cast_success_at,
+            None,
+            None,
         )
 
     def analyze_frame(
@@ -1307,10 +1180,8 @@ class SlotAnalyzer:
         if cast_bar_active:
             # Keep gate active briefly to absorb frame ordering jitter between ROI motion and icon darkening.
             self._cast_bar_active_until = now + 0.25
-        cast_gate_active = (
-            (not cast_roi_enabled)
-            or cast_bar_active
-            or (now < self._cast_bar_active_until)
+        cast_gate_active = cast_roi_enabled and (
+            cast_bar_active or (now < self._cast_bar_active_until)
         )
         self._cast_gate_active = cast_gate_active
         self._analyze_buffs(frame, action_origin)
@@ -1434,9 +1305,7 @@ class SlotAnalyzer:
                     )
                 release_confirm_sec = max(
                     0.0,
-                    (
-                        getattr(self._config, "cooldown_release_confirm_ms", 260) or 260
-                    )
+                    (getattr(self._config, "cooldown_release_confirm_ms", 260) or 260)
                     / 1000.0,
                 )
                 if group_runtime.was_cooldown:
@@ -1451,14 +1320,22 @@ class SlotAnalyzer:
                             group_runtime.cooldown_release_candidate_started_at = None
                             # raw_cooldown remains False → immediate release
                         else:
-                            if group_runtime.cooldown_release_candidate_started_at is None:
-                                group_runtime.cooldown_release_candidate_started_at = now
                             if (
-                                now - group_runtime.cooldown_release_candidate_started_at
+                                group_runtime.cooldown_release_candidate_started_at
+                                is None
+                            ):
+                                group_runtime.cooldown_release_candidate_started_at = (
+                                    now
+                                )
+                            if (
+                                now
+                                - group_runtime.cooldown_release_candidate_started_at
                             ) < release_confirm_sec:
                                 raw_cooldown = True
                             else:
-                                group_runtime.cooldown_release_candidate_started_at = None
+                                group_runtime.cooldown_release_candidate_started_at = (
+                                    None
+                                )
                 else:
                     group_runtime.cooldown_release_candidate_started_at = None
                 cooldown_groups_raw_seen[group_id] = cooldown_groups_raw_seen.get(
@@ -1609,4 +1486,12 @@ class SlotAnalyzer:
                 f"Slots: region={self._detection_region} thresh={thresh} frac_thresh={frac_thresh} | {summary}"
             )
 
-        return ActionBarState(slots=snapshots, timestamp=now)
+        cast_ends_at = (
+            self._cast_bar_active_until if now < self._cast_bar_active_until else None
+        )
+        return ActionBarState(
+            slots=snapshots,
+            timestamp=now,
+            cast_active=bool(cast_gate_active),
+            cast_ends_at=cast_ends_at,
+        )

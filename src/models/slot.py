@@ -70,6 +70,8 @@ class ActionBarState:
 
     slots: list[SlotSnapshot] = field(default_factory=list)
     timestamp: float = 0.0
+    cast_active: bool = False
+    cast_ends_at: Optional[float] = None
 
     def ready_slots(self) -> list[SlotSnapshot]:
         return [s for s in self.slots if s.is_ready]
@@ -150,14 +152,6 @@ class AppConfig:
     )
     # Optional cooldown group sharing across slots: {slot_index: "group_id"}.
     cooldown_group_by_slot: dict[int, str] = field(default_factory=dict)
-    cast_detection_enabled: bool = True
-    cast_candidate_min_fraction: float = 0.05
-    cast_candidate_max_fraction: float = 0.22
-    cast_confirm_frames: int = 2
-    cast_min_duration_ms: int = 150
-    cast_max_duration_ms: int = 3000
-    cast_cancel_grace_ms: int = 120
-    channeling_enabled: bool = True
     queue_window_ms: int = 120
     allow_cast_while_casting: bool = False
     lock_ready_while_cast_bar_active: bool = False
@@ -812,28 +806,6 @@ class AppConfig:
             detection_region_overrides=parsed_region_overrides,
             detection_region_overrides_by_form=parsed_region_overrides_by_form,
             cooldown_group_by_slot=parsed_cooldown_group_by_slot,
-            cast_detection_enabled=data.get("detection", {}).get(
-                "cast_detection_enabled", True
-            ),
-            cast_candidate_min_fraction=data.get("detection", {}).get(
-                "cast_candidate_min_fraction", 0.05
-            ),
-            cast_candidate_max_fraction=data.get("detection", {}).get(
-                "cast_candidate_max_fraction", 0.22
-            ),
-            cast_confirm_frames=data.get("detection", {}).get("cast_confirm_frames", 2),
-            cast_min_duration_ms=data.get("detection", {}).get(
-                "cast_min_duration_ms", 150
-            ),
-            cast_max_duration_ms=data.get("detection", {}).get(
-                "cast_max_duration_ms", 3000
-            ),
-            cast_cancel_grace_ms=data.get("detection", {}).get(
-                "cast_cancel_grace_ms", 120
-            ),
-            channeling_enabled=data.get("detection", {}).get(
-                "channeling_enabled", True
-            ),
             queue_window_ms=data.get("detection", {}).get("queue_window_ms", 120),
             allow_cast_while_casting=data.get("detection", {}).get(
                 "allow_cast_while_casting", False
@@ -851,7 +823,9 @@ class AppConfig:
                 "cast_bar_history_frames", 8
             ),
             glow_enabled=data.get("detection", {}).get("glow_enabled", True),
-            glow_mode=str(data.get("detection", {}).get("glow_mode", "color") or "color")
+            glow_mode=str(
+                data.get("detection", {}).get("glow_mode", "color") or "color"
+            )
             .strip()
             .lower(),
             glow_ring_thickness_px=int(
@@ -907,9 +881,7 @@ class AppConfig:
                 data.get("detection", {}).get("glow_motion_weight_rotation", 0.45)
             ),
             glow_motion_center_penalty_weight=float(
-                data.get("detection", {}).get(
-                    "glow_motion_center_penalty_weight", 0.35
-                )
+                data.get("detection", {}).get("glow_motion_center_penalty_weight", 0.35)
             ),
             glow_motion_cooldown_penalty_weight=float(
                 data.get("detection", {}).get(
@@ -917,9 +889,7 @@ class AppConfig:
                 )
             ),
             glow_motion_ring_delta_threshold=float(
-                data.get("detection", {}).get(
-                    "glow_motion_ring_delta_threshold", 14.0
-                )
+                data.get("detection", {}).get("glow_motion_ring_delta_threshold", 14.0)
             ),
             glow_motion_rotation_bins=int(
                 data.get("detection", {}).get("glow_motion_rotation_bins", 24)
@@ -1009,7 +979,9 @@ class AppConfig:
         cfg._normalize_profiles()
         if cfg.glow_mode not in ("color", "hybrid_motion"):
             cfg.glow_mode = "color"
-        cfg.cooldown_release_factor = max(0.25, min(1.0, float(cfg.cooldown_release_factor)))
+        cfg.cooldown_release_factor = max(
+            0.25, min(1.0, float(cfg.cooldown_release_factor))
+        )
         cfg.cooldown_release_confirm_ms = max(0, int(cfg.cooldown_release_confirm_ms))
         cfg.cooldown_release_quadrant_fraction = max(
             0.0, min(1.0, float(cfg.cooldown_release_quadrant_fraction))
@@ -1021,7 +993,9 @@ class AppConfig:
         cfg.glow_motion_smoothing = max(0.0, min(1.0, float(cfg.glow_motion_smoothing)))
         cfg.glow_motion_weight_color = max(0.0, float(cfg.glow_motion_weight_color))
         cfg.glow_motion_weight_ring = max(0.0, float(cfg.glow_motion_weight_ring))
-        cfg.glow_motion_weight_rotation = max(0.0, float(cfg.glow_motion_weight_rotation))
+        cfg.glow_motion_weight_rotation = max(
+            0.0, float(cfg.glow_motion_weight_rotation)
+        )
         cfg.glow_motion_center_penalty_weight = max(
             0.0, float(cfg.glow_motion_center_penalty_weight)
         )
@@ -1082,14 +1056,6 @@ class AppConfig:
                     for k, v in dict(self.cooldown_group_by_slot or {}).items()
                     if str(v or "").strip()
                 },
-                "cast_detection_enabled": self.cast_detection_enabled,
-                "cast_candidate_min_fraction": self.cast_candidate_min_fraction,
-                "cast_candidate_max_fraction": self.cast_candidate_max_fraction,
-                "cast_confirm_frames": self.cast_confirm_frames,
-                "cast_min_duration_ms": self.cast_min_duration_ms,
-                "cast_max_duration_ms": self.cast_max_duration_ms,
-                "cast_cancel_grace_ms": self.cast_cancel_grace_ms,
-                "channeling_enabled": self.channeling_enabled,
                 "queue_window_ms": self.queue_window_ms,
                 "allow_cast_while_casting": self.allow_cast_while_casting,
                 "lock_ready_while_cast_bar_active": self.lock_ready_while_cast_bar_active,

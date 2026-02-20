@@ -5,9 +5,10 @@ A Python desktop app that reads MMO action bar cooldowns via screen capture and 
 ## What It Does
 
 - **Captures** a configurable screen region (your action bar) at high frame rates
-- **Detects** per-slot state (**ready**, **casting/channeling**, **on cooldown**, optional **locked**) by comparing live frames to calibrated baselines with temporal state tracking
+- **Detects** per-slot state (**ready**, **on cooldown**, optional **locked**) by comparing live frames to calibrated baselines with temporal state tracking
+- **Detects** global cast activity from a configurable **cast bar ROI** using frame-to-frame motion
 - **Shows** a transparent overlay so you can align the capture region with your action bar
-- **Displays** live slot states (green = ready, blue = casting, amber = channeling, red = on cooldown, gray = locked)
+- **Displays** live slot states (green = ready, red = on cooldown, gray = locked)
 - **Automation**: when enabled, presses keys in a **priority order**Ã¢â‚¬â€only the first *ready* ability in the list is triggered, with a minimum delay between keypresses, cast-aware blocking/queue timing, and an optional Ã¢â‚¬Å“target windowÃ¢â‚¬Â check so keys are only sent when the game has focus
 - **Per-slot activation rules**: each slot item in Priority can be set to **Always**, **DoT refresh** (`no glow` or `red glow`), or **Require glow** (confirmed yellow/red glow required)
 
@@ -34,14 +35,12 @@ python -m src.main
 2. **Show Region Overlay** Ã¢â‚¬â€ Keep this checked to see a green rectangle on screen. Move it over your action bar.
 3. **Capture Region** Ã¢â‚¬â€ Set **Top**, **Left**, **Width**, and **Height** (pixels) so the overlay exactly covers the action bar. Use **Slots**, **Gap**, and **Padding** to match how your bar is divided (e.g. 12 slots, 2 px gap).
 4. **Calibrate Baselines** Ã¢â‚¬â€ With all abilities *off* cooldown, click **Calibrate Baselines**. The app stores the Ã¢â‚¬Å“readyÃ¢â‚¬Â appearance of each slot. Do this once per bar layout; you can recalibrate later if needed.
-5. **Start Capture** Ã¢â‚¬â€ Click **Start Capture**. The **Live Preview** and **Slot States** will update in real time. Each slot shows its keybind and state (ready, casting/channeling, cooldown, or locked).
+5. **Start Capture** Ã¢â‚¬â€ Click **Start Capture**. The **Live Preview** and **Slot States** will update in real time. Each slot shows its keybind and state (ready, cooldown, or locked).
 
 ### Slot States (Left Panel)
 
 Each slot is a button showing `[key]` and state:
 - **Green**: ready
-- **Blue**: casting
-- **Amber**: channeling
 - **Red**: on cooldown
 - **Gray**: locked (optional global lock from cast-bar ROI)
 
@@ -74,7 +73,7 @@ The right panel also shows:
 - **Next Intention** Ã¢â‚¬â€ The next key that *would* be pressed (first ready slot in priority), with a suffix:
   - `(paused)` Ã¢â‚¬â€ Automation is off.
   - `(window)` Ã¢â‚¬â€ Automation is on but the target window (e.g. game) is not focused; keys are not sent.
-  - `waiting: casting` / `waiting: channeling` Ã¢â‚¬â€ Automation is paused by cast-time safety rules.
+  - `waiting: casting` Ã¢â‚¬â€ Automation is paused by cast-time safety rules.
   - `next` Ã¢â‚¬â€ Automation is on and the game is focused; this key will be sent when the minimum delay has passed.
 
 ### Automation (Left Panel)
@@ -88,7 +87,7 @@ The right panel also shows:
 - **Delay (ms)** Ã¢â‚¬â€ Minimum time in milliseconds between any two keypresses (50Ã¢â‚¬â€œ2000). Helps avoid spamming faster than the gameÃ¢â‚¬â„¢s GCD.
 - **GCD (ms)** Ã¢â‚¬â€ Duration used to suppress normal priority after a queued key is sent (default 1500 ms).
 - **Queue (ms)** Ã¢â‚¬â€ Extra wait after detected cast end before sending the next key (default 120 ms).
-- **Allow sends while casting/channeling** Ã¢â‚¬â€ If off (default), automation waits until cast/channel completes.
+- **Allow sends while casting/channeling** Ã¢â‚¬â€ If off (default), automation waits while cast-bar ROI activity is active.
 - **Window title** Ã¢â‚¬â€ If you type part of the game window title here (e.g. `World of Warcraft`), keypresses are **only** sent when a window whose title contains this text (case-insensitive) is in the foreground. Leave blank to send keys regardless of focus.
 - **Queue timeout / Fire delay** Ã¢â‚¬â€ Queue timeout controls how long a queued input is kept; fire delay adds a small post-ready delay before queued send.
 
@@ -100,9 +99,8 @@ The right panel also shows:
 - **Per-slot detection region override** Ã¢â‚¬â€ In **Settings -> Detection**, use **Region by slot** with `slot:mode` pairs (example: `1:top_left, 4:full`) to override the global Region for specific slots.
 - **Per-slot glow sensitivity (advanced)** Ã¢â‚¬â€ In `config/default_config.json`, set `detection.glow_value_delta_by_slot` (example: `{"4": 55}`) to lower/raise glow brightness delta for one slot without changing others.
 - **Per-slot glow thresholds (advanced)** Ã¢â‚¬â€ Use `detection.glow_ring_fraction_by_slot` (example: `{"5": 0.08}`) and `detection.glow_override_cooldown_by_slot` (example: `[5]`) for proc-style icons that need lower yellow-fraction threshold and optional non-red glow cooldown override.
-- **Glow mode (advanced)** Ã¢â‚¬â€ In `config/default_config.json`, set `detection.glow_mode` to `"hybrid_motion"` to enable movement-aware glow confirmation (ring motion + rotational pattern + color score with cooldown/center-motion penalties).
-- **Cast detection** Ã¢â‚¬â€ Configure cast band %, confirmation frames, min/max cast duration, cancel grace, and channeling mode.
-- **Cast bar ROI (optional)** Ã¢â‚¬â€ Define a region inside the capture box to detect active cast-bar motion; optionally mark ready slots as `locked` while active.
+- **Cast bar ROI** Ã¢â‚¬â€ Define a region inside the capture box to detect active cast-bar motion; optionally mark ready slots as `locked` while active.
+- **Cast bar tuning** Ã¢â‚¬â€ Tune ROI activity threshold/history for your UI theme and motion style.
 - **Save Settings** Ã¢â‚¬â€ Saves the current config (region, slots, keybinds, priority profiles + binds, detection, overlay, delay, window title, etc.) to `config/default_config.json`.
 
 ---
