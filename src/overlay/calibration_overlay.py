@@ -306,14 +306,15 @@ class CalibrationOverlay(QWidget):
                 )
                 painter.drawText(
                     rect.left() + 2,
-                    rect.bottom() - 3,
+                    self._bbox.top - 3 if self._bbox.top >= 20 else self._bbox.top + self._bbox.height + 14,
                     f"{d_status} {y_status}{yellow_frac:.2f} {r_status}{red_frac:.2f}",
                 )
 
+        space_above = self._bbox.top >= 20
         painter.setPen(QPen(QColor("#AAAAAA"), 1))
         painter.drawText(
             self._bbox.left + 4,
-            self._bbox.top - 6 if self._bbox.top > 14 else self._bbox.top + 12,
+            self._bbox.top - 16 if space_above else self._bbox.top + self._bbox.height + 28,
             "Dot debug: D+=eligible D-=blocked | Y/y yellow | R/r red",
         )
 
@@ -350,7 +351,7 @@ class CalibrationOverlay(QWidget):
             red_tag = "R" if red_ready else ("r" if red_candidate else ".")
             painter.drawText(
                 rect.left() + 2,
-                rect.top() - 4 if rect.top() > 10 else rect.top() + 12,
+                rect.top() - 4 if rect.top() > 10 else rect.bottom() + 12,
                 f"BUFF {name}: {tag} {red_tag} {status} S{similarity:.2f}",
             )
 
@@ -366,7 +367,7 @@ class CalibrationOverlay(QWidget):
         painter.setPen(QPen(QColor("#86D1FF"), 1))
         painter.drawText(
             self._bbox.left + 4,
-            self._bbox.top + self._bbox.height + 16,
+            self._bbox.top + self._bbox.height + (42 if not space_above else 16),
             (
                 f"FORMDBG active={active_form} settle={settling_tag} "
                 f"det={det_type} roi={roi_id} P->{present_form} A->{absent_form}"
