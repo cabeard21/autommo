@@ -1660,11 +1660,12 @@ class MainWindow(QMainWindow):
         present = bool(debug.get("present", False))
         directional = bool(debug.get("directional", False))
         front = float(debug.get("front", 0.0) or 0.0)
+        direction = str(debug.get("direction", "?") or "?")
         gate_active = bool(debug.get("gate_active", False))
         self._cast_gate_active = gate_active
         self._cast_bar_debug_label.setText(
             f"Cast ROI: {status} | m {motion:.1f} a {activity:.1f}/{threshold:.1f}->{deactivate_threshold:.1f} | "
-            f"p {'Y' if present else 'N'} d {'Y' if directional else 'N'} f {front:.2f} | "
+            f"p {'Y' if present else 'N'} d {'Y' if directional else 'N'} f {front:.2f} ({direction}) | "
             f"{'ON' if active else 'OFF'} gate {'ON' if gate_active else 'OFF'}"
         )
         if status in ("off", "invalid-roi", "out-of-frame", "no-bar"):

@@ -92,7 +92,9 @@ class SlotAnalyzer:
         self._cast_bar_last_directional: bool = False
         self._cast_bar_last_front: float = 0.0
         self._cast_bar_active_state: bool = False
-        self._cast_bar_front_prev: Optional[float] = None
+        self._cast_bar_ltr_front_prev: Optional[float] = None
+        self._cast_bar_rtl_front_prev: Optional[float] = None
+        self._cast_bar_last_direction: str = "?"
         self._cast_bar_quiet_frames: int = 0
         self._cast_gate_active: bool = False
         self._frame_action_origin_x: int = 0
@@ -762,7 +764,8 @@ class SlotAnalyzer:
         if not region or not bool(region.get("enabled", False)):
             self._cast_bar_motion.clear()
             self._cast_bar_prev_gray = None
-            self._cast_bar_front_prev = None
+            self._cast_bar_ltr_front_prev = None
+            self._cast_bar_rtl_front_prev = None
             self._cast_bar_quiet_frames = 0
             self._cast_bar_active_state = False
             self._cast_bar_last_status = "off"
@@ -776,7 +779,8 @@ class SlotAnalyzer:
         if w <= 1 or h <= 1:
             self._cast_bar_motion.clear()
             self._cast_bar_prev_gray = None
-            self._cast_bar_front_prev = None
+            self._cast_bar_ltr_front_prev = None
+            self._cast_bar_rtl_front_prev = None
             self._cast_bar_quiet_frames = 0
             self._cast_bar_active_state = False
             self._cast_bar_last_status = "invalid-roi"
@@ -789,7 +793,8 @@ class SlotAnalyzer:
         if x2 <= x1 or y2 <= y1:
             self._cast_bar_motion.clear()
             self._cast_bar_prev_gray = None
-            self._cast_bar_front_prev = None
+            self._cast_bar_ltr_front_prev = None
+            self._cast_bar_rtl_front_prev = None
             self._cast_bar_quiet_frames = 0
             self._cast_bar_active_state = False
             self._cast_bar_last_status = "out-of-frame"
@@ -802,6 +807,12 @@ class SlotAnalyzer:
         # Color-based presence (kept permissive for low-saturation UI themes).
         color_mask = (sat >= 28) & (val >= 28)
         color_cov = float(np.mean(color_mask)) if color_mask.size else 0.0
+        color_col_cov = (
+            np.mean(color_mask, axis=0)
+            if color_mask.size
+            else np.array([0.0], dtype=np.float32)
+        )
+        color_cols = np.where(color_col_cov > 0.10)[0]
         row_cov = (
             np.mean(color_mask, axis=1)
             if color_mask.size
@@ -842,7 +853,8 @@ class SlotAnalyzer:
         if prev is None or prev.shape != gray.shape:
             self._cast_bar_prev_gray = gray
             self._cast_bar_motion.clear()
-            self._cast_bar_front_prev = None
+            self._cast_bar_ltr_front_prev = None
+            self._cast_bar_rtl_front_prev = None
             self._cast_bar_quiet_frames = 0
             self._cast_bar_active_state = False
             self._cast_bar_last_status = "priming"
@@ -861,27 +873,53 @@ class SlotAnalyzer:
             else np.array([0.0], dtype=np.float32)
         )
         active_cols = np.where(col_cov > 0.10)[0]
-        directional_ok = False
-        front = (
-            self._cast_bar_front_prev if self._cast_bar_front_prev is not None else 0.0
-        )
+        ltr_directional_ok = False
+        rtl_directional_ok = False
+        ltr_front = self._cast_bar_ltr_front_prev if self._cast_bar_ltr_front_prev is not None else 0.0
+        rtl_front = self._cast_bar_rtl_front_prev if self._cast_bar_rtl_front_prev is not None else 0.0
+
+        # --- LTR: motion-based (rightmost motion column advances right) ---
         if active_cols.size > 0 and col_cov.size > 1:
             cmin = int(active_cols.min())
             cmax = int(active_cols.max())
             span = (cmax - cmin + 1) / float(col_cov.size)
-            front = float(cmax) / float(col_cov.size - 1)
-            prev_front = self._cast_bar_front_prev
-            forward_ok = prev_front is None or front >= (prev_front - 0.08)
-            directional_ok = forward_ok and (span <= 0.75)
-            if directional_ok:
-                self._cast_bar_front_prev = front
+            ltr_front = float(cmax) / float(col_cov.size - 1)
+            ltr_fwd = self._cast_bar_ltr_front_prev is None or ltr_front >= (self._cast_bar_ltr_front_prev - 0.08)
+            ltr_directional_ok = ltr_fwd and (span <= 0.75)
+            if ltr_fwd:
+                self._cast_bar_ltr_front_prev = ltr_front
             self._cast_bar_quiet_frames = 0
         else:
             self._cast_bar_quiet_frames += 1
             if self._cast_bar_quiet_frames >= 3:
-                self._cast_bar_front_prev = None
+                self._cast_bar_ltr_front_prev = None
+                self._cast_bar_rtl_front_prev = None
+                self._cast_bar_last_direction = "?"
+
+        # --- RTL: color-position-based (rightmost colored column retreats left) ---
+        if color_cols.size > 0 and color_mask.shape[1] > 1:
+            color_cmax = int(color_cols.max())
+            rtl_front = 1.0 - float(color_cmax) / float(color_mask.shape[1] - 1)
+            rtl_fwd = self._cast_bar_rtl_front_prev is None or rtl_front >= (self._cast_bar_rtl_front_prev - 0.08)
+            rtl_directional_ok = rtl_fwd  # no span check: bar is expected to be wide
+            if rtl_fwd:
+                self._cast_bar_rtl_front_prev = rtl_front
+
+        directional_ok = ltr_directional_ok or rtl_directional_ok
+
+        if ltr_directional_ok and not rtl_directional_ok:
+            self._cast_bar_last_direction = "ltr"
+        elif rtl_directional_ok and not ltr_directional_ok:
+            self._cast_bar_last_direction = "rtl"
+        elif ltr_directional_ok and rtl_directional_ok:
+            self._cast_bar_last_direction = "?"
         self._cast_bar_last_directional = directional_ok
-        self._cast_bar_last_front = float(front or 0.0)
+        if self._cast_bar_last_direction == "ltr":
+            self._cast_bar_last_front = float(ltr_front)
+        elif self._cast_bar_last_direction == "rtl":
+            self._cast_bar_last_front = float(rtl_front)
+        else:
+            self._cast_bar_last_front = float(max(ltr_front, rtl_front))
 
         history_frames = max(
             3, int(getattr(self._config, "cast_bar_history_frames", 8) or 8)
@@ -1103,6 +1141,7 @@ class SlotAnalyzer:
             "present": bool(self._cast_bar_last_present),
             "directional": bool(self._cast_bar_last_directional),
             "front": float(self._cast_bar_last_front),
+            "direction": str(self._cast_bar_last_direction),
             "gate_active": bool(self._cast_gate_active),
         }
 
