@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -428,6 +429,7 @@ class AppConfig:
                     {
                         "type": "slot",
                         "slot_index": raw,
+                        "item_id": uuid.uuid4().hex[:8],
                         "activation_rule": "always",
                         "ready_source": "slot",
                         "buff_roi_id": "",
@@ -439,6 +441,7 @@ class AppConfig:
             if not isinstance(raw, dict):
                 continue
             itype = str(raw.get("type", "") or "").strip().lower()
+            existing_item_id = str(raw.get("item_id", "") or "").strip()
             if itype == "slot":
                 slot_index = raw.get("slot_index")
                 if isinstance(slot_index, int):
@@ -446,6 +449,7 @@ class AppConfig:
                         {
                             "type": "slot",
                             "slot_index": slot_index,
+                            "item_id": existing_item_id or uuid.uuid4().hex[:8],
                             "activation_rule": AppConfig._normalize_activation_rule(
                                 raw.get("activation_rule")
                             ),
@@ -469,6 +473,7 @@ class AppConfig:
                         {
                             "type": "manual",
                             "action_id": action_id,
+                            "item_id": existing_item_id or uuid.uuid4().hex[:8],
                             "ready_source": AppConfig._normalize_ready_source(
                                 raw.get("ready_source"), "manual"
                             ),
@@ -488,6 +493,7 @@ class AppConfig:
             {
                 "type": "slot",
                 "slot_index": i,
+                "item_id": uuid.uuid4().hex[:8],
                 "activation_rule": "always",
                 "ready_source": "slot",
                 "buff_roi_id": "",
@@ -577,6 +583,7 @@ class AppConfig:
                         {
                             "type": "slot",
                             "slot_index": int(i),
+                            "item_id": uuid.uuid4().hex[:8],
                             "activation_rule": "always",
                             "ready_source": "slot",
                             "buff_roi_id": "",
@@ -963,6 +970,7 @@ class AppConfig:
                         {
                             "type": "slot",
                             "slot_index": int(i),
+                            "item_id": uuid.uuid4().hex[:8],
                             "activation_rule": "always",
                             "ready_source": "slot",
                             "buff_roi_id": "",

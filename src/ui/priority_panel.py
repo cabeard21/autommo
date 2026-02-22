@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import statistics
 import time
+import uuid
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QMimeData, QPoint, QTimer, pyqtSignal
@@ -579,6 +580,10 @@ class PriorityListWidget(QWidget):
 
     @staticmethod
     def _item_key(item: dict) -> str:
+        iid = str(item.get("item_id", "") or "").strip()
+        if iid:
+            return iid
+        # Fallback for items that pre-date item_id (no duplicates possible in this path)
         if str(item.get("type", "") or "").strip().lower() == "slot":
             return f"slot:{item.get('slot_index')}"
         return f"manual:{str(item.get('action_id', '') or '').strip().lower()}"
@@ -622,6 +627,8 @@ class PriorityListWidget(QWidget):
             if not isinstance(item, dict):
                 continue
             out = dict(item)
+            if not str(out.get("item_id", "") or "").strip():
+                out["item_id"] = uuid.uuid4().hex[:8]
             if str(out.get("type", "") or "").strip().lower() == "slot":
                 out["activation_rule"] = normalize_activation_rule(
                     out.get("activation_rule")
@@ -789,13 +796,6 @@ class PriorityListWidget(QWidget):
         pos = event.position().toPoint()
         if mime.hasFormat(MIME_SLOT):
             slot_index = int(mime.data(MIME_SLOT).data().decode())
-            if any(
-                str(item.get("type", "") or "").strip().lower() == "slot"
-                and item.get("slot_index") == slot_index
-                for item in self._items
-            ):
-                event.acceptProposedAction()
-                return
             has_keybind = slot_index < len(self._keybinds) and bool(self._keybinds[slot_index].strip())
             if not has_keybind:
                 event.acceptProposedAction()
@@ -804,8 +804,12 @@ class PriorityListWidget(QWidget):
                 {
                     "type": "slot",
                     "slot_index": slot_index,
+                    "item_id": uuid.uuid4().hex[:8],
                     "activation_rule": "always",
+                    "ready_source": "slot",
+                    "buff_roi_id": "",
                     "required_form": "",
+                    "cast_does_not_block": True,
                 }
             )
             self._rebuild_items()
