@@ -16,9 +16,44 @@ def normalize_activation_rule(raw_rule: object) -> str:
 
 def normalize_ready_source(raw_source: object, item_type: str) -> str:
     source = str(raw_source or "").strip().lower()
-    if source in ("slot", "always", "buff_present", "buff_missing"):
+    if source in ("slot", "always"):
         return source
     return "always" if item_type == "manual" else "slot"
+
+
+def normalize_conditions(
+    raw_conditions: object,
+    item_type: str,
+    legacy_ready_source: object = None,
+    legacy_buff_roi_id: object = None,
+) -> list[dict]:
+    """Normalize item conditions and migrate legacy single-buff ready_source fields."""
+    normalized: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw in list(raw_conditions or []):
+        if not isinstance(raw, dict):
+            continue
+        cond_type = str(raw.get("type", "") or "").strip().lower()
+        if cond_type != "buff_state":
+            continue
+        buff_id = str(raw.get("buff_roi_id", "") or "").strip().lower()
+        op = str(raw.get("op", "") or "").strip().lower()
+        if not buff_id or op not in ("present", "missing"):
+            continue
+        key = (cond_type, buff_id, op)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({"type": "buff_state", "buff_roi_id": buff_id, "op": op})
+    if normalized:
+        return normalized
+
+    legacy_source = str(legacy_ready_source or "").strip().lower()
+    legacy_buff = str(legacy_buff_roi_id or "").strip().lower()
+    if legacy_source in ("buff_present", "buff_missing") and legacy_buff:
+        op = "present" if legacy_source == "buff_present" else "missing"
+        return [{"type": "buff_state", "buff_roi_id": legacy_buff, "op": op}]
+    return []
 
 
 def normalize_required_form(raw_required_form: object) -> str:
@@ -64,49 +99,74 @@ def _dot_refresh_red_override(item: dict, red_glow_ready: bool) -> bool:
     return rule == "dot_refresh" and bool(red_glow_ready)
 
 
-def _red_glow_ready_from_buff_state(item: dict, buff_states: Optional[dict[str, Any]]) -> bool:
+def _buff_condition_state(
+    condition: dict,
+    buff_states: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
     if not isinstance(buff_states, dict):
-        return False
-    buff_id = str(item.get("buff_roi_id", "") or "").strip().lower()
+        return None
+    buff_id = str(condition.get("buff_roi_id", "") or "").strip().lower()
     if not buff_id:
-        return False
+        return None
     buff = buff_states.get(buff_id)
     if not isinstance(buff, dict):
-        return False
+        return None
+    return buff
+
+
+def _condition_buff_status_ok(buff: dict[str, Any]) -> bool:
     status = str(buff.get("status", "ok") or "").strip().lower()
-    if status and status != "ok":
-        return False
-    return bool(buff.get("red_glow_ready", False))
+    return not status or status == "ok"
 
 
-def _buff_ready(
-    item: dict,
+def _buff_condition_passes(
+    condition: dict,
     buff_states: Optional[dict[str, Any]],
-    item_type: str,
 ) -> bool:
-    source = normalize_ready_source(item.get("ready_source"), item_type)
-    if source == "always":
-        return True
-    if source == "slot":
-        return True
-    buff_id = str(item.get("buff_roi_id", "") or "").strip().lower()
-    if not buff_id:
+    cond_type = str(condition.get("type", "") or "").strip().lower()
+    if cond_type != "buff_state":
         return False
-    if not isinstance(buff_states, dict):
-        return False
-    buff = buff_states.get(buff_id)
+    buff = _buff_condition_state(condition, buff_states)
     if not isinstance(buff, dict):
         return False
     if not bool(buff.get("calibrated", False)):
         return False
-    status = str(buff.get("status", "ok") or "").strip().lower()
-    if status and status != "ok":
+    if not _condition_buff_status_ok(buff):
         return False
     present = bool(buff.get("present", False))
-    if source == "buff_present":
+    op = str(condition.get("op", "") or "").strip().lower()
+    if op == "present":
         return present
-    if source == "buff_missing":
+    if op == "missing":
         return not present
+    return False
+
+
+def _item_conditions(item: dict, item_type: str) -> list[dict]:
+    return normalize_conditions(
+        item.get("conditions", []),
+        item_type=item_type,
+        legacy_ready_source=item.get("ready_source"),
+        legacy_buff_roi_id=item.get("buff_roi_id"),
+    )
+
+
+def _conditions_pass(item: dict, buff_states: Optional[dict[str, Any]], item_type: str) -> bool:
+    for condition in _item_conditions(item, item_type):
+        if not _buff_condition_passes(condition, buff_states):
+            return False
+    return True
+
+
+def _conditions_red_glow_ready(item: dict, buff_states: Optional[dict[str, Any]], item_type: str) -> bool:
+    for condition in _item_conditions(item, item_type):
+        buff = _buff_condition_state(condition, buff_states)
+        if not isinstance(buff, dict):
+            continue
+        if not _condition_buff_status_ok(buff):
+            continue
+        if bool(buff.get("red_glow_ready", False)):
+            return True
     return False
 
 
@@ -121,31 +181,30 @@ def slot_item_is_eligible_for_snapshot(
     if slot is None:
         return False
     ready_source = normalize_ready_source(item.get("ready_source"), "slot")
-    buff_gate_ready = _buff_ready(item, buff_states, "slot")
+    condition_gate_ready = _conditions_pass(item, buff_states, "slot")
+    has_conditions = bool(_item_conditions(item, "slot"))
     slot_ready = bool(getattr(slot, "is_ready", False))
     glow_ready = bool(getattr(slot, "glow_ready", False))
     yellow_glow_ready = bool(getattr(slot, "yellow_glow_ready", False))
     red_glow_ready = _red_glow_ready_from_snapshot(slot)
+    if has_conditions:
+        red_glow_ready = _conditions_red_glow_ready(item, buff_states, "slot") or red_glow_ready
     if ready_source == "slot":
-        if not buff_gate_ready:
+        if not condition_gate_ready:
+            if has_conditions:
+                return _dot_refresh_red_override(item, red_glow_ready) and slot_ready
             return False
-        if not slot_ready:
-            return False
-        return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
-    if ready_source in ("buff_present", "buff_missing"):
-        red_glow_ready = _red_glow_ready_from_buff_state(item, buff_states) or red_glow_ready
-        if not buff_gate_ready:
-            # If buff gate fails, allow red override only when slot is actually ready.
-            return _dot_refresh_red_override(item, red_glow_ready) and slot_ready
-        # If buff gate passes, keep existing DoT red override behavior.
-        if _dot_refresh_red_override(item, red_glow_ready):
+        if has_conditions and _dot_refresh_red_override(item, red_glow_ready):
             return True
         if not slot_ready:
             return False
         return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
+    if not condition_gate_ready:
+        if has_conditions:
+            return _dot_refresh_red_override(item, red_glow_ready) and slot_ready
         return False
-    if not buff_gate_ready:
-        return False
+    if has_conditions and _dot_refresh_red_override(item, red_glow_ready):
+        return True
     if not slot_ready:
         return False
     return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
@@ -162,31 +221,30 @@ def slot_item_is_eligible_for_state_dict(
     if not isinstance(slot_state, dict):
         return False
     ready_source = normalize_ready_source(item.get("ready_source"), "slot")
-    buff_gate_ready = _buff_ready(item, buff_states, "slot")
+    condition_gate_ready = _conditions_pass(item, buff_states, "slot")
+    has_conditions = bool(_item_conditions(item, "slot"))
     slot_ready = str(slot_state.get("state", "") or "").strip().lower() == "ready"
     glow_ready = bool(slot_state.get("glow_ready", False))
     yellow_glow_ready = bool(slot_state.get("yellow_glow_ready", False))
     red_glow_ready = _red_glow_ready_from_state_dict(slot_state)
+    if has_conditions:
+        red_glow_ready = _conditions_red_glow_ready(item, buff_states, "slot") or red_glow_ready
     if ready_source == "slot":
-        if not buff_gate_ready:
+        if not condition_gate_ready:
+            if has_conditions:
+                return _dot_refresh_red_override(item, red_glow_ready) and slot_ready
             return False
-        if not slot_ready:
-            return False
-        return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
-    if ready_source in ("buff_present", "buff_missing"):
-        red_glow_ready = _red_glow_ready_from_buff_state(item, buff_states) or red_glow_ready
-        if not buff_gate_ready:
-            # If buff gate fails, allow red override only when slot is actually ready.
-            return _dot_refresh_red_override(item, red_glow_ready) and slot_ready
-        # If buff gate passes, keep existing DoT red override behavior.
-        if _dot_refresh_red_override(item, red_glow_ready):
+        if has_conditions and _dot_refresh_red_override(item, red_glow_ready):
             return True
         if not slot_ready:
             return False
         return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
+    if not condition_gate_ready:
+        if has_conditions:
+            return _dot_refresh_red_override(item, red_glow_ready) and slot_ready
         return False
-    if not buff_gate_ready:
-        return False
+    if has_conditions and _dot_refresh_red_override(item, red_glow_ready):
+        return True
     if not slot_ready:
         return False
     return _activation_allows(item, glow_ready, yellow_glow_ready, red_glow_ready)
@@ -199,4 +257,4 @@ def manual_item_is_eligible(
 ) -> bool:
     if not item_matches_form(item, active_form_id):
         return False
-    return _buff_ready(item, buff_states, "manual")
+    return _conditions_pass(item, buff_states, "manual")

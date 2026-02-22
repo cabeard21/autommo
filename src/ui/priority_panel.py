@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from src.automation.priority_rules import (
     manual_item_is_eligible,
     normalize_activation_rule,
+    normalize_conditions,
     normalize_required_form,
     normalize_ready_source,
 )
@@ -94,6 +95,7 @@ class PriorityItemWidget(QFrame):
         activation_rule: str,
         ready_source: str,
         buff_roi_id: str,
+        conditions: list[dict],
         required_form: str,
         buff_rois: list[dict],
         forms: list[dict],
@@ -111,6 +113,12 @@ class PriorityItemWidget(QFrame):
         self._activation_rule = normalize_activation_rule(activation_rule)
         self._ready_source = normalize_ready_source(ready_source, item_type)
         self._buff_roi_id = str(buff_roi_id or "").strip().lower()
+        self._conditions = normalize_conditions(
+            conditions,
+            item_type=item_type,
+            legacy_ready_source=ready_source,
+            legacy_buff_roi_id=buff_roi_id,
+        )
         self._required_form = normalize_required_form(required_form)
         self._cast_does_not_block = bool(cast_does_not_block)
         self._buff_rois = [dict(r) for r in list(buff_rois or []) if isinstance(r, dict)]
@@ -153,7 +161,7 @@ class PriorityItemWidget(QFrame):
         self._rule_label = QLabel("")
         self._rule_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._rule_label.setStyleSheet("font-family: monospace; font-size: 9px; color: #d3a75b;")
-        self._rule_label.setMaximumWidth(80)
+        self._rule_label.setMaximumWidth(110)
         self._rule_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self._rule_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -206,6 +214,10 @@ class PriorityItemWidget(QFrame):
         self._buff_roi_id = str(buff_roi_id or "").strip().lower()
         self._update_rule_label()
 
+    def set_conditions(self, conditions: list[dict]) -> None:
+        self._conditions = normalize_conditions(conditions, item_type=self._item_type)
+        self._update_rule_label()
+
     def set_required_form(self, required_form: str) -> None:
         self._required_form = normalize_required_form(required_form)
         self._update_rule_label()
@@ -236,13 +248,30 @@ class PriorityItemWidget(QFrame):
             tokens.append("DOT")
         if self._item_type == "slot" and self._activation_rule == "require_glow":
             tokens.append("GLW")
-        if self._ready_source == "buff_present":
-            tokens.append(f"B+:{self._buff_name(self._buff_roi_id)}")
-        elif self._ready_source == "buff_missing":
-            tokens.append(f"B-:{self._buff_name(self._buff_roi_id)}")
+        cond_tokens = []
+        for cond in self._conditions:
+            if str(cond.get("type", "") or "").strip().lower() != "buff_state":
+                continue
+            buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
+            op = str(cond.get("op", "") or "").strip().lower()
+            prefix = "B+" if op == "present" else "B-" if op == "missing" else "B?"
+            cond_tokens.append(f"{prefix}:{self._buff_name(buff_id)}")
+        if len(cond_tokens) <= 2:
+            tokens.extend(cond_tokens)
+        elif cond_tokens:
+            tokens.extend(cond_tokens[:2])
+            tokens.append(f"+{len(cond_tokens) - 2}")
         if self._required_form:
             tokens.append(f"F:{self._form_name(self._required_form)}")
-        self._rule_label.setText(" ".join(tokens))
+        label = " ".join(tokens)
+        self._rule_label.setText(label)
+        tooltip = label
+        if cond_tokens:
+            tooltip = (
+                (tooltip + "\n") if tooltip else ""
+            ) + "Conditions: " + ", ".join(cond_tokens)
+        self._rule_label.setToolTip(tooltip)
+        self.setToolTip(tooltip)
 
     def set_last_fired_timestamp(self, timestamp: Optional[float]) -> None:
         self._last_fired_timestamp = timestamp
@@ -360,6 +389,9 @@ class PriorityItemWidget(QFrame):
         slot_ready_action = None
         cast_dnb_action = None
         ready_actions: dict[object, tuple[str, str]] = {}
+        add_condition_actions: dict[object, tuple[str, str]] = {}
+        remove_condition_actions: dict[object, int] = {}
+        clear_conditions_action = None
         form_actions: dict[object, str] = {}
         if self._item_type == "manual" and self._action_id:
             rename_action = menu.addAction("Rename...")
@@ -369,23 +401,31 @@ class PriorityItemWidget(QFrame):
             ready_always_action = ready_menu.addAction("Always")
             ready_always_action.setCheckable(True)
             ready_always_action.setChecked(self._ready_source == "always")
+            conditions_menu = menu.addMenu("Conditions")
+            add_present_menu = conditions_menu.addMenu("Add Buff Present")
+            add_missing_menu = conditions_menu.addMenu("Add Buff Missing")
             for buff in self._buff_rois:
                 buff_id = str(buff.get("id", "") or "").strip().lower()
                 buff_name = str(buff.get("name", "") or "").strip() or buff_id
                 if not buff_id:
                     continue
-                a_present = ready_menu.addAction(f"Buff present: {buff_name}")
-                a_present.setCheckable(True)
-                a_present.setChecked(
-                    self._ready_source == "buff_present" and self._buff_roi_id == buff_id
-                )
-                ready_actions[a_present] = ("buff_present", buff_id)
-                a_missing = ready_menu.addAction(f"Buff missing: {buff_name}")
-                a_missing.setCheckable(True)
-                a_missing.setChecked(
-                    self._ready_source == "buff_missing" and self._buff_roi_id == buff_id
-                )
-                ready_actions[a_missing] = ("buff_missing", buff_id)
+                a_present = add_present_menu.addAction(buff_name)
+                add_condition_actions[a_present] = (buff_id, "present")
+                a_missing = add_missing_menu.addAction(buff_name)
+                add_condition_actions[a_missing] = (buff_id, "missing")
+            remove_menu = conditions_menu.addMenu("Remove")
+            if self._conditions:
+                for idx, cond in enumerate(self._conditions):
+                    buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
+                    op = str(cond.get("op", "") or "").strip().lower()
+                    label = f"{'Buff present' if op == 'present' else 'Buff missing'}: {self._buff_name(buff_id)}"
+                    act = remove_menu.addAction(label)
+                    remove_condition_actions[act] = idx
+            else:
+                empty = remove_menu.addAction("(none)")
+                empty.setEnabled(False)
+            clear_conditions_action = conditions_menu.addAction("Clear All")
+            clear_conditions_action.setEnabled(bool(self._conditions))
             menu.addSeparator()
             form_menu = menu.addMenu("Required Form")
             a_any = form_menu.addAction("Any")
@@ -429,23 +469,31 @@ class PriorityItemWidget(QFrame):
             slot_ready_action = ready_menu.addAction("Use slot icon state")
             slot_ready_action.setCheckable(True)
             slot_ready_action.setChecked(self._ready_source == "slot")
+            conditions_menu = menu.addMenu("Conditions")
+            add_present_menu = conditions_menu.addMenu("Add Buff Present")
+            add_missing_menu = conditions_menu.addMenu("Add Buff Missing")
             for buff in self._buff_rois:
                 buff_id = str(buff.get("id", "") or "").strip().lower()
                 buff_name = str(buff.get("name", "") or "").strip() or buff_id
                 if not buff_id:
                     continue
-                a_present = ready_menu.addAction(f"Buff present: {buff_name}")
-                a_present.setCheckable(True)
-                a_present.setChecked(
-                    self._ready_source == "buff_present" and self._buff_roi_id == buff_id
-                )
-                ready_actions[a_present] = ("buff_present", buff_id)
-                a_missing = ready_menu.addAction(f"Buff missing: {buff_name}")
-                a_missing.setCheckable(True)
-                a_missing.setChecked(
-                    self._ready_source == "buff_missing" and self._buff_roi_id == buff_id
-                )
-                ready_actions[a_missing] = ("buff_missing", buff_id)
+                a_present = add_present_menu.addAction(buff_name)
+                add_condition_actions[a_present] = (buff_id, "present")
+                a_missing = add_missing_menu.addAction(buff_name)
+                add_condition_actions[a_missing] = (buff_id, "missing")
+            remove_menu = conditions_menu.addMenu("Remove")
+            if self._conditions:
+                for idx, cond in enumerate(self._conditions):
+                    buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
+                    op = str(cond.get("op", "") or "").strip().lower()
+                    label = f"{'Buff present' if op == 'present' else 'Buff missing'}: {self._buff_name(buff_id)}"
+                    act = remove_menu.addAction(label)
+                    remove_condition_actions[act] = idx
+            else:
+                empty = remove_menu.addAction("(none)")
+                empty.setEnabled(False)
+            clear_conditions_action = conditions_menu.addAction("Clear All")
+            clear_conditions_action.setEnabled(bool(self._conditions))
             menu.addSeparator()
             form_menu = menu.addMenu("Required Form")
             a_any = form_menu.addAction("Any")
@@ -495,6 +543,13 @@ class PriorityItemWidget(QFrame):
         elif chosen in ready_actions:
             source, buff_id = ready_actions[chosen]
             parent._on_item_ready_source_changed(self._item_key, source, buff_id)
+        elif chosen in add_condition_actions:
+            buff_id, op = add_condition_actions[chosen]
+            parent._on_item_condition_added(self._item_key, buff_id, op)
+        elif chosen in remove_condition_actions:
+            parent._on_item_condition_removed(self._item_key, remove_condition_actions[chosen])
+        elif chosen == clear_conditions_action:
+            parent._on_item_conditions_cleared(self._item_key)
         elif chosen in form_actions:
             parent._on_item_required_form_changed(self._item_key, form_actions[chosen])
         elif chosen == cast_dnb_action:
@@ -633,11 +688,23 @@ class PriorityListWidget(QWidget):
                 out["activation_rule"] = normalize_activation_rule(
                     out.get("activation_rule")
                 )
+                out["conditions"] = normalize_conditions(
+                    out.get("conditions", []),
+                    item_type="slot",
+                    legacy_ready_source=out.get("ready_source"),
+                    legacy_buff_roi_id=out.get("buff_roi_id"),
+                )
                 out["ready_source"] = normalize_ready_source(
                     out.get("ready_source"), "slot"
                 )
                 out["buff_roi_id"] = str(out.get("buff_roi_id", "") or "").strip().lower()
             elif str(out.get("type", "") or "").strip().lower() == "manual":
+                out["conditions"] = normalize_conditions(
+                    out.get("conditions", []),
+                    item_type="manual",
+                    legacy_ready_source=out.get("ready_source"),
+                    legacy_buff_roi_id=out.get("buff_roi_id"),
+                )
                 out["ready_source"] = normalize_ready_source(
                     out.get("ready_source"), "manual"
                 )
@@ -706,6 +773,12 @@ class PriorityListWidget(QWidget):
             activation_rule = normalize_activation_rule(item.get("activation_rule"))
             ready_source = normalize_ready_source(item.get("ready_source"), item_type)
             buff_roi_id = str(item.get("buff_roi_id", "") or "").strip().lower()
+            conditions = normalize_conditions(
+                item.get("conditions", []),
+                item_type=item_type,
+                legacy_ready_source=ready_source,
+                legacy_buff_roi_id=buff_roi_id,
+            )
             required_form = normalize_required_form(item.get("required_form"))
             cast_does_not_block = bool(item.get("cast_does_not_block", True))
             if item_type == "slot" and isinstance(slot_index, int):
@@ -732,6 +805,7 @@ class PriorityListWidget(QWidget):
                 activation_rule,
                 ready_source,
                 buff_roi_id,
+                conditions,
                 required_form,
                 self._buff_rois,
                 self._forms,
@@ -743,6 +817,7 @@ class PriorityListWidget(QWidget):
             )
             w.set_activation_rule(activation_rule)
             w.set_ready_source(ready_source, buff_roi_id)
+            w.set_conditions(conditions)
             w.set_required_form(required_form)
             w.set_forms(self._forms)
             if item_type == "slot" and isinstance(slot_index, int):
@@ -808,6 +883,7 @@ class PriorityListWidget(QWidget):
                     "activation_rule": "always",
                     "ready_source": "slot",
                     "buff_roi_id": "",
+                    "conditions": [],
                     "required_form": "",
                     "cast_does_not_block": True,
                 }
@@ -871,6 +947,55 @@ class PriorityListWidget(QWidget):
             item_type = str(item.get("type", "") or "").strip().lower()
             item["ready_source"] = normalize_ready_source(ready_source, item_type)
             item["buff_roi_id"] = str(buff_roi_id or "").strip().lower()
+            self._rebuild_items()
+            self._emit_items()
+            return
+
+    def _on_item_condition_added(self, item_key: str, buff_roi_id: str, op: str) -> None:
+        buff_id = str(buff_roi_id or "").strip().lower()
+        norm_op = str(op or "").strip().lower()
+        if not buff_id or norm_op not in ("present", "missing"):
+            return
+        for item in self._items:
+            if self._item_key(item) != item_key:
+                continue
+            item_type = str(item.get("type", "") or "").strip().lower()
+            existing = normalize_conditions(
+                item.get("conditions", []),
+                item_type=item_type,
+                legacy_ready_source=item.get("ready_source"),
+                legacy_buff_roi_id=item.get("buff_roi_id"),
+            )
+            existing.append({"type": "buff_state", "buff_roi_id": buff_id, "op": norm_op})
+            item["conditions"] = normalize_conditions(existing, item_type=item_type)
+            self._rebuild_items()
+            self._emit_items()
+            return
+
+    def _on_item_condition_removed(self, item_key: str, index: int) -> None:
+        for item in self._items:
+            if self._item_key(item) != item_key:
+                continue
+            item_type = str(item.get("type", "") or "").strip().lower()
+            existing = normalize_conditions(
+                item.get("conditions", []),
+                item_type=item_type,
+                legacy_ready_source=item.get("ready_source"),
+                legacy_buff_roi_id=item.get("buff_roi_id"),
+            )
+            if index < 0 or index >= len(existing):
+                return
+            del existing[index]
+            item["conditions"] = normalize_conditions(existing, item_type=item_type)
+            self._rebuild_items()
+            self._emit_items()
+            return
+
+    def _on_item_conditions_cleared(self, item_key: str) -> None:
+        for item in self._items:
+            if self._item_key(item) != item_key:
+                continue
+            item["conditions"] = []
             self._rebuild_items()
             self._emit_items()
             return

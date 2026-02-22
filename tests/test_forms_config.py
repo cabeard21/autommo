@@ -102,6 +102,53 @@ class FormsConfigTests(unittest.TestCase):
         self.assertEqual(by_form.get("normal", {}).get("1"), "top_left")
         self.assertEqual(by_form.get("form_1", {}).get("1"), "full")
 
+    def test_from_dict_migrates_legacy_buff_ready_source_to_conditions(self) -> None:
+        cfg = AppConfig.from_dict(
+            {
+                "slots": {"count": 2, "gap_pixels": 2, "padding": 3, "keybinds": []},
+                "detection": {},
+                "priority_profiles": [
+                    {
+                        "id": "default",
+                        "name": "Default",
+                        "priority_order": [0],
+                        "priority_items": [
+                            {
+                                "type": "slot",
+                                "slot_index": 0,
+                                "item_id": "slot0",
+                                "activation_rule": "always",
+                                "ready_source": "buff_missing",
+                                "buff_roi_id": "dot1",
+                            },
+                            {
+                                "type": "manual",
+                                "action_id": "manual_1",
+                                "item_id": "m1",
+                                "ready_source": "buff_present",
+                                "buff_roi_id": "dot2",
+                            },
+                        ],
+                        "manual_actions": [{"id": "manual_1", "name": "M1", "keybind": "1"}],
+                        "toggle_bind": "",
+                        "single_fire_bind": "",
+                    }
+                ],
+                "active_priority_profile_id": "default",
+            }
+        )
+        items = cfg.get_active_priority_profile().get("priority_items", [])
+        self.assertEqual(items[0].get("ready_source"), "slot")
+        self.assertEqual(
+            items[0].get("conditions"),
+            [{"type": "buff_state", "buff_roi_id": "dot1", "op": "missing"}],
+        )
+        self.assertEqual(items[1].get("ready_source"), "always")
+        self.assertEqual(
+            items[1].get("conditions"),
+            [{"type": "buff_state", "buff_roi_id": "dot2", "op": "present"}],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -304,6 +304,53 @@ class PriorityRulesTests(unittest.TestCase):
             slot_item_is_eligible_for_snapshot(item, slot_no_glow, buff_states={})
         )
 
+    def test_manual_multiple_buff_conditions_are_anded(self) -> None:
+        item = {
+            "type": "manual",
+            "action_id": "manual_1",
+            "ready_source": "always",
+            "conditions": [
+                {"type": "buff_state", "buff_roi_id": "a", "op": "present"},
+                {"type": "buff_state", "buff_roi_id": "b", "op": "missing"},
+            ],
+        }
+        buff_states = {
+            "a": {"calibrated": True, "present": True, "status": "ok"},
+            "b": {"calibrated": True, "present": False, "status": "ok"},
+        }
+        self.assertTrue(manual_item_is_eligible(item, buff_states=buff_states))
+        buff_states["b"]["present"] = True
+        self.assertFalse(manual_item_is_eligible(item, buff_states=buff_states))
+
+    def test_slot_multiple_conditions_dot_refresh_red_override_uses_any_condition_buff(self) -> None:
+        item = {
+            "type": "slot",
+            "slot_index": 0,
+            "activation_rule": "dot_refresh",
+            "ready_source": "slot",
+            "conditions": [
+                {"type": "buff_state", "buff_roi_id": "a", "op": "missing"},
+                {"type": "buff_state", "buff_roi_id": "b", "op": "present"},
+            ],
+        }
+        slot_state = {
+            "state": "ready",
+            "yellow_glow_ready": False,
+            "red_glow_ready": False,
+        }
+        buff_states = {
+            "a": {
+                "calibrated": True,
+                "present": True,  # fails missing
+                "status": "ok",
+                "red_glow_ready": True,  # override source
+            },
+            "b": {"calibrated": True, "present": False, "status": "ok"},
+        }
+        self.assertTrue(
+            slot_item_is_eligible_for_state_dict(item, slot_state, buff_states=buff_states)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

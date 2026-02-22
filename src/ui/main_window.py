@@ -44,6 +44,7 @@ from src.automation.priority_rules import (
     item_matches_form,
     manual_item_is_eligible,
     normalize_activation_rule,
+    normalize_conditions,
     normalize_required_form,
     normalize_ready_source,
     slot_item_is_eligible_for_state_dict,
@@ -668,6 +669,12 @@ class MainWindow(QMainWindow):
                     out["activation_rule"] = normalize_activation_rule(
                         out.get("activation_rule")
                     )
+                    out["conditions"] = normalize_conditions(
+                        out.get("conditions", []),
+                        item_type="slot",
+                        legacy_ready_source=out.get("ready_source"),
+                        legacy_buff_roi_id=out.get("buff_roi_id"),
+                    )
                     out["ready_source"] = normalize_ready_source(
                         out.get("ready_source"), "slot"
                     )
@@ -675,6 +682,12 @@ class MainWindow(QMainWindow):
                         str(out.get("buff_roi_id", "") or "").strip().lower()
                     )
                 elif str(out.get("type", "") or "").strip().lower() == "manual":
+                    out["conditions"] = normalize_conditions(
+                        out.get("conditions", []),
+                        item_type="manual",
+                        legacy_ready_source=out.get("ready_source"),
+                        legacy_buff_roi_id=out.get("buff_roi_id"),
+                    )
                     out["ready_source"] = normalize_ready_source(
                         out.get("ready_source"), "manual"
                     )
@@ -947,6 +960,12 @@ class MainWindow(QMainWindow):
                 out["activation_rule"] = normalize_activation_rule(
                     out.get("activation_rule")
                 )
+                out["conditions"] = normalize_conditions(
+                    out.get("conditions", []),
+                    item_type="slot",
+                    legacy_ready_source=out.get("ready_source"),
+                    legacy_buff_roi_id=out.get("buff_roi_id"),
+                )
                 out["ready_source"] = normalize_ready_source(
                     out.get("ready_source"), "slot"
                 )
@@ -954,6 +973,12 @@ class MainWindow(QMainWindow):
                     str(out.get("buff_roi_id", "") or "").strip().lower()
                 )
             elif str(out.get("type", "") or "").strip().lower() == "manual":
+                out["conditions"] = normalize_conditions(
+                    out.get("conditions", []),
+                    item_type="manual",
+                    legacy_ready_source=out.get("ready_source"),
+                    legacy_buff_roi_id=out.get("buff_roi_id"),
+                )
                 out["ready_source"] = normalize_ready_source(
                     out.get("ready_source"), "manual"
                 )
@@ -1330,6 +1355,7 @@ class MainWindow(QMainWindow):
                 "action_id": action_id,
                 "ready_source": "always",
                 "buff_roi_id": "",
+                "conditions": [],
                 "required_form": "",
             }
         )

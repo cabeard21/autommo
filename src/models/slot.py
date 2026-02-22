@@ -280,9 +280,42 @@ class AppConfig:
     @staticmethod
     def _normalize_ready_source(raw_source: object, item_type: str) -> str:
         source = str(raw_source or "").strip().lower()
-        if source in ("slot", "always", "buff_present", "buff_missing"):
+        if source in ("slot", "always"):
             return source
         return "always" if item_type == "manual" else "slot"
+
+    @staticmethod
+    def _normalize_conditions(
+        raw_conditions: object,
+        item_type: str,
+        legacy_ready_source: object = None,
+        legacy_buff_roi_id: object = None,
+    ) -> list[dict]:
+        normalized: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
+        for raw in list(raw_conditions or []):
+            if not isinstance(raw, dict):
+                continue
+            cond_type = str(raw.get("type", "") or "").strip().lower()
+            if cond_type != "buff_state":
+                continue
+            buff_id = str(raw.get("buff_roi_id", "") or "").strip().lower()
+            op = str(raw.get("op", "") or "").strip().lower()
+            if not buff_id or op not in ("present", "missing"):
+                continue
+            key = (cond_type, buff_id, op)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append({"type": "buff_state", "buff_roi_id": buff_id, "op": op})
+        if normalized:
+            return normalized
+        legacy_source = str(legacy_ready_source or "").strip().lower()
+        legacy_buff = str(legacy_buff_roi_id or "").strip().lower()
+        if legacy_source in ("buff_present", "buff_missing") and legacy_buff:
+            op = "present" if legacy_source == "buff_present" else "missing"
+            return [{"type": "buff_state", "buff_roi_id": legacy_buff, "op": op}]
+        return []
 
     @staticmethod
     def _normalize_form_id(raw_form_id: object) -> str:
@@ -433,6 +466,7 @@ class AppConfig:
                         "activation_rule": "always",
                         "ready_source": "slot",
                         "buff_roi_id": "",
+                        "conditions": [],
                         "required_form": "",
                         "cast_does_not_block": True,
                     }
@@ -452,6 +486,12 @@ class AppConfig:
                             "item_id": existing_item_id or uuid.uuid4().hex[:8],
                             "activation_rule": AppConfig._normalize_activation_rule(
                                 raw.get("activation_rule")
+                            ),
+                            "conditions": AppConfig._normalize_conditions(
+                                raw.get("conditions", []),
+                                "slot",
+                                legacy_ready_source=raw.get("ready_source"),
+                                legacy_buff_roi_id=raw.get("buff_roi_id"),
                             ),
                             "ready_source": AppConfig._normalize_ready_source(
                                 raw.get("ready_source"), "slot"
@@ -474,6 +514,12 @@ class AppConfig:
                             "type": "manual",
                             "action_id": action_id,
                             "item_id": existing_item_id or uuid.uuid4().hex[:8],
+                            "conditions": AppConfig._normalize_conditions(
+                                raw.get("conditions", []),
+                                "manual",
+                                legacy_ready_source=raw.get("ready_source"),
+                                legacy_buff_roi_id=raw.get("buff_roi_id"),
+                            ),
                             "ready_source": AppConfig._normalize_ready_source(
                                 raw.get("ready_source"), "manual"
                             ),
@@ -497,6 +543,7 @@ class AppConfig:
                 "activation_rule": "always",
                 "ready_source": "slot",
                 "buff_roi_id": "",
+                "conditions": [],
                 "required_form": "",
                 "cast_does_not_block": True,
             }
@@ -587,6 +634,7 @@ class AppConfig:
                             "activation_rule": "always",
                             "ready_source": "slot",
                             "buff_roi_id": "",
+                            "conditions": [],
                             "required_form": "",
                         }
                         for i in self.priority_order
@@ -974,6 +1022,7 @@ class AppConfig:
                             "activation_rule": "always",
                             "ready_source": "slot",
                             "buff_roi_id": "",
+                            "conditions": [],
                             "required_form": "",
                         }
                         for i in list(data.get("priority_order", []))
