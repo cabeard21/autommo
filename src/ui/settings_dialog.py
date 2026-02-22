@@ -761,6 +761,14 @@ class SettingsDialog(QDialog):
         self._spin_min_delay.setRange(50, 2000)
         self._spin_min_delay.setMaximumWidth(56)
         fl.addRow(_row_label("Delay (ms):"), self._spin_min_delay)
+        self._spin_press_jitter = QSpinBox()
+        self._spin_press_jitter.setRange(0, 500)
+        self._spin_press_jitter.setSuffix(" ms")
+        self._spin_press_jitter.setMaximumWidth(80)
+        self._spin_press_jitter.setToolTip(
+            "Random +/- jitter added to Delay for each send. 0 disables jitter."
+        )
+        fl.addRow(_row_label("Jitter (ms):"), self._spin_press_jitter)
         self._spin_gcd_ms = QSpinBox()
         self._spin_gcd_ms.setRange(500, 3000)
         self._spin_gcd_ms.setSuffix(" ms")
@@ -946,6 +954,7 @@ class SettingsDialog(QDialog):
         self._btn_single_fire_bind.clicked.connect(self._on_rebind_single_fire_clicked)
         self._btn_single_fire_bind.customContextMenuRequested.connect(self._on_rebind_single_fire_cleared)
         self._spin_min_delay.valueChanged.connect(self._on_min_delay_changed)
+        self._spin_press_jitter.valueChanged.connect(self._on_press_jitter_changed)
         self._spin_gcd_ms.valueChanged.connect(self._on_gcd_ms_changed)
         self._spin_queue_window.valueChanged.connect(self._on_queue_window_changed)
         self._check_allow_cast_while_casting.toggled.connect(self._on_allow_cast_while_casting_changed)
@@ -1161,6 +1170,11 @@ class SettingsDialog(QDialog):
         self._spin_min_delay.blockSignals(True)
         self._spin_min_delay.setValue(getattr(self._config, "min_press_interval_ms", 150))
         self._spin_min_delay.blockSignals(False)
+        self._spin_press_jitter.blockSignals(True)
+        self._spin_press_jitter.setValue(
+            int(getattr(self._config, "press_interval_jitter_ms", 0))
+        )
+        self._spin_press_jitter.blockSignals(False)
         self._spin_gcd_ms.blockSignals(True)
         self._spin_gcd_ms.setValue(int(getattr(self._config, "gcd_ms", 1500)))
         self._spin_gcd_ms.blockSignals(False)
@@ -2199,6 +2213,10 @@ class SettingsDialog(QDialog):
 
     def _on_min_delay_changed(self, value: int) -> None:
         self._config.min_press_interval_ms = max(50, min(2000, value))
+        self._emit_config()
+
+    def _on_press_jitter_changed(self, value: int) -> None:
+        self._config.press_interval_jitter_ms = max(0, min(500, value))
         self._emit_config()
 
     def _on_gcd_ms_changed(self, value: int) -> None:

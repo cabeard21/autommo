@@ -227,6 +227,8 @@ class AppConfig:
     active_priority_profile_id: str = "default"
     # Minimum ms between keypresses when automation is sending keys
     min_press_interval_ms: int = 150
+    # Random +/- jitter (ms) applied to the minimum press interval; 0 disables jitter.
+    press_interval_jitter_ms: int = 0
     # GCD duration used for queue suppression timing after queued sends
     gcd_ms: int = 1500
     # If non-empty, only send keys when foreground window title contains this (case-insensitive)
@@ -981,6 +983,7 @@ class AppConfig:
             automation_toggle_bind=data.get("automation_toggle_bind", ""),
             automation_hotkey_mode=hotkey_mode,
             min_press_interval_ms=data.get("min_press_interval_ms", 150),
+            press_interval_jitter_ms=int(data.get("press_interval_jitter_ms", 0)),
             gcd_ms=int(data.get("gcd_ms", 1500)),
             target_window_title=data.get("target_window_title", ""),
             profile_name=data.get("profile_name", ""),
@@ -1070,6 +1073,7 @@ class AppConfig:
         cfg.glow_motion_rotation_bins = max(8, int(cfg.glow_motion_rotation_bins))
         cfg.glow_motion_min_hold_ms = max(0, int(cfg.glow_motion_min_hold_ms))
         cfg.glow_motion_min_off_ms = max(0, int(cfg.glow_motion_min_off_ms))
+        cfg.press_interval_jitter_ms = max(0, min(500, int(cfg.press_interval_jitter_ms)))
         return cfg
 
     def to_dict(self) -> dict:
@@ -1181,6 +1185,7 @@ class AppConfig:
             "priority_profiles": self.priority_profiles,
             "active_priority_profile_id": self.active_priority_profile_id,
             "min_press_interval_ms": self.min_press_interval_ms,
+            "press_interval_jitter_ms": self.press_interval_jitter_ms,
             "gcd_ms": self.gcd_ms,
             "target_window_title": self.target_window_title,
             "profile_name": self.profile_name,

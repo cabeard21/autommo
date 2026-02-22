@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import sys
 import time
 from typing import TYPE_CHECKING, Callable, Optional
@@ -10,7 +11,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 if TYPE_CHECKING:
     from src.models import AppConfig
 
-from src.models import ActionBarState
+from src.models import ActionBarState, SlotState
 from src.automation.binds import normalize_bind
 from src.automation.priority_rules import (
     item_matches_form,
@@ -55,6 +56,7 @@ class KeySender:
     def __init__(self, config: "AppConfig"):
         self._config = config
         self._last_send_time = 0.0
+        self._next_send_allowed_at = 0.0
         # After sending a queued key, don't send priority key until this time (so game gets only the queued key).
         self._suppress_priority_until = 0.0
         self._single_fire_pending = False
@@ -79,6 +81,22 @@ class KeySender:
         """Return global cast-bar gate state and optional end timestamp."""
         return bool(getattr(state, "cast_active", False)), getattr(state, "cast_ends_at", None)
 
+    def _sample_press_interval_sec(self) -> float:
+        """Return next send gate interval with optional +/- jitter."""
+        base_ms = max(0, int(getattr(self._config, "min_press_interval_ms", 150) or 0))
+        jitter_ms = max(
+            0, int(getattr(self._config, "press_interval_jitter_ms", 0) or 0)
+        )
+        if jitter_ms <= 0:
+            return base_ms / 1000.0
+        low_ms = max(0.0, float(base_ms - jitter_ms))
+        high_ms = max(low_ms, float(base_ms + jitter_ms))
+        return random.uniform(low_ms, high_ms) / 1000.0
+
+    def _record_send(self, now: float) -> None:
+        self._last_send_time = now
+        self._next_send_allowed_at = now + self._sample_press_interval_sec()
+
     def evaluate_and_send(
         self,
         state: ActionBarState,
@@ -99,11 +117,8 @@ class KeySender:
         if not automation_enabled and not single_fire_pending:
             return None
 
-        min_interval_sec = (
-            getattr(self._config, "min_press_interval_ms", 150) or 150
-        ) / 1000.0
         now = time.time()
-        min_interval_ok = (now - self._last_send_time) >= min_interval_sec
+        min_interval_ok = now >= self._next_send_allowed_at
         window_ok = self.is_target_window_active()
 
         allow_while_casting = bool(
@@ -163,7 +178,7 @@ class KeySender:
                     except Exception as e:
                         logger.warning("keyboard send(queued %r) failed: %s", key, e)
                         return None
-                    self._last_send_time = now
+                    self._record_send(now)
                     # Suppress priority for one configured GCD so only the queued key reaches the game.
                     gcd_sec = (getattr(self._config, "gcd_ms", 1500) or 1500) / 1000.0
                     self._suppress_priority_until = now + max(0.0, gcd_sec)
@@ -208,7 +223,7 @@ class KeySender:
                                 "keyboard send(queued %r) failed: %s", key, e
                             )
                             return None
-                        self._last_send_time = now
+                        self._record_send(now)
                         gcd_sec = (getattr(self._config, "gcd_ms", 1500) or 1500) / 1000.0
                         self._suppress_priority_until = now + max(0.0, gcd_sec)
                         if on_queued_sent:
@@ -296,7 +311,7 @@ class KeySender:
                 logger.warning("keyboard.send(%r) failed: %s", keybind, e)
                 return None
 
-            self._last_send_time = now
+            self._record_send(now)
             self._last_sent_item = item
             if single_fire_pending:
                 self._single_fire_pending = False
