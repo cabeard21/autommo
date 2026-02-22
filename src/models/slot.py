@@ -402,6 +402,7 @@ class AppConfig:
                         0.0, min(1.0, float(raw.get("match_threshold", 0.88)))
                     ),
                     "confirm_frames": max(1, int(raw.get("confirm_frames", 2))),
+                    "motion_gate_threshold": max(0.0, float(raw.get("motion_gate_threshold", 0) or 0)),
                     "calibration": {
                         "present_template": present_template,
                         "missing_template": missing_template,
