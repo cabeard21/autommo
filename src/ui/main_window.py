@@ -1112,6 +1112,9 @@ class MainWindow(QMainWindow):
         keybind: str,
         cooldown_remaining: Optional[float] = None,
         slot_index: int = -1,
+        glow_ready: bool = False,
+        yellow_glow_ready: bool = False,
+        red_glow_ready: bool = False,
     ) -> None:
         """Set slot button text, color, and bold if baseline was recalibrated. Skip if this slot is listening."""
         idx = self._slot_buttons.index(btn) if btn in self._slot_buttons else slot_index
@@ -1131,8 +1134,19 @@ class MainWindow(QMainWindow):
             "gcd": "#5a5a2d",
             "unknown": "#333333",
         }.get(state, "#333333")
+        border_color = "#444"
+        border_width = 1
+        if red_glow_ready:
+            border_color = "#ff5a5a"
+            border_width = 2
+        elif yellow_glow_ready:
+            border_color = "#ffd24a"
+            border_width = 2
+        elif glow_ready:
+            border_color = "#aeeeff"
+            border_width = 2
         btn.setStyleSheet(
-            f"background-color: {color}; color: white; border: 1px solid #444; padding: 4px;"
+            f"background-color: {color}; color: white; border: {border_width}px solid {border_color}; padding: 4px;"
         )
         font = btn.font()
         font.setBold(idx >= 0 and idx in self._slots_recalibrated)
@@ -1575,7 +1589,14 @@ class MainWindow(QMainWindow):
             state = s.get("state", "unknown")
             cd = s.get("cooldown_remaining")
             self._apply_slot_button_style(
-                btn, state, keybind, cd, slot_index=s["index"]
+                btn,
+                state,
+                keybind,
+                cd,
+                slot_index=s["index"],
+                glow_ready=bool(s.get("glow_ready", False)),
+                yellow_glow_ready=bool(s.get("yellow_glow_ready", False)),
+                red_glow_ready=bool(s.get("red_glow_ready", False)),
             )
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
         self._priority_panel.priority_list.set_manual_actions(
