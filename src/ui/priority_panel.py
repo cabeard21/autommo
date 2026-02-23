@@ -250,12 +250,15 @@ class PriorityItemWidget(QFrame):
             tokens.append("GLW")
         cond_tokens = []
         for cond in self._conditions:
-            if str(cond.get("type", "") or "").strip().lower() != "buff_state":
-                continue
-            buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
-            op = str(cond.get("op", "") or "").strip().lower()
-            prefix = "B+" if op == "present" else "B-" if op == "missing" else "B?"
-            cond_tokens.append(f"{prefix}:{self._buff_name(buff_id)}")
+            cond_type = str(cond.get("type", "") or "").strip().lower()
+            if cond_type == "buff_state":
+                buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
+                op = str(cond.get("op", "") or "").strip().lower()
+                prefix = "B+" if op == "present" else "B-" if op == "missing" else "B?"
+                cond_tokens.append(f"{prefix}:{self._buff_name(buff_id)}")
+            elif cond_type == "moving":
+                op = str(cond.get("op", "") or "").strip().lower()
+                cond_tokens.append("MOV" if op == "active" else "IDLE")
         if len(cond_tokens) <= 2:
             tokens.extend(cond_tokens)
         elif cond_tokens:
@@ -390,6 +393,7 @@ class PriorityItemWidget(QFrame):
         cast_dnb_action = None
         ready_actions: dict[object, tuple[str, str]] = {}
         add_condition_actions: dict[object, tuple[str, str]] = {}
+        add_movement_condition_actions: dict[object, str] = {}
         remove_condition_actions: dict[object, int] = {}
         clear_conditions_action = None
         form_actions: dict[object, str] = {}
@@ -413,12 +417,22 @@ class PriorityItemWidget(QFrame):
                 add_condition_actions[a_present] = (buff_id, "present")
                 a_missing = add_missing_menu.addAction(buff_name)
                 add_condition_actions[a_missing] = (buff_id, "missing")
+            add_movement_menu = conditions_menu.addMenu("Add Movement")
+            a_mov_active = add_movement_menu.addAction("Moving (active)")
+            add_movement_condition_actions[a_mov_active] = "active"
+            a_mov_inactive = add_movement_menu.addAction("Moving (inactive)")
+            add_movement_condition_actions[a_mov_inactive] = "inactive"
             remove_menu = conditions_menu.addMenu("Remove")
             if self._conditions:
                 for idx, cond in enumerate(self._conditions):
-                    buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
-                    op = str(cond.get("op", "") or "").strip().lower()
-                    label = f"{'Buff present' if op == 'present' else 'Buff missing'}: {self._buff_name(buff_id)}"
+                    cond_type = str(cond.get("type", "") or "").strip().lower()
+                    if cond_type == "moving":
+                        op = str(cond.get("op", "") or "").strip().lower()
+                        label = f"Moving: {'active' if op == 'active' else 'inactive'}"
+                    else:
+                        buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
+                        op = str(cond.get("op", "") or "").strip().lower()
+                        label = f"{'Buff present' if op == 'present' else 'Buff missing'}: {self._buff_name(buff_id)}"
                     act = remove_menu.addAction(label)
                     remove_condition_actions[act] = idx
             else:
@@ -481,12 +495,22 @@ class PriorityItemWidget(QFrame):
                 add_condition_actions[a_present] = (buff_id, "present")
                 a_missing = add_missing_menu.addAction(buff_name)
                 add_condition_actions[a_missing] = (buff_id, "missing")
+            add_movement_menu = conditions_menu.addMenu("Add Movement")
+            a_mov_active = add_movement_menu.addAction("Moving (active)")
+            add_movement_condition_actions[a_mov_active] = "active"
+            a_mov_inactive = add_movement_menu.addAction("Moving (inactive)")
+            add_movement_condition_actions[a_mov_inactive] = "inactive"
             remove_menu = conditions_menu.addMenu("Remove")
             if self._conditions:
                 for idx, cond in enumerate(self._conditions):
-                    buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
-                    op = str(cond.get("op", "") or "").strip().lower()
-                    label = f"{'Buff present' if op == 'present' else 'Buff missing'}: {self._buff_name(buff_id)}"
+                    cond_type = str(cond.get("type", "") or "").strip().lower()
+                    if cond_type == "moving":
+                        op = str(cond.get("op", "") or "").strip().lower()
+                        label = f"Moving: {'active' if op == 'active' else 'inactive'}"
+                    else:
+                        buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
+                        op = str(cond.get("op", "") or "").strip().lower()
+                        label = f"{'Buff present' if op == 'present' else 'Buff missing'}: {self._buff_name(buff_id)}"
                     act = remove_menu.addAction(label)
                     remove_condition_actions[act] = idx
             else:
@@ -546,6 +570,8 @@ class PriorityItemWidget(QFrame):
         elif chosen in add_condition_actions:
             buff_id, op = add_condition_actions[chosen]
             parent._on_item_condition_added(self._item_key, buff_id, op)
+        elif chosen in add_movement_condition_actions:
+            parent._on_item_movement_condition_added(self._item_key, add_movement_condition_actions[chosen])
         elif chosen in remove_condition_actions:
             parent._on_item_condition_removed(self._item_key, remove_condition_actions[chosen])
         elif chosen == clear_conditions_action:
@@ -967,6 +993,26 @@ class PriorityListWidget(QWidget):
                 legacy_buff_roi_id=item.get("buff_roi_id"),
             )
             existing.append({"type": "buff_state", "buff_roi_id": buff_id, "op": norm_op})
+            item["conditions"] = normalize_conditions(existing, item_type=item_type)
+            self._rebuild_items()
+            self._emit_items()
+            return
+
+    def _on_item_movement_condition_added(self, item_key: str, op: str) -> None:
+        norm_op = str(op or "").strip().lower()
+        if norm_op not in ("active", "inactive"):
+            return
+        for item in self._items:
+            if self._item_key(item) != item_key:
+                continue
+            item_type = str(item.get("type", "") or "").strip().lower()
+            existing = normalize_conditions(
+                item.get("conditions", []),
+                item_type=item_type,
+                legacy_ready_source=item.get("ready_source"),
+                legacy_buff_roi_id=item.get("buff_roi_id"),
+            )
+            existing.append({"type": "moving", "op": norm_op})
             item["conditions"] = normalize_conditions(existing, item_type=item_type)
             self._rebuild_items()
             self._emit_items()

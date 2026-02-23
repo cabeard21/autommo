@@ -107,6 +107,7 @@ class KeySender:
         buff_states: Optional[dict] = None,
         queued_override: Optional[dict] = None,
         on_queued_sent: Optional[Callable[[], None]] = None,
+        movement_active: Optional[bool] = None,
     ) -> Optional[dict]:
         """
         If automation enabled, optionally handle queued override first (whitelist or tracked slot);
@@ -263,7 +264,8 @@ class KeySender:
                     continue
                 slot = slots_by_index.get(slot_index)
                 if not slot_item_is_eligible_for_snapshot(
-                    item, slot, buff_states=buff_states, active_form_id=active_form_id
+                    item, slot, buff_states=buff_states, active_form_id=active_form_id,
+                    movement_active=movement_active,
                 ):
                     continue
                 keybind = keybinds[slot_index] if slot_index < len(keybinds) else None
@@ -272,6 +274,7 @@ class KeySender:
                     item,
                     buff_states=buff_states,
                     active_form_id=active_form_id,
+                    movement_active=movement_active,
                 ):
                     continue
                 action_id = str(item.get("action_id", "") or "").strip().lower()

@@ -294,22 +294,30 @@ class AppConfig:
         legacy_buff_roi_id: object = None,
     ) -> list[dict]:
         normalized: list[dict] = []
-        seen: set[tuple[str, str, str]] = set()
+        seen: set[tuple] = set()
         for raw in list(raw_conditions or []):
             if not isinstance(raw, dict):
                 continue
             cond_type = str(raw.get("type", "") or "").strip().lower()
-            if cond_type != "buff_state":
-                continue
-            buff_id = str(raw.get("buff_roi_id", "") or "").strip().lower()
-            op = str(raw.get("op", "") or "").strip().lower()
-            if not buff_id or op not in ("present", "missing"):
-                continue
-            key = (cond_type, buff_id, op)
-            if key in seen:
-                continue
-            seen.add(key)
-            normalized.append({"type": "buff_state", "buff_roi_id": buff_id, "op": op})
+            if cond_type == "buff_state":
+                buff_id = str(raw.get("buff_roi_id", "") or "").strip().lower()
+                op = str(raw.get("op", "") or "").strip().lower()
+                if not buff_id or op not in ("present", "missing"):
+                    continue
+                key = ("buff_state", buff_id, op)
+                if key in seen:
+                    continue
+                seen.add(key)
+                normalized.append({"type": "buff_state", "buff_roi_id": buff_id, "op": op})
+            elif cond_type == "moving":
+                op = str(raw.get("op", "") or "").strip().lower()
+                if op not in ("active", "inactive"):
+                    continue
+                key = ("moving", op)
+                if key in seen:
+                    continue
+                seen.add(key)
+                normalized.append({"type": "moving", "op": op})
         if normalized:
             return normalized
         legacy_source = str(legacy_ready_source or "").strip().lower()

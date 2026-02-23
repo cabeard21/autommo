@@ -29,22 +29,30 @@ def normalize_conditions(
 ) -> list[dict]:
     """Normalize item conditions and migrate legacy single-buff ready_source fields."""
     normalized: list[dict] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple] = set()
     for raw in list(raw_conditions or []):
         if not isinstance(raw, dict):
             continue
         cond_type = str(raw.get("type", "") or "").strip().lower()
-        if cond_type != "buff_state":
-            continue
-        buff_id = str(raw.get("buff_roi_id", "") or "").strip().lower()
-        op = str(raw.get("op", "") or "").strip().lower()
-        if not buff_id or op not in ("present", "missing"):
-            continue
-        key = (cond_type, buff_id, op)
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append({"type": "buff_state", "buff_roi_id": buff_id, "op": op})
+        if cond_type == "buff_state":
+            buff_id = str(raw.get("buff_roi_id", "") or "").strip().lower()
+            op = str(raw.get("op", "") or "").strip().lower()
+            if not buff_id or op not in ("present", "missing"):
+                continue
+            key = ("buff_state", buff_id, op)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append({"type": "buff_state", "buff_roi_id": buff_id, "op": op})
+        elif cond_type == "moving":
+            op = str(raw.get("op", "") or "").strip().lower()
+            if op not in ("active", "inactive"):
+                continue
+            key = ("moving", op)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append({"type": "moving", "op": op})
     if normalized:
         return normalized
 
@@ -119,6 +127,17 @@ def _condition_buff_status_ok(buff: dict[str, Any]) -> bool:
     return not status or status == "ok"
 
 
+def _movement_condition_passes(condition: dict, movement_active: Optional[bool]) -> bool:
+    if movement_active is None:
+        return True  # tracker not available, don't block
+    op = str(condition.get("op", "") or "").strip().lower()
+    if op == "active":
+        return bool(movement_active)
+    if op == "inactive":
+        return not bool(movement_active)
+    return False
+
+
 def _buff_condition_passes(
     condition: dict,
     buff_states: Optional[dict[str, Any]],
@@ -151,10 +170,20 @@ def _item_conditions(item: dict, item_type: str) -> list[dict]:
     )
 
 
-def _conditions_pass(item: dict, buff_states: Optional[dict[str, Any]], item_type: str) -> bool:
+def _conditions_pass(
+    item: dict,
+    buff_states: Optional[dict[str, Any]],
+    item_type: str,
+    movement_active: Optional[bool] = None,
+) -> bool:
     for condition in _item_conditions(item, item_type):
-        if not _buff_condition_passes(condition, buff_states):
-            return False
+        cond_type = str(condition.get("type", "") or "").strip().lower()
+        if cond_type == "buff_state":
+            if not _buff_condition_passes(condition, buff_states):
+                return False
+        elif cond_type == "moving":
+            if not _movement_condition_passes(condition, movement_active):
+                return False
     return True
 
 
@@ -175,13 +204,14 @@ def slot_item_is_eligible_for_snapshot(
     slot: Optional[SlotSnapshot],
     buff_states: Optional[dict[str, Any]] = None,
     active_form_id: str = "",
+    movement_active: Optional[bool] = None,
 ) -> bool:
     if not item_matches_form(item, active_form_id):
         return False
     if slot is None:
         return False
     ready_source = normalize_ready_source(item.get("ready_source"), "slot")
-    condition_gate_ready = _conditions_pass(item, buff_states, "slot")
+    condition_gate_ready = _conditions_pass(item, buff_states, "slot", movement_active=movement_active)
     has_conditions = bool(_item_conditions(item, "slot"))
     slot_ready = bool(getattr(slot, "is_ready", False))
     glow_ready = bool(getattr(slot, "glow_ready", False))
@@ -215,13 +245,14 @@ def slot_item_is_eligible_for_state_dict(
     slot_state: Optional[dict[str, Any]],
     buff_states: Optional[dict[str, Any]] = None,
     active_form_id: str = "",
+    movement_active: Optional[bool] = None,
 ) -> bool:
     if not item_matches_form(item, active_form_id):
         return False
     if not isinstance(slot_state, dict):
         return False
     ready_source = normalize_ready_source(item.get("ready_source"), "slot")
-    condition_gate_ready = _conditions_pass(item, buff_states, "slot")
+    condition_gate_ready = _conditions_pass(item, buff_states, "slot", movement_active=movement_active)
     has_conditions = bool(_item_conditions(item, "slot"))
     slot_ready = str(slot_state.get("state", "") or "").strip().lower() == "ready"
     glow_ready = bool(slot_state.get("glow_ready", False))
@@ -254,7 +285,8 @@ def manual_item_is_eligible(
     item: dict,
     buff_states: Optional[dict[str, Any]] = None,
     active_form_id: str = "",
+    movement_active: Optional[bool] = None,
 ) -> bool:
     if not item_matches_form(item, active_form_id):
         return False
-    return _conditions_pass(item, buff_states, "manual")
+    return _conditions_pass(item, buff_states, "manual", movement_active=movement_active)

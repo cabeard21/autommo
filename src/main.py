@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from src.automation.binds import normalize_bind
 from src.automation.global_hotkey import GlobalToggleListener
 from src.automation.key_sender import KeySender
+from src.automation.movement_tracker import MovementTracker
 from src.automation.queue_listener import QueueListener
 from src.capture import ScreenCapture
 from src.analysis import SlotAnalyzer
@@ -113,6 +114,7 @@ class CaptureWorker(QThread):
         self._config = config
         self._key_sender = key_sender
         self._queue_listener = None
+        self._movement_tracker = None
         self._running = False
         self._capture: ScreenCapture | None = None
         self._active_monitor_index: int | None = None
@@ -120,6 +122,10 @@ class CaptureWorker(QThread):
     def set_queue_listener(self, listener) -> None:
         """Set the spell queue listener so the worker can pass queued override and clear on send."""
         self._queue_listener = listener
+
+    def set_movement_tracker(self, tracker) -> None:
+        """Set the movement tracker so the worker can pass movement state to evaluate_and_send."""
+        self._movement_tracker = tracker
 
     def _start_capture(self, monitor_index: int) -> None:
         self._capture = ScreenCapture(monitor_index=monitor_index)
@@ -257,6 +263,11 @@ class CaptureWorker(QThread):
                         on_queued_sent = (
                             self._queue_listener.clear_queue if self._queue_listener else None
                         )
+                        movement_active = (
+                            self._movement_tracker.is_moving
+                            if self._movement_tracker is not None
+                            else None
+                        )
                         result = self._key_sender.evaluate_and_send(
                             state,
                             self._config.active_priority_items(),
@@ -266,6 +277,7 @@ class CaptureWorker(QThread):
                             buff_states=buff_states,
                             queued_override=queued,
                             on_queued_sent=on_queued_sent,
+                            movement_active=movement_active,
                         )
                         if result is not None:
                             self.key_action.emit(result)
@@ -550,6 +562,10 @@ def main() -> None:
     worker.set_queue_listener(queue_listener)
     window.set_queue_listener(queue_listener)
 
+    movement_tracker = MovementTracker()
+    movement_tracker.start()
+    worker.set_movement_tracker(movement_tracker)
+
     # Calibrate baselines: grab one frame on main thread with short-lived mss
     def calibration_form_id() -> str:
         return settings_dialog.selected_active_form_id()
@@ -720,6 +736,7 @@ def main() -> None:
     # Cleanup
     hotkey_listener.stop()
     queue_listener.stop()
+    movement_tracker.stop()
     if is_running[0]:
         worker.stop()
     sys.exit(exit_code)
