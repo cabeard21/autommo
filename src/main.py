@@ -33,23 +33,30 @@ import numpy as np
 
 
 def encode_baselines(baselines: dict[int, np.ndarray]) -> list[dict]:
-    """Encode baselines for JSON: list of {shape: [h, w], data: base64} in slot order."""
+    """Encode baselines for JSON with explicit slot indices (backward compatible)."""
     return [
-        {"shape": list(ary.shape), "data": base64.b64encode(ary.tobytes()).decode()}
+        {
+            "slot_index": int(i),
+            "shape": list(ary.shape),
+            "data": base64.b64encode(ary.tobytes()).decode(),
+        }
         for i in sorted(baselines.keys())
         for ary in [baselines[i]]
     ]
 
 
 def decode_baselines(data: list[dict]) -> dict[int, np.ndarray]:
-    """Decode baselines from config (list of {shape, data})."""
+    """Decode baselines from config (supports legacy entries without slot_index)."""
     result = {}
     for i, d in enumerate(data):
+        if not isinstance(d, dict):
+            continue
         shape = d.get("shape")
         b64 = d.get("data")
+        slot_index = d.get("slot_index", i)
         if shape and b64:
             arr = np.frombuffer(base64.b64decode(b64), dtype=np.uint8)
-            result[i] = arr.reshape(shape).copy()
+            result[int(slot_index)] = arr.reshape(shape).copy()
     return result
 
 
@@ -355,8 +362,19 @@ def main() -> None:
         """After a profile import or reset, decode and push baselines into the analyzer."""
         try:
             decoded = decode_baselines_by_form(getattr(cfg, "slot_baselines_by_form", {}))
-            analyzer.set_baselines_by_form(decoded)      # always set, clears if empty
-            logger.info("Loaded baselines for %d forms", len(decoded))
+            if decoded:
+                analyzer.set_baselines_by_form(decoded)
+                logger.info("Loaded baselines for %d forms", len(decoded))
+                return
+
+            legacy = decode_baselines(getattr(cfg, "slot_baselines", []) or [])
+            if legacy:
+                analyzer.set_baselines(legacy)
+                logger.info("Loaded %d legacy baselines from imported config", len(legacy))
+                return
+
+            analyzer.set_baselines_by_form({})  # clears analyzer state on empty import/reset
+            logger.info("Imported config contains no baselines")
         except Exception as e:
             logger.warning("Could not load imported baselines: %s", e)
 

@@ -1378,10 +1378,12 @@ class SettingsDialog(QDialog):
             with open(path) as f:
                 data = json.load(f)
             self._config = AppConfig.from_dict(data)
-            if self._after_import_callback:
-                self._after_import_callback(self._config)
             self.sync_from_config()
             self._emit_config()
+            # Restore analyzer-side calibrations after config propagation so layout updates
+            # do not immediately clear imported baselines.
+            if self._after_import_callback:
+                self._after_import_callback(self._config)
             CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(CONFIG_PATH, "w") as f:
                 json.dump(self._config.to_dict(), f, indent=2)
@@ -1401,10 +1403,10 @@ class SettingsDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
         self._config = AppConfig()
-        if self._after_import_callback:
-            self._after_import_callback(self._config)
         self.sync_from_config()
         self._emit_config()
+        if self._after_import_callback:
+            self._after_import_callback(self._config)
         try:
             CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(CONFIG_PATH, "w") as f:
