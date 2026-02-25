@@ -254,7 +254,13 @@ class PriorityItemWidget(QFrame):
             if cond_type == "buff_state":
                 buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
                 op = str(cond.get("op", "") or "").strip().lower()
-                prefix = "B+" if op == "present" else "B-" if op == "missing" else "B?"
+                prefix = (
+                    "B+" if op == "present" else
+                    "B-" if op == "missing" else
+                    "BC+" if op == "candidate_present" else
+                    "BC-" if op == "candidate_missing" else
+                    "B?"
+                )
                 cond_tokens.append(f"{prefix}:{self._buff_name(buff_id)}")
             elif cond_type == "moving":
                 op = str(cond.get("op", "") or "").strip().lower()
@@ -408,6 +414,8 @@ class PriorityItemWidget(QFrame):
             conditions_menu = menu.addMenu("Conditions")
             add_present_menu = conditions_menu.addMenu("Add Buff Present")
             add_missing_menu = conditions_menu.addMenu("Add Buff Missing")
+            add_cand_present_menu = conditions_menu.addMenu("Add Buff Candidate Present")
+            add_cand_missing_menu = conditions_menu.addMenu("Add Buff Candidate Missing")
             for buff in self._buff_rois:
                 buff_id = str(buff.get("id", "") or "").strip().lower()
                 buff_name = str(buff.get("name", "") or "").strip() or buff_id
@@ -417,6 +425,10 @@ class PriorityItemWidget(QFrame):
                 add_condition_actions[a_present] = (buff_id, "present")
                 a_missing = add_missing_menu.addAction(buff_name)
                 add_condition_actions[a_missing] = (buff_id, "missing")
+                a_cand_present = add_cand_present_menu.addAction(buff_name)
+                add_condition_actions[a_cand_present] = (buff_id, "candidate_present")
+                a_cand_missing = add_cand_missing_menu.addAction(buff_name)
+                add_condition_actions[a_cand_missing] = (buff_id, "candidate_missing")
             add_movement_menu = conditions_menu.addMenu("Add Movement")
             a_mov_active = add_movement_menu.addAction("Moving (active)")
             add_movement_condition_actions[a_mov_active] = "active"
@@ -424,6 +436,12 @@ class PriorityItemWidget(QFrame):
             add_movement_condition_actions[a_mov_inactive] = "inactive"
             remove_menu = conditions_menu.addMenu("Remove")
             if self._conditions:
+                _op_labels_manual = {
+                    "present": "Buff present",
+                    "missing": "Buff missing",
+                    "candidate_present": "Buff candidate present",
+                    "candidate_missing": "Buff candidate missing",
+                }
                 for idx, cond in enumerate(self._conditions):
                     cond_type = str(cond.get("type", "") or "").strip().lower()
                     if cond_type == "moving":
@@ -432,7 +450,7 @@ class PriorityItemWidget(QFrame):
                     else:
                         buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
                         op = str(cond.get("op", "") or "").strip().lower()
-                        label = f"{'Buff present' if op == 'present' else 'Buff missing'}: {self._buff_name(buff_id)}"
+                        label = f"{_op_labels_manual.get(op, 'Buff?')}: {self._buff_name(buff_id)}"
                     act = remove_menu.addAction(label)
                     remove_condition_actions[act] = idx
             else:
@@ -486,6 +504,8 @@ class PriorityItemWidget(QFrame):
             conditions_menu = menu.addMenu("Conditions")
             add_present_menu = conditions_menu.addMenu("Add Buff Present")
             add_missing_menu = conditions_menu.addMenu("Add Buff Missing")
+            add_cand_present_menu = conditions_menu.addMenu("Add Buff Candidate Present")
+            add_cand_missing_menu = conditions_menu.addMenu("Add Buff Candidate Missing")
             for buff in self._buff_rois:
                 buff_id = str(buff.get("id", "") or "").strip().lower()
                 buff_name = str(buff.get("name", "") or "").strip() or buff_id
@@ -495,6 +515,10 @@ class PriorityItemWidget(QFrame):
                 add_condition_actions[a_present] = (buff_id, "present")
                 a_missing = add_missing_menu.addAction(buff_name)
                 add_condition_actions[a_missing] = (buff_id, "missing")
+                a_cand_present = add_cand_present_menu.addAction(buff_name)
+                add_condition_actions[a_cand_present] = (buff_id, "candidate_present")
+                a_cand_missing = add_cand_missing_menu.addAction(buff_name)
+                add_condition_actions[a_cand_missing] = (buff_id, "candidate_missing")
             add_movement_menu = conditions_menu.addMenu("Add Movement")
             a_mov_active = add_movement_menu.addAction("Moving (active)")
             add_movement_condition_actions[a_mov_active] = "active"
@@ -502,6 +526,12 @@ class PriorityItemWidget(QFrame):
             add_movement_condition_actions[a_mov_inactive] = "inactive"
             remove_menu = conditions_menu.addMenu("Remove")
             if self._conditions:
+                _op_labels_slot = {
+                    "present": "Buff present",
+                    "missing": "Buff missing",
+                    "candidate_present": "Buff candidate present",
+                    "candidate_missing": "Buff candidate missing",
+                }
                 for idx, cond in enumerate(self._conditions):
                     cond_type = str(cond.get("type", "") or "").strip().lower()
                     if cond_type == "moving":
@@ -510,7 +540,7 @@ class PriorityItemWidget(QFrame):
                     else:
                         buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
                         op = str(cond.get("op", "") or "").strip().lower()
-                        label = f"{'Buff present' if op == 'present' else 'Buff missing'}: {self._buff_name(buff_id)}"
+                        label = f"{_op_labels_slot.get(op, 'Buff?')}: {self._buff_name(buff_id)}"
                     act = remove_menu.addAction(label)
                     remove_condition_actions[act] = idx
             else:
@@ -980,7 +1010,7 @@ class PriorityListWidget(QWidget):
     def _on_item_condition_added(self, item_key: str, buff_roi_id: str, op: str) -> None:
         buff_id = str(buff_roi_id or "").strip().lower()
         norm_op = str(op or "").strip().lower()
-        if not buff_id or norm_op not in ("present", "missing"):
+        if not buff_id or norm_op not in ("present", "missing", "candidate_present", "candidate_missing"):
             return
         for item in self._items:
             if self._item_key(item) != item_key:

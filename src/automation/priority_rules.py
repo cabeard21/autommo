@@ -37,7 +37,7 @@ def normalize_conditions(
         if cond_type == "buff_state":
             buff_id = str(raw.get("buff_roi_id", "") or "").strip().lower()
             op = str(raw.get("op", "") or "").strip().lower()
-            if not buff_id or op not in ("present", "missing"):
+            if not buff_id or op not in ("present", "missing", "candidate_present", "candidate_missing"):
                 continue
             key = ("buff_state", buff_id, op)
             if key in seen:
@@ -158,6 +158,12 @@ def _buff_condition_passes(
         return present
     if op == "missing":
         return not present
+    # New ops — check single-frame candidate, not confirmed present
+    candidate = bool(buff.get("candidate", False))
+    if op == "candidate_present":
+        return candidate
+    if op == "candidate_missing":
+        return not candidate
     return False
 
 

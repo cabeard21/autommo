@@ -302,7 +302,7 @@ class AppConfig:
             if cond_type == "buff_state":
                 buff_id = str(raw.get("buff_roi_id", "") or "").strip().lower()
                 op = str(raw.get("op", "") or "").strip().lower()
-                if not buff_id or op not in ("present", "missing"):
+                if not buff_id or op not in ("present", "missing", "candidate_present", "candidate_missing"):
                     continue
                 key = ("buff_state", buff_id, op)
                 if key in seen:

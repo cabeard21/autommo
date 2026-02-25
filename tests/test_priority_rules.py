@@ -351,6 +351,82 @@ class PriorityRulesTests(unittest.TestCase):
             slot_item_is_eligible_for_state_dict(item, slot_state, buff_states=buff_states)
         )
 
+    # --- candidate_present / candidate_missing tests ---
+
+    def test_candidate_present_passes_when_candidate_true(self) -> None:
+        item = {
+            "type": "manual",
+            "action_id": "manual_1",
+            "ready_source": "always",
+            "conditions": [
+                {"type": "buff_state", "buff_roi_id": "charge", "op": "candidate_present"}
+            ],
+        }
+        buff_states = {"charge": {"calibrated": True, "present": False, "candidate": True, "status": "ok"}}
+        self.assertTrue(manual_item_is_eligible(item, buff_states=buff_states))
+
+    def test_candidate_present_fails_when_candidate_false(self) -> None:
+        item = {
+            "type": "manual",
+            "action_id": "manual_1",
+            "ready_source": "always",
+            "conditions": [
+                {"type": "buff_state", "buff_roi_id": "charge", "op": "candidate_present"}
+            ],
+        }
+        buff_states = {"charge": {"calibrated": True, "present": False, "candidate": False, "status": "ok"}}
+        self.assertFalse(manual_item_is_eligible(item, buff_states=buff_states))
+
+    def test_candidate_missing_passes_when_candidate_false(self) -> None:
+        item = {
+            "type": "manual",
+            "action_id": "manual_1",
+            "ready_source": "always",
+            "conditions": [
+                {"type": "buff_state", "buff_roi_id": "charge", "op": "candidate_missing"}
+            ],
+        }
+        buff_states = {"charge": {"calibrated": True, "present": False, "candidate": False, "status": "ok"}}
+        self.assertTrue(manual_item_is_eligible(item, buff_states=buff_states))
+
+    def test_candidate_missing_fails_when_candidate_true(self) -> None:
+        item = {
+            "type": "manual",
+            "action_id": "manual_1",
+            "ready_source": "always",
+            "conditions": [
+                {"type": "buff_state", "buff_roi_id": "charge", "op": "candidate_missing"}
+            ],
+        }
+        buff_states = {"charge": {"calibrated": True, "present": False, "candidate": True, "status": "ok"}}
+        self.assertFalse(manual_item_is_eligible(item, buff_states=buff_states))
+
+    def test_candidate_missing_blocks_when_fully_present_and_candidate(self) -> None:
+        """Regression: candidate_missing blocks even if buff is fully confirmed present."""
+        item = {
+            "type": "manual",
+            "action_id": "manual_1",
+            "ready_source": "always",
+            "conditions": [
+                {"type": "buff_state", "buff_roi_id": "charge", "op": "candidate_missing"}
+            ],
+        }
+        buff_states = {"charge": {"calibrated": True, "present": True, "candidate": True, "status": "ok"}}
+        self.assertFalse(manual_item_is_eligible(item, buff_states=buff_states))
+
+    def test_candidate_present_blocks_when_uncalibrated(self) -> None:
+        """Uncalibrated buff still blocks candidate_present (inherited guard)."""
+        item = {
+            "type": "manual",
+            "action_id": "manual_1",
+            "ready_source": "always",
+            "conditions": [
+                {"type": "buff_state", "buff_roi_id": "charge", "op": "candidate_present"}
+            ],
+        }
+        buff_states = {"charge": {"calibrated": False, "present": False, "candidate": True, "status": "ok"}}
+        self.assertFalse(manual_item_is_eligible(item, buff_states=buff_states))
+
 
 if __name__ == "__main__":
     unittest.main()
