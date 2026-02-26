@@ -108,7 +108,7 @@ class SlotAnalyzer:
         self._detection_region: str = (
             (getattr(config, "detection_region", None) or "top_left").strip().lower()
         )
-        if self._detection_region not in ("full", "top_left"):
+        if self._detection_region not in ("full", "top_left", "top_right"):
             self._detection_region = "top_left"
         self._detection_region_overrides: dict[int, str] = dict(
             getattr(config, "detection_region_overrides", None) or {}
@@ -127,7 +127,7 @@ class SlotAnalyzer:
                 except Exception:
                     continue
                 normalized_mode = str(mode or "").strip().lower()
-                if normalized_mode in ("full", "top_left"):
+                if normalized_mode in ("full", "top_left", "top_right"):
                     parsed[idx] = normalized_mode
             if parsed:
                 self._detection_region_overrides_by_form[fid] = parsed
@@ -176,7 +176,7 @@ class SlotAnalyzer:
         self._detection_region = (
             (getattr(config, "detection_region", None) or "top_left").strip().lower()
         )
-        if self._detection_region not in ("full", "top_left"):
+        if self._detection_region not in ("full", "top_left", "top_right"):
             self._detection_region = "top_left"
         self._detection_region_overrides = dict(
             getattr(config, "detection_region_overrides", None) or {}
@@ -195,7 +195,7 @@ class SlotAnalyzer:
                 except Exception:
                     continue
                 normalized_mode = str(mode or "").strip().lower()
-                if normalized_mode in ("full", "top_left"):
+                if normalized_mode in ("full", "top_left", "top_right"):
                     parsed[idx] = normalized_mode
             if parsed:
                 self._detection_region_overrides_by_form[fid] = parsed
@@ -1283,10 +1283,14 @@ class SlotAnalyzer:
             slot_img = self.crop_slot(frame, slot_cfg)
             baseline_bright = self._baseline_for_slot(slot_cfg.index)
             region_mode = region_overrides.get(slot_cfg.index, self._detection_region)
-            if region_mode == "top_left" and baseline_bright is not None:
+            if region_mode in ("top_left", "top_right") and baseline_bright is not None:
                 h, w = slot_img.shape[:2]
-                slot_detect = slot_img[: h // 2, : w // 2]
-                baseline_detect = baseline_bright[: h // 2, : w // 2]
+                if region_mode == "top_right":
+                    slot_detect = slot_img[: h // 2, w // 2 :]
+                    baseline_detect = baseline_bright[: h // 2, w // 2 :]
+                else:
+                    slot_detect = slot_img[: h // 2, : w // 2]
+                    baseline_detect = baseline_bright[: h // 2, : w // 2]
                 current_bright = self._get_brightness_channel(slot_detect)
                 baseline_bright_for_frac = baseline_detect
             else:

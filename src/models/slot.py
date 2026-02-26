@@ -785,7 +785,7 @@ class AppConfig:
             .strip()
             .lower()
         )
-        if raw_detection_region not in ("full", "top_left"):
+        if raw_detection_region not in ("full", "top_left", "top_right"):
             raw_detection_region = "top_left"
         raw_region_overrides = (
             data.get("detection", {}).get("detection_region_overrides") or {}
@@ -796,7 +796,7 @@ class AppConfig:
                 try:
                     slot_idx = int(k)
                     mode = (str(v) or "full").strip().lower()
-                    if mode in ("full", "top_left"):
+                    if mode in ("full", "top_left", "top_right"):
                         parsed_region_overrides[slot_idx] = mode
                 except (ValueError, TypeError):
                     continue
@@ -814,7 +814,7 @@ class AppConfig:
                     try:
                         slot_idx = int(k)
                         mode = (str(v) or "full").strip().lower()
-                        if mode in ("full", "top_left"):
+                        if mode in ("full", "top_left", "top_right"):
                             parsed_form_overrides[slot_idx] = mode
                     except (ValueError, TypeError):
                         continue
@@ -1118,7 +1118,7 @@ class AppConfig:
                     str(form_id): {
                         str(int(slot_idx)): str(mode)
                         for slot_idx, mode in dict(form_overrides or {}).items()
-                        if str(mode) in ("full", "top_left")
+                        if str(mode) in ("full", "top_left", "top_right")
                     }
                     for form_id, form_overrides in dict(
                         self.detection_region_overrides_by_form or {}

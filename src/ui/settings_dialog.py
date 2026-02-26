@@ -302,11 +302,14 @@ class SettingsDialog(QDialog):
         fl.addRow(_row_label("Cooldown min:"), self._spin_cooldown_min_ms)
         self._combo_detection_region = QComboBox()
         self._combo_detection_region.addItem("Top-Left Quadrant", "top_left")
+        self._combo_detection_region.addItem("Top-Right Quadrant", "top_right")
         self._combo_detection_region.addItem("Full Slot", "full")
         region_help = QLabel("(?)")
         region_help.setObjectName("hint")
         region_help.setToolTip(
-            "Which area of each slot to check for cooldown darkness. Top-Left Quadrant is more precise for WoW's clockwise cooldown wipe."
+            "Which area of each slot to check for cooldown darkness. "
+            "Top-Left Quadrant is more precise for WoW's clockwise cooldown wipe. "
+            "Top-Right Quadrant targets the upper-right corner instead."
         )
         region_row = QHBoxLayout()
         region_row.addWidget(self._combo_detection_region)
@@ -1033,7 +1036,7 @@ class SettingsDialog(QDialog):
         self._spin_cooldown_min_ms.setValue(int(getattr(self._config, "cooldown_min_duration_ms", 2000)))
         self._spin_brightness_drop.setValue(self._config.brightness_drop_threshold)
         region = (getattr(self._config, "detection_region", None) or "top_left").strip().lower()
-        if region not in ("full", "top_left"):
+        if region not in ("full", "top_left", "top_right"):
             region = "top_left"
         idx = self._combo_detection_region.findData(region)
         self._combo_detection_region.setCurrentIndex(idx if idx >= 0 else 0)
@@ -1608,7 +1611,7 @@ class SettingsDialog(QDialog):
             except Exception:
                 continue
             mode = str(right or "").strip().lower()
-            if slot_idx < 0 or mode not in ("full", "top_left"):
+            if slot_idx < 0 or mode not in ("full", "top_left", "top_right"):
                 continue
             out[slot_idx] = mode
         return out
@@ -1622,7 +1625,7 @@ class SettingsDialog(QDialog):
             except Exception:
                 continue
             mode = str(v or "").strip().lower()
-            if slot_idx < 0 or mode not in ("full", "top_left"):
+            if slot_idx < 0 or mode not in ("full", "top_left", "top_right"):
                 continue
             parsed.append((slot_idx, mode))
         return ", ".join(f"{slot}:{mode}" for slot, mode in sorted(parsed, key=lambda t: t[0]))
@@ -1977,7 +1980,7 @@ class SettingsDialog(QDialog):
         self._config.polling_fps = max(1, min(240, self._spin_polling_fps.value()))
         self._config.cooldown_min_duration_ms = max(0, min(10000, self._spin_cooldown_min_ms.value()))
         region = (self._combo_detection_region.currentData() or "top_left")
-        if region not in ("full", "top_left"):
+        if region not in ("full", "top_left", "top_right"):
             region = "top_left"
         self._config.detection_region = region
         self._config.brightness_drop_threshold = self._spin_brightness_drop.value()
