@@ -361,6 +361,27 @@ class AppConfig:
         if not isinstance(raw_detector, dict):
             return {}
         detector_type = str(raw_detector.get("type", "") or "").strip().lower()
+        if detector_type == "priority_roi":
+            raw_candidates = list(raw_detector.get("candidates") or [])
+            candidates = []
+            for c in raw_candidates:
+                if not isinstance(c, dict):
+                    continue
+                roi_id = str(c.get("roi_id", "") or "").strip().lower()
+                form_id = AppConfig._normalize_form_id(c.get("form_id"))
+                if not roi_id or form_id not in form_ids:
+                    continue
+                candidates.append({"roi_id": roi_id, "form_id": form_id})
+            default_form = AppConfig._normalize_form_id(raw_detector.get("default_form"))
+            if default_form not in form_ids:
+                default_form = "normal"
+            return {
+                "type": "priority_roi",
+                "candidates": candidates,
+                "default_form": default_form,
+                "confirm_frames": max(1, int(raw_detector.get("confirm_frames", 2) or 2)),
+                "settle_ms": max(0, int(raw_detector.get("settle_ms", 200) or 200)),
+            }
         if detector_type != "buff_roi":
             return {}
         roi_id = str(raw_detector.get("roi_id", "") or "").strip().lower()

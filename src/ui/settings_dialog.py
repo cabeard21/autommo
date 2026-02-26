@@ -10,6 +10,7 @@ from typing import Callable, Optional
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -26,6 +27,8 @@ from PyQt6.QtWidgets import (
     QSlider,
     QSpinBox,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -696,13 +699,16 @@ class SettingsDialog(QDialog):
         self._combo_form_detector_type = QComboBox()
         self._combo_form_detector_type.addItem("Off", "off")
         self._combo_form_detector_type.addItem("Buff ROI", "buff_roi")
+        self._combo_form_detector_type.addItem("Priority ROI", "priority_roi")
         self._combo_form_detector_type.setMinimumWidth(90)
         self._combo_form_detector_roi = QComboBox()
         self._combo_form_detector_roi.setMinimumWidth(120)
         detector_row.addWidget(self._combo_form_detector_type)
         detector_row.addWidget(self._combo_form_detector_roi, 1)
         fl.addRow(_row_label("Form detect:"), detector_row)
-        detector_map_row = QHBoxLayout()
+        self._detector_buff_roi_widget = QWidget()
+        detector_map_row = QHBoxLayout(self._detector_buff_roi_widget)
+        detector_map_row.setContentsMargins(0, 0, 0, 0)
         self._combo_form_present = QComboBox()
         self._combo_form_absent = QComboBox()
         self._spin_form_confirm_frames = QSpinBox()
@@ -720,7 +726,47 @@ class SettingsDialog(QDialog):
         detector_map_row.addWidget(self._spin_form_confirm_frames)
         detector_map_row.addWidget(self._spin_form_settle_ms)
         detector_map_row.addStretch()
-        fl.addRow(_row_label("Detect map:"), detector_map_row)
+        fl.addRow(_row_label("Detect map:"), self._detector_buff_roi_widget)
+        self._detector_priority_roi_widget = QWidget()
+        prio_vbox = QVBoxLayout(self._detector_priority_roi_widget)
+        prio_vbox.setContentsMargins(0, 0, 0, 0)
+        prio_vbox.setSpacing(4)
+        self._tbl_priority_roi = QTableWidget(0, 2)
+        self._tbl_priority_roi.setHorizontalHeaderLabels(["ROI", "Form"])
+        self._tbl_priority_roi.horizontalHeader().setStretchLastSection(True)
+        self._tbl_priority_roi.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._tbl_priority_roi.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._tbl_priority_roi.verticalHeader().setVisible(False)
+        self._tbl_priority_roi.setMinimumHeight(80)
+        self._tbl_priority_roi.setMaximumHeight(140)
+        prio_vbox.addWidget(self._tbl_priority_roi)
+        prio_btn_row = QHBoxLayout()
+        self._btn_prio_add = QPushButton("Add")
+        self._btn_prio_add.setMaximumWidth(50)
+        self._btn_prio_up = QPushButton("Up")
+        self._btn_prio_up.setMaximumWidth(40)
+        self._btn_prio_down = QPushButton("Down")
+        self._btn_prio_down.setMaximumWidth(50)
+        self._btn_prio_remove = QPushButton("Remove")
+        self._btn_prio_remove.setMaximumWidth(60)
+        self._spin_prio_confirm_frames = QSpinBox()
+        self._spin_prio_confirm_frames.setRange(1, 10)
+        self._spin_prio_confirm_frames.setPrefix("N ")
+        self._spin_prio_confirm_frames.setMaximumWidth(62)
+        self._spin_prio_settle_ms = QSpinBox()
+        self._spin_prio_settle_ms.setRange(0, 1000)
+        self._spin_prio_settle_ms.setSuffix(" ms")
+        self._spin_prio_settle_ms.setMaximumWidth(86)
+        prio_btn_row.addWidget(self._btn_prio_add)
+        prio_btn_row.addWidget(self._btn_prio_up)
+        prio_btn_row.addWidget(self._btn_prio_down)
+        prio_btn_row.addWidget(self._btn_prio_remove)
+        prio_btn_row.addSpacing(8)
+        prio_btn_row.addWidget(self._spin_prio_confirm_frames)
+        prio_btn_row.addWidget(self._spin_prio_settle_ms)
+        prio_btn_row.addStretch()
+        prio_vbox.addLayout(prio_btn_row)
+        fl.addRow(_row_label("Candidates:"), self._detector_priority_roi_widget)
         return w
 
     def _automation_controls_section(self) -> QWidget:
@@ -947,6 +993,13 @@ class SettingsDialog(QDialog):
         self._combo_form_absent.currentIndexChanged.connect(self._on_detection_changed)
         self._spin_form_confirm_frames.valueChanged.connect(self._on_detection_changed)
         self._spin_form_settle_ms.valueChanged.connect(self._on_detection_changed)
+        self._spin_prio_confirm_frames.valueChanged.connect(self._on_detection_changed)
+        self._spin_prio_settle_ms.valueChanged.connect(self._on_detection_changed)
+        self._btn_prio_add.clicked.connect(self._on_priority_roi_add)
+        self._btn_prio_up.clicked.connect(self._on_priority_roi_up)
+        self._btn_prio_down.clicked.connect(self._on_priority_roi_down)
+        self._btn_prio_remove.clicked.connect(self._on_priority_roi_remove)
+        self._tbl_priority_roi.cellChanged.connect(self._on_detection_changed)
         self._combo_automation_profile.currentIndexChanged.connect(self._on_automation_profile_selected)
         self._btn_add_automation_profile.clicked.connect(self._on_add_automation_profile)
         self._btn_copy_automation_profile.clicked.connect(self._on_copy_automation_profile)
@@ -1714,7 +1767,7 @@ class SettingsDialog(QDialog):
 
         detector = getattr(self._config, "form_detector", {}) or {}
         detector_type = str(detector.get("type", "off") or "off").strip().lower()
-        if detector_type not in ("off", "buff_roi"):
+        if detector_type not in ("off", "buff_roi", "priority_roi"):
             detector_type = "off"
         type_idx = self._combo_form_detector_type.findData(detector_type)
         if type_idx < 0:
@@ -1749,6 +1802,29 @@ class SettingsDialog(QDialog):
         self._combo_form.blockSignals(False)
         self._combo_active_form.blockSignals(False)
 
+        self._tbl_priority_roi.blockSignals(True)
+        self._tbl_priority_roi.setRowCount(0)
+        if detector_type == "priority_roi":
+            for cand in list(detector.get("candidates") or []):
+                if not isinstance(cand, dict):
+                    continue
+                self._append_priority_roi_row(
+                    str(cand.get("roi_id", "") or "").strip().lower(),
+                    str(cand.get("form_id", "") or "").strip().lower(),
+                    rois,
+                    forms,
+                )
+        self._tbl_priority_roi.blockSignals(False)
+
+        self._spin_prio_confirm_frames.blockSignals(True)
+        self._spin_prio_settle_ms.blockSignals(True)
+        self._spin_prio_confirm_frames.setValue(int(detector.get("confirm_frames", 2) or 2))
+        self._spin_prio_settle_ms.setValue(int(detector.get("settle_ms", 200) or 200))
+        self._spin_prio_confirm_frames.blockSignals(False)
+        self._spin_prio_settle_ms.blockSignals(False)
+
+        self._update_form_detector_panel_visibility()
+
         selected_idx = self._selected_form_index()
         can_edit = selected_idx >= 0
         self._edit_form_name.setEnabled(can_edit)
@@ -1771,6 +1847,105 @@ class SettingsDialog(QDialog):
         self._label_form_status.setText(
             f"Current: {current_active_id}" if current_active_id else "Current: normal"
         )
+
+    def _update_form_detector_panel_visibility(self) -> None:
+        dtype = str(self._combo_form_detector_type.currentData() or "off").strip().lower()
+        self._combo_form_detector_roi.setVisible(dtype == "buff_roi")
+        self._detector_buff_roi_widget.setVisible(dtype == "buff_roi")
+        self._detector_priority_roi_widget.setVisible(dtype == "priority_roi")
+
+    def _append_priority_roi_row(
+        self,
+        roi_id: str,
+        form_id: str,
+        rois: list[dict],
+        forms: list[dict],
+    ) -> None:
+        row = self._tbl_priority_roi.rowCount()
+        self._tbl_priority_roi.insertRow(row)
+        roi_combo = QComboBox()
+        roi_combo.addItem("Select ROI...", "")
+        for r in rois:
+            rid = str(r.get("id", "") or "").strip().lower()
+            if not rid:
+                continue
+            roi_combo.addItem(str(r.get("name", "") or "").strip() or rid, rid)
+        idx = roi_combo.findData(roi_id)
+        roi_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        roi_combo.currentIndexChanged.connect(self._on_detection_changed)
+        self._tbl_priority_roi.setCellWidget(row, 0, roi_combo)
+        form_combo = QComboBox()
+        for f in forms:
+            fid = str(f.get("id", "") or "").strip().lower()
+            if not fid:
+                continue
+            form_combo.addItem(str(f.get("name", "") or "").strip() or fid.title(), fid)
+        fidx = form_combo.findData(form_id)
+        form_combo.setCurrentIndex(fidx if fidx >= 0 else 0)
+        form_combo.currentIndexChanged.connect(self._on_detection_changed)
+        self._tbl_priority_roi.setCellWidget(row, 1, form_combo)
+
+    def _priority_roi_candidates(self) -> list[dict]:
+        candidates = []
+        for row in range(self._tbl_priority_roi.rowCount()):
+            roi_combo = self._tbl_priority_roi.cellWidget(row, 0)
+            form_combo = self._tbl_priority_roi.cellWidget(row, 1)
+            if not isinstance(roi_combo, QComboBox) or not isinstance(form_combo, QComboBox):
+                continue
+            roi_id = str(roi_combo.currentData() or "").strip().lower()
+            form_id = str(form_combo.currentData() or "").strip().lower()
+            if roi_id and form_id:
+                candidates.append({"roi_id": roi_id, "form_id": form_id})
+        return candidates
+
+    def _on_priority_roi_add(self) -> None:
+        rois = [dict(r) for r in list(getattr(self._config, "buff_rois", []) or []) if isinstance(r, dict)]
+        forms = [dict(f) for f in list(getattr(self._config, "forms", []) or []) if isinstance(f, dict)]
+        if not any(str(f.get("id", "") or "").strip().lower() == "normal" for f in forms):
+            forms.insert(0, {"id": "normal", "name": "Normal"})
+        self._tbl_priority_roi.blockSignals(True)
+        self._append_priority_roi_row("", "", rois, forms)
+        self._tbl_priority_roi.blockSignals(False)
+        self._on_detection_changed()
+
+    def _on_priority_roi_up(self) -> None:
+        row = self._tbl_priority_roi.currentRow()
+        if row <= 0:
+            return
+        self._swap_priority_roi_rows(row, row - 1)
+        self._tbl_priority_roi.setCurrentCell(row - 1, 0)
+        self._on_detection_changed()
+
+    def _on_priority_roi_down(self) -> None:
+        row = self._tbl_priority_roi.currentRow()
+        if row < 0 or row >= self._tbl_priority_roi.rowCount() - 1:
+            return
+        self._swap_priority_roi_rows(row, row + 1)
+        self._tbl_priority_roi.setCurrentCell(row + 1, 0)
+        self._on_detection_changed()
+
+    def _swap_priority_roi_rows(self, a: int, b: int) -> None:
+        for col in range(self._tbl_priority_roi.columnCount()):
+            wa = self._tbl_priority_roi.cellWidget(a, col)
+            wb = self._tbl_priority_roi.cellWidget(b, col)
+            if isinstance(wa, QComboBox) and isinstance(wb, QComboBox):
+                val_a = wa.currentData()
+                val_b = wb.currentData()
+                idx_a = wb.findData(val_a)
+                idx_b = wa.findData(val_b)
+                wa.blockSignals(True)
+                wb.blockSignals(True)
+                wa.setCurrentIndex(idx_b if idx_b >= 0 else 0)
+                wb.setCurrentIndex(idx_a if idx_a >= 0 else 0)
+                wa.blockSignals(False)
+                wb.blockSignals(False)
+
+    def _on_priority_roi_remove(self) -> None:
+        row = self._tbl_priority_roi.currentRow()
+        if row < 0:
+            return
+        self._tbl_priority_roi.removeRow(row)
+        self._on_detection_changed()
 
     def _on_form_selected(self, _index: int) -> None:
         self._sync_form_controls()
@@ -2083,6 +2258,7 @@ class SettingsDialog(QDialog):
                 self._combo_form_absent.setItemText(absent_idx, str(form["name"]))
         self._config.active_form_id = str(self._combo_active_form.currentData() or "normal").strip().lower() or "normal"
         detector_type = str(self._combo_form_detector_type.currentData() or "off").strip().lower()
+        self._update_form_detector_panel_visibility()
         if detector_type == "buff_roi":
             self._config.form_detector = {
                 "type": "buff_roi",
@@ -2091,6 +2267,14 @@ class SettingsDialog(QDialog):
                 "absent_form": str(self._combo_form_absent.currentData() or "normal").strip().lower() or "normal",
                 "confirm_frames": int(self._spin_form_confirm_frames.value()),
                 "settle_ms": int(self._spin_form_settle_ms.value()),
+            }
+        elif detector_type == "priority_roi":
+            self._config.form_detector = {
+                "type": "priority_roi",
+                "candidates": self._priority_roi_candidates(),
+                "default_form": "normal",
+                "confirm_frames": int(self._spin_prio_confirm_frames.value()),
+                "settle_ms": int(self._spin_prio_settle_ms.value()),
             }
         else:
             self._config.form_detector = {}

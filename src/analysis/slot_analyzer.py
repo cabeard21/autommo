@@ -568,43 +568,66 @@ class SlotAnalyzer:
         if fallback_form not in forms:
             fallback_form = "normal"
         detector = getattr(self._config, "form_detector", {}) or {}
-        if (
-            not isinstance(detector, dict)
-            or str(detector.get("type", "") or "").strip().lower() != "buff_roi"
-        ):
+        detector_type = (
+            str(detector.get("type", "") or "").strip().lower()
+            if isinstance(detector, dict)
+            else ""
+        )
+        if detector_type == "buff_roi":
+            roi_id = str(detector.get("roi_id", "") or "").strip().lower()
+            present_form = (
+                str(detector.get("present_form", "normal") or "normal").strip().lower()
+            )
+            absent_form = (
+                str(detector.get("absent_form", "normal") or "normal").strip().lower()
+            )
+            if present_form not in forms:
+                present_form = "normal"
+            if absent_form not in forms:
+                absent_form = "normal"
+            buff_state = self._buff_states.get(roi_id) if roi_id else None
+            if not isinstance(buff_state, dict):
+                self._pending_form_id = self._active_form_id
+                self._pending_form_frames = 0
+                return
+            if not bool(buff_state.get("calibrated", False)):
+                self._pending_form_id = self._active_form_id
+                self._pending_form_frames = 0
+                return
+            status = str(buff_state.get("status", "ok") or "").strip().lower()
+            if status and status != "ok":
+                self._pending_form_id = self._active_form_id
+                self._pending_form_frames = 0
+                return
+            target_form = (
+                present_form if bool(buff_state.get("present", False)) else absent_form
+            )
+        elif detector_type == "priority_roi":
+            candidates = list(detector.get("candidates") or [])
+            default_form = str(detector.get("default_form", "normal") or "normal").strip().lower()
+            if default_form not in forms:
+                default_form = "normal"
+            target_form = default_form
+            for candidate in candidates:
+                c_roi_id = str(candidate.get("roi_id", "") or "").strip().lower()
+                c_form_id = str(candidate.get("form_id", "") or "").strip().lower()
+                buff_state = self._buff_states.get(c_roi_id) if c_roi_id else None
+                if not isinstance(buff_state, dict):
+                    continue
+                if not bool(buff_state.get("calibrated", False)):
+                    continue
+                status = str(buff_state.get("status", "ok") or "").strip().lower()
+                if status and status != "ok":
+                    continue
+                if bool(buff_state.get("present", False)):
+                    target_form = c_form_id
+                    break
+        else:
             self._pending_form_id = fallback_form
             self._pending_form_frames = 0
             self._set_active_form_id(fallback_form, now)
             return
-
-        roi_id = str(detector.get("roi_id", "") or "").strip().lower()
-        present_form = (
-            str(detector.get("present_form", "normal") or "normal").strip().lower()
-        )
-        absent_form = (
-            str(detector.get("absent_form", "normal") or "normal").strip().lower()
-        )
-        if present_form not in forms:
-            present_form = "normal"
-        if absent_form not in forms:
-            absent_form = "normal"
-        buff_state = self._buff_states.get(roi_id) if roi_id else None
-        if not isinstance(buff_state, dict):
-            self._pending_form_id = self._active_form_id
-            self._pending_form_frames = 0
-            return
-        if not bool(buff_state.get("calibrated", False)):
-            self._pending_form_id = self._active_form_id
-            self._pending_form_frames = 0
-            return
-        status = str(buff_state.get("status", "ok") or "").strip().lower()
-        if status and status != "ok":
-            self._pending_form_id = self._active_form_id
-            self._pending_form_frames = 0
-            return
-        target_form = (
-            present_form if bool(buff_state.get("present", False)) else absent_form
-        )
+        confirm_frames = max(1, int(detector.get("confirm_frames", 2) or 2))
         if target_form == self._active_form_id:
             self._pending_form_id = target_form
             self._pending_form_frames = 0
@@ -614,7 +637,6 @@ class SlotAnalyzer:
             self._pending_form_frames = 1
         else:
             self._pending_form_frames += 1
-        confirm_frames = max(1, int(detector.get("confirm_frames", 2) or 2))
         if self._pending_form_frames >= confirm_frames:
             self._set_active_form_id(target_form, now)
             self._pending_form_id = target_form
