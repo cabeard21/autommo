@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -303,6 +304,25 @@ class SettingsDialog(QDialog):
             "Minimum not-ready duration before classifying as full cooldown. Shorter dips are treated as GCD."
         )
         fl.addRow(_row_label("Cooldown min:"), self._spin_cooldown_min_ms)
+        self._spin_cooldown_release_confirm = QSpinBox()
+        self._spin_cooldown_release_confirm.setRange(0, 2000)
+        self._spin_cooldown_release_confirm.setSuffix(" ms")
+        self._spin_cooldown_release_confirm.setMaximumWidth(92)
+        self._spin_cooldown_release_confirm.setToolTip(
+            "How long a slot must look ready (after being on cooldown) before it is marked READY. "
+            "Lower values respond faster but risk false-ready flips at short GCDs. Default: 260ms."
+        )
+        fl.addRow(_row_label("Release confirm:"), self._spin_cooldown_release_confirm)
+        self._spin_cooldown_release_factor = QDoubleSpinBox()
+        self._spin_cooldown_release_factor.setRange(0.25, 1.0)
+        self._spin_cooldown_release_factor.setSingleStep(0.05)
+        self._spin_cooldown_release_factor.setDecimals(2)
+        self._spin_cooldown_release_factor.setMaximumWidth(72)
+        self._spin_cooldown_release_factor.setToolTip(
+            "Hysteresis multiplier: slot must drop below (trigger × factor) to begin the release confirm window. "
+            "Lower = harder to exit cooldown (more stable). Default: 0.70."
+        )
+        fl.addRow(_row_label("Release factor:"), self._spin_cooldown_release_factor)
         self._combo_detection_region = QComboBox()
         self._combo_detection_region.addItem("Top-Left Quadrant", "top_left")
         self._combo_detection_region.addItem("Top-Right Quadrant", "top_right")
@@ -950,6 +970,8 @@ class SettingsDialog(QDialog):
         self._spin_padding.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_polling_fps.valueChanged.connect(self._on_detection_changed)
         self._spin_cooldown_min_ms.valueChanged.connect(self._on_detection_changed)
+        self._spin_cooldown_release_confirm.valueChanged.connect(self._on_cooldown_release_confirm_changed)
+        self._spin_cooldown_release_factor.valueChanged.connect(self._on_cooldown_release_factor_changed)
         self._combo_detection_region.currentIndexChanged.connect(self._on_detection_changed)
         self._spin_brightness_drop.valueChanged.connect(self._on_detection_changed)
         self._slider_pixel_fraction.valueChanged.connect(self._on_detection_changed)
@@ -1076,6 +1098,8 @@ class SettingsDialog(QDialog):
         self._spin_padding.blockSignals(False)
         self._spin_polling_fps.blockSignals(True)
         self._spin_cooldown_min_ms.blockSignals(True)
+        self._spin_cooldown_release_confirm.blockSignals(True)
+        self._spin_cooldown_release_factor.blockSignals(True)
         self._spin_brightness_drop.blockSignals(True)
         self._slider_pixel_fraction.blockSignals(True)
         self._slider_change_pixel_fraction.blockSignals(True)
@@ -1101,6 +1125,8 @@ class SettingsDialog(QDialog):
         self._spin_glow_red_hue_min_high.blockSignals(True)
         self._spin_polling_fps.setValue(int(getattr(self._config, "polling_fps", 20)))
         self._spin_cooldown_min_ms.setValue(int(getattr(self._config, "cooldown_min_duration_ms", 2000)))
+        self._spin_cooldown_release_confirm.setValue(int(getattr(self._config, "cooldown_release_confirm_ms", 260)))
+        self._spin_cooldown_release_factor.setValue(float(getattr(self._config, "cooldown_release_factor", 0.70)))
         self._spin_brightness_drop.setValue(self._config.brightness_drop_threshold)
         region = (getattr(self._config, "detection_region", None) or "top_left").strip().lower()
         if region not in ("full", "top_left", "top_right"):
@@ -1204,6 +1230,8 @@ class SettingsDialog(QDialog):
         )
         self._spin_polling_fps.blockSignals(False)
         self._spin_cooldown_min_ms.blockSignals(False)
+        self._spin_cooldown_release_confirm.blockSignals(False)
+        self._spin_cooldown_release_factor.blockSignals(False)
         self._spin_brightness_drop.blockSignals(False)
         self._slider_pixel_fraction.blockSignals(False)
         self._slider_change_pixel_fraction.blockSignals(False)
@@ -2305,6 +2333,14 @@ class SettingsDialog(QDialog):
         active_form = str(getattr(self._config, "active_form_id", "normal") or "normal").strip().lower() or "normal"
         self._label_form_status.setText(f"Current: {active_form}")
         self._btn_calibrate.setText(f"Calibrate Baselines ({active_form})")
+        self._emit_config()
+
+    def _on_cooldown_release_confirm_changed(self, value: int) -> None:
+        self._config.cooldown_release_confirm_ms = max(0, value)
+        self._emit_config()
+
+    def _on_cooldown_release_factor_changed(self, value: float) -> None:
+        self._config.cooldown_release_factor = max(0.25, min(1.0, value))
         self._emit_config()
 
     def _start_rebind_capture(self, target: str, button: QPushButton) -> None:
