@@ -243,6 +243,9 @@ class AppConfig:
     queue_timeout_ms: int = 5000
     # Ms to wait after detecting GCD ready before sending queued key (avoids firing too early)
     queue_fire_delay_ms: int = 100
+    # GCD post-queue suppression controls
+    gcd_suppress_enabled: bool = True
+    gcd_suppress_single_fire_bypass: bool = False
 
     @staticmethod
     def _normalize_manual_actions(raw_actions: object) -> list[dict]:
@@ -1024,6 +1027,8 @@ class AppConfig:
             ],
             queue_timeout_ms=int(data.get("queue_timeout_ms", 5000)),
             queue_fire_delay_ms=int(data.get("queue_fire_delay_ms", 100)),
+            gcd_suppress_enabled=bool(data.get("gcd_suppress_enabled", True)),
+            gcd_suppress_single_fire_bypass=bool(data.get("gcd_suppress_single_fire_bypass", False)),
         )
         raw_profiles = data.get("priority_profiles")
         if isinstance(raw_profiles, list):
@@ -1222,4 +1227,6 @@ class AppConfig:
             "queue_whitelist": self.queue_whitelist,
             "queue_timeout_ms": self.queue_timeout_ms,
             "queue_fire_delay_ms": self.queue_fire_delay_ms,
+            "gcd_suppress_enabled": self.gcd_suppress_enabled,
+            "gcd_suppress_single_fire_bypass": self.gcd_suppress_single_fire_bypass,
         }

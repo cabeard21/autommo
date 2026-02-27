@@ -832,6 +832,18 @@ class SettingsDialog(QDialog):
         fl.addRow(_row_label("Queue (ms):"), self._spin_queue_window)
         self._check_allow_cast_while_casting = QCheckBox("Allow sends while casting/channeling")
         fl.addRow("", self._check_allow_cast_while_casting)
+        self._check_gcd_suppress_enabled = QCheckBox("Suppress priority for one GCD after queued send")
+        self._check_gcd_suppress_enabled.setToolTip(
+            "When enabled, automation waits one GCD before firing again after a queued key is sent. "
+            "Disable to allow priority actions immediately after min delay."
+        )
+        fl.addRow("", self._check_gcd_suppress_enabled)
+        self._check_gcd_suppress_single_fire_bypass = QCheckBox("Single-fire ignores GCD suppression")
+        self._check_gcd_suppress_single_fire_bypass.setToolTip(
+            "When enabled, single-fire sends bypass the post-queued-send GCD wait. "
+            "Useful when single-fire is too slow to respond after a queued key."
+        )
+        fl.addRow("", self._check_gcd_suppress_single_fire_bypass)
         return w
 
     def _automation_priority_lists_section(self) -> QWidget:
@@ -1014,6 +1026,8 @@ class SettingsDialog(QDialog):
         self._spin_gcd_ms.valueChanged.connect(self._on_gcd_ms_changed)
         self._spin_queue_window.valueChanged.connect(self._on_queue_window_changed)
         self._check_allow_cast_while_casting.toggled.connect(self._on_allow_cast_while_casting_changed)
+        self._check_gcd_suppress_enabled.toggled.connect(self._on_gcd_suppress_enabled_changed)
+        self._check_gcd_suppress_single_fire_bypass.toggled.connect(self._on_gcd_suppress_single_fire_bypass_changed)
         self._edit_window_title.textChanged.connect(self._on_window_title_changed)
         self._edit_queue_keys.textChanged.connect(self._on_queue_keys_changed)
         self._spin_queue_timeout.valueChanged.connect(self._on_queue_timeout_changed)
@@ -1242,6 +1256,16 @@ class SettingsDialog(QDialog):
             bool(getattr(self._config, "allow_cast_while_casting", False))
         )
         self._check_allow_cast_while_casting.blockSignals(False)
+        self._check_gcd_suppress_enabled.blockSignals(True)
+        self._check_gcd_suppress_enabled.setChecked(
+            bool(getattr(self._config, "gcd_suppress_enabled", True))
+        )
+        self._check_gcd_suppress_enabled.blockSignals(False)
+        self._check_gcd_suppress_single_fire_bypass.blockSignals(True)
+        self._check_gcd_suppress_single_fire_bypass.setChecked(
+            bool(getattr(self._config, "gcd_suppress_single_fire_bypass", False))
+        )
+        self._check_gcd_suppress_single_fire_bypass.blockSignals(False)
         self._edit_window_title.blockSignals(True)
         self._edit_window_title.setText(getattr(self._config, "target_window_title", "") or "")
         self._edit_window_title.blockSignals(False)
@@ -2418,6 +2442,14 @@ class SettingsDialog(QDialog):
 
     def _on_allow_cast_while_casting_changed(self, checked: bool) -> None:
         self._config.allow_cast_while_casting = bool(checked)
+        self._emit_config()
+
+    def _on_gcd_suppress_enabled_changed(self, checked: bool) -> None:
+        self._config.gcd_suppress_enabled = bool(checked)
+        self._emit_config()
+
+    def _on_gcd_suppress_single_fire_bypass_changed(self, checked: bool) -> None:
+        self._config.gcd_suppress_single_fire_bypass = bool(checked)
         self._emit_config()
 
     def _on_automation_profile_selected(self, index: int) -> None:

@@ -243,8 +243,12 @@ class KeySender:
 
         if not min_interval_ok:
             return None
-        if now < self._suppress_priority_until:
-            return None
+        gcd_suppress_enabled = bool(getattr(self._config, "gcd_suppress_enabled", True))
+        single_fire_bypass = bool(getattr(self._config, "gcd_suppress_single_fire_bypass", False))
+        if gcd_suppress_enabled:
+            if not (single_fire_pending and single_fire_bypass):
+                if now < self._suppress_priority_until:
+                    return None
 
         manual_by_id = {
             str(a.get("id", "") or "").strip().lower(): a
