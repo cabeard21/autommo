@@ -678,9 +678,17 @@ class SettingsDialog(QDialog):
             "Set to ~10 to skip template matching when the ROI is moving (game world background)."
         )
         self._spin_buff_motion_gate.setMaximumWidth(74)
+        self._check_buff_color_match = QCheckBox("Color")
+        self._spin_buff_color_match_threshold = QSpinBox()
+        self._spin_buff_color_match_threshold.setRange(0, 100)
+        self._spin_buff_color_match_threshold.setPrefix("C ")
+        self._spin_buff_color_match_threshold.setSuffix("%")
+        self._spin_buff_color_match_threshold.setMaximumWidth(86)
         buff_detect_row.addWidget(self._spin_buff_match_threshold)
         buff_detect_row.addWidget(self._spin_buff_confirm_frames)
         buff_detect_row.addWidget(self._spin_buff_motion_gate)
+        buff_detect_row.addWidget(self._check_buff_color_match)
+        buff_detect_row.addWidget(self._spin_buff_color_match_threshold)
         buff_detect_row.addStretch()
         fl.addRow(_row_label("Buff detect:"), buff_detect_row)
         buff_cal_row = QHBoxLayout()
@@ -1014,6 +1022,8 @@ class SettingsDialog(QDialog):
         self._spin_buff_match_threshold.valueChanged.connect(self._on_detection_changed)
         self._spin_buff_confirm_frames.valueChanged.connect(self._on_detection_changed)
         self._spin_buff_motion_gate.valueChanged.connect(self._on_detection_changed)
+        self._check_buff_color_match.toggled.connect(self._on_detection_changed)
+        self._spin_buff_color_match_threshold.valueChanged.connect(self._on_detection_changed)
         self._btn_calibrate_buff_present.clicked.connect(self._on_calibrate_buff_present_clicked)
         self._btn_clear_buff_templates.clicked.connect(self._on_clear_buff_templates_clicked)
         self._combo_form.currentIndexChanged.connect(self._on_form_selected)
@@ -2083,6 +2093,8 @@ class SettingsDialog(QDialog):
             self._spin_buff_match_threshold,
             self._spin_buff_confirm_frames,
             self._spin_buff_motion_gate,
+            self._check_buff_color_match,
+            self._spin_buff_color_match_threshold,
             self._btn_calibrate_buff_present,
             self._btn_clear_buff_templates,
         ):
@@ -2097,6 +2109,9 @@ class SettingsDialog(QDialog):
             self._spin_buff_match_threshold.setValue(88)
             self._spin_buff_confirm_frames.setValue(2)
             self._spin_buff_motion_gate.setValue(0)
+            self._check_buff_color_match.setChecked(False)
+            self._spin_buff_color_match_threshold.setValue(85)
+            self._spin_buff_color_match_threshold.setEnabled(False)
             self._buff_calibration_status.setText("No buff ROI")
             return
         roi = rois[selected_idx]
@@ -2109,6 +2124,8 @@ class SettingsDialog(QDialog):
         self._spin_buff_match_threshold.blockSignals(True)
         self._spin_buff_confirm_frames.blockSignals(True)
         self._spin_buff_motion_gate.blockSignals(True)
+        self._check_buff_color_match.blockSignals(True)
+        self._spin_buff_color_match_threshold.blockSignals(True)
         self._edit_buff_roi_name.setText(str(roi.get("name", "") or "").strip())
         self._check_buff_roi_enabled.setChecked(bool(roi.get("enabled", True)))
         self._spin_buff_left.setValue(int(roi.get("left", 0)))
@@ -2120,11 +2137,20 @@ class SettingsDialog(QDialog):
         )
         self._spin_buff_confirm_frames.setValue(int(roi.get("confirm_frames", 2)))
         self._spin_buff_motion_gate.setValue(int(roi.get("motion_gate_threshold", 0) or 0))
+        color_match_enabled = bool(roi.get("color_match_enabled", False))
+        self._check_buff_color_match.setChecked(color_match_enabled)
+        self._spin_buff_color_match_threshold.setValue(
+            int(round(float(roi.get("color_match_threshold", 0.85)) * 100))
+        )
+        self._spin_buff_color_match_threshold.setEnabled(color_match_enabled)
         calibration = roi.get("calibration", {})
         if not isinstance(calibration, dict):
             calibration = {}
         has_present = isinstance(calibration.get("present_template"), dict)
-        if has_present:
+        has_present_color = isinstance(calibration.get("present_template_color"), dict)
+        if color_match_enabled and has_present and not has_present_color:
+            self._buff_calibration_status.setText("Calibrate Present (Color)")
+        elif has_present:
             self._buff_calibration_status.setText("Present calibrated")
         else:
             self._buff_calibration_status.setText("Uncalibrated")
@@ -2137,6 +2163,8 @@ class SettingsDialog(QDialog):
         self._spin_buff_match_threshold.blockSignals(False)
         self._spin_buff_confirm_frames.blockSignals(False)
         self._spin_buff_motion_gate.blockSignals(False)
+        self._check_buff_color_match.blockSignals(False)
+        self._spin_buff_color_match_threshold.blockSignals(False)
 
     def _on_buff_roi_selected(self, _index: int) -> None:
         self._sync_buff_roi_controls()
@@ -2160,7 +2188,9 @@ class SettingsDialog(QDialog):
                 "match_threshold": 0.88,
                 "confirm_frames": 2,
                 "motion_gate_threshold": 0,
-                "calibration": {"present_template": None},
+                "color_match_enabled": False,
+                "color_match_threshold": 0.85,
+                "calibration": {"present_template": None, "present_template_color": None},
             }
         )
         self._config.buff_rois = rois
@@ -2199,6 +2229,7 @@ class SettingsDialog(QDialog):
         if not isinstance(calibration, dict):
             calibration = {}
         calibration["present_template"] = None
+        calibration["present_template_color"] = None
         roi["calibration"] = calibration
         self._sync_buff_roi_controls()
         self._emit_config()
@@ -2282,10 +2313,18 @@ class SettingsDialog(QDialog):
             roi["match_threshold"] = self._spin_buff_match_threshold.value() / 100.0
             roi["confirm_frames"] = self._spin_buff_confirm_frames.value()
             roi["motion_gate_threshold"] = self._spin_buff_motion_gate.value()
+            roi["color_match_enabled"] = self._check_buff_color_match.isChecked()
+            roi["color_match_threshold"] = (
+                self._spin_buff_color_match_threshold.value() / 100.0
+            )
+            self._spin_buff_color_match_threshold.setEnabled(
+                bool(roi["color_match_enabled"])
+            )
             calibration = roi.get("calibration", {})
             if not isinstance(calibration, dict):
                 calibration = {}
             calibration.setdefault("present_template", None)
+            calibration.setdefault("present_template_color", None)
             roi["calibration"] = calibration
             combo_idx = self._combo_buff_roi.currentIndex()
             if combo_idx >= 0:

@@ -63,3 +63,4 @@ config/default_config.json
 
 
 /v1/
+.claude/settings.local.json

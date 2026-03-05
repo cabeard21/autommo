@@ -435,6 +435,23 @@ class AppConfig:
         return {"shape": [int(shape[0]), int(shape[1])], "data": str(data)}
 
     @staticmethod
+    def _normalize_buff_template_color(raw_template: object) -> Optional[dict]:
+        if not isinstance(raw_template, dict):
+            return None
+        shape = raw_template.get("shape")
+        data = raw_template.get("data")
+        if (
+            not isinstance(shape, list)
+            or len(shape) != 3
+            or not all(isinstance(v, int) and v > 0 for v in shape)
+            or int(shape[2]) != 3
+            or not isinstance(data, str)
+            or not data.strip()
+        ):
+            return None
+        return {"shape": [int(shape[0]), int(shape[1]), 3], "data": str(data)}
+
+    @staticmethod
     def _normalize_buff_rois(raw_rois: object) -> list[dict]:
         normalized: list[dict] = []
         seen_ids: set[str] = set()
@@ -456,6 +473,9 @@ class AppConfig:
             missing_template = AppConfig._normalize_buff_template(
                 calibration.get("missing_template")
             )
+            present_template_color = AppConfig._normalize_buff_template_color(
+                calibration.get("present_template_color")
+            )
             normalized.append(
                 {
                     "id": rid,
@@ -471,9 +491,14 @@ class AppConfig:
                     ),
                     "confirm_frames": max(1, int(raw.get("confirm_frames", 2))),
                     "motion_gate_threshold": max(0.0, float(raw.get("motion_gate_threshold", 0) or 0)),
+                    "color_match_enabled": bool(raw.get("color_match_enabled", False)),
+                    "color_match_threshold": max(
+                        0.0, min(1.0, float(raw.get("color_match_threshold", 0.85)))
+                    ),
                     "calibration": {
                         "present_template": present_template,
                         "missing_template": missing_template,
+                        "present_template_color": present_template_color,
                     },
                 }
             )

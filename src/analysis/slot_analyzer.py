@@ -1000,6 +1000,32 @@ class SlotAnalyzer:
         except Exception:
             return None
 
+    def _decode_color_template(self, template_dict: object) -> Optional[np.ndarray]:
+        if not isinstance(template_dict, dict):
+            return None
+        shape = template_dict.get("shape")
+        raw_b64 = template_dict.get("data")
+        if (
+            not isinstance(shape, list)
+            or len(shape) != 3
+            or not all(isinstance(v, int) and v > 0 for v in shape)
+            or int(shape[2]) != 3
+            or not isinstance(raw_b64, str)
+            or not raw_b64.strip()
+        ):
+            return None
+        try:
+            key = f"{shape[0]}x{shape[1]}x3:{raw_b64}"
+            cached = self._buff_template_cache.get(key)
+            if cached is not None:
+                return cached
+            arr = np.frombuffer(base64.b64decode(raw_b64), dtype=np.uint8)
+            arr = arr.reshape((int(shape[0]), int(shape[1]), 3)).copy()
+            self._buff_template_cache[key] = arr
+            return arr
+        except Exception:
+            return None
+
     @staticmethod
     def _template_similarity(
         gray_roi: np.ndarray, gray_template: Optional[np.ndarray]
@@ -1030,6 +1056,24 @@ class SlotAnalyzer:
         # normalization, which gave uncorrelated backgrounds a baseline of 0.5.
         return min(diff_score, corr_score)
 
+    @staticmethod
+    def _saturation_similarity(
+        bgr_roi: np.ndarray, bgr_template: Optional[np.ndarray]
+    ) -> float:
+        if bgr_template is None or bgr_template.size == 0 or bgr_roi.size == 0:
+            return 0.0
+        if bgr_template.shape[:2] != bgr_roi.shape[:2]:
+            bgr_template = cv2.resize(
+                bgr_template,
+                (bgr_roi.shape[1], bgr_roi.shape[0]),
+                interpolation=cv2.INTER_AREA,
+            )
+        sat_roi = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2HSV)[:, :, 1].astype(np.int16)
+        sat_template = cv2.cvtColor(bgr_template, cv2.COLOR_BGR2HSV)[:, :, 1].astype(
+            np.int16
+        )
+        return max(0.0, 1.0 - (float(np.mean(np.abs(sat_roi - sat_template))) / 255.0))
+
     def _analyze_buffs(self, frame: np.ndarray, action_origin: tuple[int, int]) -> None:
         states: dict[str, dict] = {}
         action_x = int(action_origin[0])
@@ -1056,14 +1100,26 @@ class SlotAnalyzer:
             width = int(raw.get("width", 0))
             height = int(raw.get("height", 0))
             threshold = max(0.0, min(1.0, float(raw.get("match_threshold", 0.88))))
+            color_match_enabled = bool(raw.get("color_match_enabled", False))
+            color_match_threshold = max(
+                0.0, min(1.0, float(raw.get("color_match_threshold", 0.85)))
+            )
             confirm_frames = max(1, int(raw.get("confirm_frames", 2)))
             calibration = raw.get("calibration", {})
             if not isinstance(calibration, dict):
                 calibration = {}
             present_t = self._decode_gray_template(calibration.get("present_template"))
-            calibrated = present_t is not None
+            present_t_color = self._decode_color_template(
+                calibration.get("present_template_color")
+            )
+            calibrated = present_t is not None and (
+                (not color_match_enabled) or present_t_color is not None
+            )
 
             status = "ok"
+            gray_similarity = 0.0
+            sat_similarity = 0.0
+            effective_similarity = 0.0
             present_similarity = 0.0
             missing_similarity = 0.0
             candidate = False
@@ -1079,8 +1135,12 @@ class SlotAnalyzer:
                 status = "invalid-roi"
                 runtime.candidate_frames = 0
                 runtime.red_glow_candidate_frames = 0
-            elif not calibrated:
+            elif present_t is None:
                 status = "uncalibrated"
+                runtime.candidate_frames = 0
+                runtime.red_glow_candidate_frames = 0
+            elif color_match_enabled and present_t_color is None:
+                status = "uncalibrated-color"
                 runtime.candidate_frames = 0
                 runtime.red_glow_candidate_frames = 0
             else:
@@ -1119,10 +1179,30 @@ class SlotAnalyzer:
                     )
                     if motion_gated:
                         present_similarity = 0.0
+                        gray_similarity = 0.0
+                        sat_similarity = 0.0
+                        effective_similarity = 0.0
                         candidate = False
                     else:
-                        present_similarity = self._template_similarity(roi_gray, present_t)
-                        candidate = present_similarity >= threshold
+                        gray_similarity = self._template_similarity(roi_gray, present_t)
+                        sat_similarity = (
+                            self._saturation_similarity(roi, present_t_color)
+                            if color_match_enabled
+                            else 1.0
+                        )
+                        effective_similarity = (
+                            min(gray_similarity, sat_similarity)
+                            if color_match_enabled
+                            else gray_similarity
+                        )
+                        present_similarity = effective_similarity
+                        candidate = (
+                            gray_similarity >= threshold
+                            and (
+                                (not color_match_enabled)
+                                or sat_similarity >= color_match_threshold
+                            )
+                        )
                     if candidate:
                         runtime.candidate_frames += 1
                     else:
@@ -1168,6 +1248,9 @@ class SlotAnalyzer:
                 "height": height,
                 "status": status,
                 "present_similarity": float(present_similarity),
+                "gray_similarity": float(gray_similarity),
+                "sat_similarity": float(sat_similarity),
+                "effective_similarity": float(effective_similarity),
                 "missing_similarity": float(missing_similarity),
                 "candidate": bool(candidate),
                 "candidate_frames": int(runtime.candidate_frames),
@@ -1181,6 +1264,8 @@ class SlotAnalyzer:
                 "motion_gate_threshold": float(
                     raw.get("motion_gate_threshold", 0) or 0
                 ),
+                "color_match_enabled": bool(color_match_enabled),
+                "color_match_threshold": float(color_match_threshold),
             }
         self._buff_states = states
 

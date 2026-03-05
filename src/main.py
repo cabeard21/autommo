@@ -89,6 +89,13 @@ def encode_gray_template(gray: np.ndarray) -> dict:
     }
 
 
+def encode_color_template(bgr: np.ndarray) -> dict:
+    return {
+        "shape": [int(bgr.shape[0]), int(bgr.shape[1]), int(bgr.shape[2])],
+        "data": base64.b64encode(bgr.astype(np.uint8).tobytes()).decode(),
+    }
+
+
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -711,6 +718,7 @@ def main() -> None:
             if not isinstance(calibration, dict):
                 calibration = {}
             calibration["present_template"] = encode_gray_template(gray)
+            calibration["present_template_color"] = encode_color_template(crop)
             roi["calibration"] = calibration
             settings_dialog.sync_from_config()
             on_config_changed(config)
