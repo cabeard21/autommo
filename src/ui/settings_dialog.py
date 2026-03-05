@@ -1,6 +1,7 @@
 """Settings window - non-modal dialog for all configuration (Profile, Display, Capture, Detection, Automation, Calibration)."""
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from datetime import datetime
@@ -635,11 +636,14 @@ class SettingsDialog(QDialog):
         self._btn_remove_buff_roi = QPushButton("-")
         self._btn_remove_buff_roi.setObjectName("deleteButton")
         self._btn_remove_buff_roi.setFixedWidth(28)
+        self._btn_copy_buff_roi = QPushButton("Copy")
+        self._btn_copy_buff_roi.setFixedWidth(40)
         self._edit_buff_roi_name = QLineEdit()
         self._edit_buff_roi_name.setPlaceholderText("Buff name")
         buff_row.addWidget(self._combo_buff_roi)
         buff_row.addWidget(self._btn_add_buff_roi)
         buff_row.addWidget(self._btn_remove_buff_roi)
+        buff_row.addWidget(self._btn_copy_buff_roi)
         buff_row.addWidget(self._edit_buff_roi_name, 1)
         fl.addRow(_row_label("Buff ROI:"), buff_row)
         buff_geom_row = QHBoxLayout()
@@ -1022,6 +1026,7 @@ class SettingsDialog(QDialog):
         self._combo_buff_roi.currentIndexChanged.connect(self._on_buff_roi_selected)
         self._btn_add_buff_roi.clicked.connect(self._on_add_buff_roi)
         self._btn_remove_buff_roi.clicked.connect(self._on_remove_buff_roi)
+        self._btn_copy_buff_roi.clicked.connect(self._on_copy_buff_roi)
         self._edit_buff_roi_name.textChanged.connect(self._on_detection_changed)
         self._check_buff_roi_enabled.toggled.connect(self._on_detection_changed)
         self._spin_buff_left.valueChanged.connect(self._on_detection_changed)
@@ -2187,6 +2192,7 @@ class SettingsDialog(QDialog):
         selected_idx = self._selected_buff_roi_index()
         enabled = selected_idx >= 0
         self._btn_remove_buff_roi.setEnabled(enabled and len(rois) > 0)
+        self._btn_copy_buff_roi.setEnabled(enabled)
         for w in (
             self._edit_buff_roi_name,
             self._check_buff_roi_enabled,
@@ -2314,6 +2320,53 @@ class SettingsDialog(QDialog):
         self._config.buff_rois = rois
         self._sync_buff_roi_controls()
         self._sync_form_controls()
+        self._emit_config()
+
+    def _on_copy_buff_roi(self) -> None:
+        idx = self._selected_buff_roi_index()
+        if idx < 0:
+            return
+        rois = [dict(r) for r in list(getattr(self._config, "buff_rois", []) or []) if isinstance(r, dict)]
+        source = rois[idx]
+
+        existing_ids = {str(r.get("id", "") or "").strip().lower() for r in rois}
+        i = 1
+        while f"buff_{i}" in existing_ids:
+            i += 1
+        new_id = f"buff_{i}"
+
+        base_name = str(source.get("name", "") or "Buff").strip() or "Buff"
+        existing_names = {str(r.get("name", "") or "").strip().lower() for r in rois}
+        new_name = f"{base_name} Copy"
+        suffix = 2
+        while new_name.strip().lower() in existing_names:
+            new_name = f"{base_name} Copy {suffix}"
+            suffix += 1
+
+        src_cal = source.get("calibration", {})
+        new_cal = copy.deepcopy(src_cal) if isinstance(src_cal, dict) else {"present_template": None, "present_template_color": None}
+
+        rois.append({
+            "id": new_id,
+            "name": new_name,
+            "enabled": source.get("enabled", True),
+            "left": source.get("left", 0),
+            "top": source.get("top", 0),
+            "width": source.get("width", 48),
+            "height": source.get("height", 48),
+            "match_threshold": source.get("match_threshold", 0.88),
+            "confirm_frames": source.get("confirm_frames", 2),
+            "motion_gate_threshold": source.get("motion_gate_threshold", 0),
+            "color_match_enabled": source.get("color_match_enabled", False),
+            "color_match_threshold": source.get("color_match_threshold", 0.85),
+            "calibration": new_cal,
+        })
+        self._config.buff_rois = rois
+        self._sync_buff_roi_controls()
+        self._sync_form_controls()
+        idx2 = self._combo_buff_roi.findData(new_id)
+        if idx2 >= 0:
+            self._combo_buff_roi.setCurrentIndex(idx2)
         self._emit_config()
 
     def _on_calibrate_buff_present_clicked(self) -> None:
