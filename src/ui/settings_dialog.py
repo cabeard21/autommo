@@ -1596,6 +1596,94 @@ class SettingsDialog(QDialog):
         )
         self._emit_config()
 
+    def apply_bbox_geometry(self, left: int, top: int, width: int, height: int) -> None:
+        """Apply externally edited bbox geometry and propagate via normal config signals."""
+        new_bbox = BoundingBox(
+            top=max(0, int(top)),
+            left=max(0, int(left)),
+            width=max(1, int(width)),
+            height=max(1, int(height)),
+        )
+        old = self._config.bounding_box
+        if (
+            int(old.left) == int(new_bbox.left)
+            and int(old.top) == int(new_bbox.top)
+            and int(old.width) == int(new_bbox.width)
+            and int(old.height) == int(new_bbox.height)
+        ):
+            return
+        self._config.bounding_box = new_bbox
+        self._spin_top.blockSignals(True)
+        self._spin_left.blockSignals(True)
+        self._spin_width.blockSignals(True)
+        self._spin_height.blockSignals(True)
+        self._spin_top.setValue(int(new_bbox.top))
+        self._spin_left.setValue(int(new_bbox.left))
+        self._spin_width.setValue(int(new_bbox.width))
+        self._spin_height.setValue(int(new_bbox.height))
+        self._spin_top.blockSignals(False)
+        self._spin_left.blockSignals(False)
+        self._spin_width.blockSignals(False)
+        self._spin_height.blockSignals(False)
+        self.bounding_box_changed.emit(self._config.bounding_box)
+        self._emit_config()
+
+    def apply_buff_roi_geometry(
+        self, roi_id: str, left: int, top: int, width: int, height: int
+    ) -> None:
+        """Apply externally edited buff ROI geometry and emit config update."""
+        rid = str(roi_id or "").strip().lower()
+        if not rid:
+            return
+        rois = list(getattr(self._config, "buff_rois", []) or [])
+        changed = False
+        for i, roi in enumerate(rois):
+            if not isinstance(roi, dict):
+                continue
+            current_id = str(roi.get("id", "") or "").strip().lower()
+            if current_id != rid:
+                continue
+            new_roi = dict(roi)
+            new_left = int(left)
+            new_top = int(top)
+            new_width = max(1, int(width))
+            new_height = max(1, int(height))
+            if (
+                int(new_roi.get("left", 0)) == new_left
+                and int(new_roi.get("top", 0)) == new_top
+                and int(new_roi.get("width", 0)) == new_width
+                and int(new_roi.get("height", 0)) == new_height
+            ):
+                return
+            new_roi["left"] = new_left
+            new_roi["top"] = new_top
+            new_roi["width"] = new_width
+            new_roi["height"] = new_height
+            rois[i] = new_roi
+            changed = True
+            break
+        if not changed:
+            return
+        self._config.buff_rois = rois
+        selected_idx = self._selected_buff_roi_index()
+        if selected_idx >= 0 and selected_idx < len(self._config.buff_rois):
+            selected = self._config.buff_rois[selected_idx]
+            selected_id = str(selected.get("id", "") or "").strip().lower()
+            if selected_id == rid:
+                self._spin_buff_left.blockSignals(True)
+                self._spin_buff_top.blockSignals(True)
+                self._spin_buff_width.blockSignals(True)
+                self._spin_buff_height.blockSignals(True)
+                self._spin_buff_left.setValue(int(selected.get("left", 0)))
+                self._spin_buff_top.setValue(int(selected.get("top", 0)))
+                self._spin_buff_width.setValue(int(selected.get("width", 0)))
+                self._spin_buff_height.setValue(int(selected.get("height", 0)))
+                self._spin_buff_left.blockSignals(False)
+                self._spin_buff_top.blockSignals(False)
+                self._spin_buff_width.blockSignals(False)
+                self._spin_buff_height.blockSignals(False)
+        self._emit_config()
+
     @staticmethod
     def _parse_glow_value_delta_by_slot(raw_text: str) -> dict[int, int]:
         out: dict[int, int] = {}

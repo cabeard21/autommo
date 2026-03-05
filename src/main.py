@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from src.automation.binds import normalize_bind
 from src.automation.global_hotkey import GlobalToggleListener
 from src.automation.key_sender import KeySender
+from src.automation.modifier_tracker import ShiftModifierTracker
 from src.automation.movement_tracker import MovementTracker
 from src.automation.queue_listener import QueueListener
 from src.capture import ScreenCapture
@@ -481,6 +482,8 @@ def main() -> None:
     settings_dialog.overlay_visibility_changed.connect(apply_overlay_visibility)
     settings_dialog.monitor_changed.connect(apply_monitor)
     settings_dialog.config_updated.connect(on_config_changed)
+    overlay.bbox_geometry_edited.connect(settings_dialog.apply_bbox_geometry)
+    overlay.buff_roi_geometry_edited.connect(settings_dialog.apply_buff_roi_geometry)
 
     window.config_changed.connect(on_config_changed)
     worker.frame_captured.connect(window.update_preview)
@@ -603,6 +606,15 @@ def main() -> None:
     movement_tracker = MovementTracker()
     movement_tracker.start()
     worker.set_movement_tracker(movement_tracker)
+
+    modifier_tracker = ShiftModifierTracker()
+    modifier_tracker.start()
+    edit_mode_timer = QTimer(window)
+    edit_mode_timer.setInterval(40)
+    edit_mode_timer.timeout.connect(
+        lambda: overlay.set_edit_mode_enabled(bool(modifier_tracker.is_pressed))
+    )
+    edit_mode_timer.start()
 
     # Calibrate baselines: grab one frame on main thread with short-lived mss
     def calibration_form_id() -> str:
@@ -776,6 +788,7 @@ def main() -> None:
     hotkey_listener.stop()
     queue_listener.stop()
     movement_tracker.stop()
+    modifier_tracker.stop()
     if is_running[0]:
         worker.stop()
     sys.exit(exit_code)
