@@ -70,6 +70,18 @@ class FormsConfigTests(unittest.TestCase):
         self.assertEqual(cfg.cooldown_group_by_slot.get(0), "builders")
         self.assertEqual(cfg.cooldown_group_by_slot.get(1), "builders")
 
+    def test_from_dict_parses_slot_detection_mode(self) -> None:
+        cfg = AppConfig.from_dict(
+            {
+                "slots": {"count": 10, "gap_pixels": 2, "padding": 3, "keybinds": []},
+                "detection": {"slot_detection_mode": "buff_only"},
+            }
+        )
+        self.assertEqual(cfg.slot_detection_mode, "buff_only")
+        self.assertEqual(
+            cfg.to_dict().get("detection", {}).get("slot_detection_mode"), "buff_only"
+        )
+
     def test_from_dict_parses_detection_region_overrides_by_form(self) -> None:
         cfg = AppConfig.from_dict(
             {

@@ -474,12 +474,12 @@ class MainWindow(QMainWindow):
         left_column_layout.addLayout(button_row)
 
         # Live Preview (fixed, not in scroll)
-        preview_frame = QFrame(left_column)
-        preview_frame.setObjectName("sectionFrame")
-        preview_frame.setStyleSheet(
+        self._preview_frame = QFrame(left_column)
+        self._preview_frame.setObjectName("sectionFrame")
+        self._preview_frame.setStyleSheet(
             f"background: {SECTION_BG}; border: 1px solid {SECTION_BORDER}; border-radius: 4px; padding: 8px;"
         )
-        preview_inner = QVBoxLayout(preview_frame)
+        preview_inner = QVBoxLayout(self._preview_frame)
         preview_inner.setContentsMargins(8, 8, 8, 8)
         title_preview = QLabel("LIVE PREVIEW")
         title_preview.setObjectName("sectionTitle")
@@ -503,11 +503,11 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         preview_inner.addWidget(self._preview_label)
-        preview_frame.setMinimumHeight(96)
-        preview_frame.setSizePolicy(
+        self._preview_frame.setMinimumHeight(96)
+        self._preview_frame.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
         )
-        left_column_layout.addWidget(preview_frame)
+        left_column_layout.addWidget(self._preview_frame)
 
         # Slot States row (fixed, not in scroll)
         self._slot_states_row = _SlotStatesRow(left_column)
@@ -714,6 +714,18 @@ class MainWindow(QMainWindow):
             .lower()
         )
 
+    def _slot_detection_mode(self) -> str:
+        mode = str(getattr(self._config, "slot_detection_mode", "slot") or "slot").strip().lower()
+        return mode if mode in ("slot", "buff_only") else "slot"
+
+    def _slot_detection_enabled(self) -> bool:
+        return self._slot_detection_mode() == "slot"
+
+    def _apply_slot_detection_mode_ui(self) -> None:
+        slot_enabled = self._slot_detection_enabled()
+        self._slot_states_row.setVisible(slot_enabled)
+        self._preview_frame.setVisible(slot_enabled)
+
     def _active_manual_actions(self) -> list[dict]:
         profile = self._active_priority_profile()
         actions = profile.get("manual_actions", [])
@@ -772,6 +784,7 @@ class MainWindow(QMainWindow):
         """Set UI to match current config (main window only owns enable, bind display, priority, slots)."""
         while len(self._config.keybinds) < self._config.slot_count:
             self._config.keybinds.append("")
+        self._apply_slot_detection_mode_ui()
         self._config.automation_enabled = False
         self._update_automation_button_text()
         self._update_bind_display()
@@ -804,6 +817,7 @@ class MainWindow(QMainWindow):
 
     def refresh_from_config(self) -> None:
         """Called when config is updated from Settings dialog: refresh slot count, bind display, history rows."""
+        self._apply_slot_detection_mode_ui()
         self._prepopulate_slot_buttons()
         self._update_automation_button_text()
         self._update_bind_display()
@@ -852,6 +866,9 @@ class MainWindow(QMainWindow):
 
     def _prepopulate_slot_buttons(self) -> None:
         """Build slot buttons from config (slot_count + keybinds) in a not-ready state. Used on load before capture runs."""
+        if not self._slot_detection_enabled():
+            self._priority_panel.priority_list.update_states([])
+            return
         n = self._config.slot_count
         while len(self._config.keybinds) < n:
             self._config.keybinds.append("")
@@ -945,6 +962,7 @@ class MainWindow(QMainWindow):
     def set_config(self, config: AppConfig) -> None:
         """Update the config reference (e.g. after import in settings). Keeps window in sync with worker/analyzer."""
         self._config = config
+        self._apply_slot_detection_mode_ui()
 
     def set_key_sender(self, key_sender: Optional["KeySender"]) -> None:
         self._key_sender = key_sender
@@ -1155,6 +1173,7 @@ class MainWindow(QMainWindow):
     def _next_priority_candidate(self, states: list[dict]) -> Optional[dict]:
         """Return first eligible priority item with display fields for Next Intention."""
         by_index = {s["index"]: s for s in states}
+        slot_detection_enabled = self._slot_detection_enabled()
         manual_by_id = {
             str(a.get("id", "") or "").strip().lower(): a
             for a in self._active_manual_actions()
@@ -1162,6 +1181,8 @@ class MainWindow(QMainWindow):
         for item in self._active_priority_items():
             item_type = str(item.get("type", "") or "").strip().lower()
             if item_type == "slot":
+                if not slot_detection_enabled:
+                    continue
                 slot_index = item.get("slot_index")
                 if not isinstance(slot_index, int):
                     continue
@@ -1234,6 +1255,8 @@ class MainWindow(QMainWindow):
 
     def _next_ready_priority_slot(self, states: list[dict]) -> Optional[int]:
         """Return first READY slot index from active priority items, or None."""
+        if not self._slot_detection_enabled():
+            return None
         by_index = {s["index"]: s for s in states}
         for item in self._active_priority_items():
             if str(item.get("type", "") or "").strip().lower() != "slot":
@@ -1563,41 +1586,45 @@ class MainWindow(QMainWindow):
         """
         # Ignore transient empty payloads while capture is running to avoid
         # rebuilding the slot row and causing visible geometry churn.
-        if not states:
+        if not states and self._slot_detection_enabled():
             return
+        slot_detection_enabled = self._slot_detection_enabled()
+        if not slot_detection_enabled:
+            states = []
         # Pad keybinds so we can index by slot
         while len(self._config.keybinds) < len(states):
             self._config.keybinds.append("")
-        if len(self._slot_buttons) != len(states):
-            for b in self._slot_buttons:
-                b.deleteLater()
-            self._slot_buttons.clear()
-            for i in range(len(states)):
-                btn = SlotButton(i, self._slot_states_row)
-                btn.setObjectName("slotButton")
-                btn.setStyleSheet(
-                    "border: 1px solid #444; padding: 4px; font-family: monospace; font-size: 10px; font-weight: bold;"
+        if slot_detection_enabled:
+            if len(self._slot_buttons) != len(states):
+                for b in self._slot_buttons:
+                    b.deleteLater()
+                self._slot_buttons.clear()
+                for i in range(len(states)):
+                    btn = SlotButton(i, self._slot_states_row)
+                    btn.setObjectName("slotButton")
+                    btn.setStyleSheet(
+                        "border: 1px solid #444; padding: 4px; font-family: monospace; font-size: 10px; font-weight: bold;"
+                    )
+                    btn.context_menu_requested.connect(self._show_slot_menu)
+                    self._slot_buttons.append(btn)
+                self._slot_states_row.set_buttons(self._slot_buttons)
+            for btn, s in zip(self._slot_buttons, states):
+                keybind = s.get("keybind")
+                if keybind is None and s["index"] < len(self._config.keybinds):
+                    keybind = self._config.keybinds[s["index"]] or None
+                keybind = keybind or "?"
+                state = s.get("state", "unknown")
+                cd = s.get("cooldown_remaining")
+                self._apply_slot_button_style(
+                    btn,
+                    state,
+                    keybind,
+                    cd,
+                    slot_index=s["index"],
+                    glow_ready=bool(s.get("glow_ready", False)),
+                    yellow_glow_ready=bool(s.get("yellow_glow_ready", False)),
+                    red_glow_ready=bool(s.get("red_glow_ready", False)),
                 )
-                btn.context_menu_requested.connect(self._show_slot_menu)
-                self._slot_buttons.append(btn)
-            self._slot_states_row.set_buttons(self._slot_buttons)
-        for btn, s in zip(self._slot_buttons, states):
-            keybind = s.get("keybind")
-            if keybind is None and s["index"] < len(self._config.keybinds):
-                keybind = self._config.keybinds[s["index"]] or None
-            keybind = keybind or "?"
-            state = s.get("state", "unknown")
-            cd = s.get("cooldown_remaining")
-            self._apply_slot_button_style(
-                btn,
-                state,
-                keybind,
-                cd,
-                slot_index=s["index"],
-                glow_ready=bool(s.get("glow_ready", False)),
-                yellow_glow_ready=bool(s.get("yellow_glow_ready", False)),
-                red_glow_ready=bool(s.get("red_glow_ready", False)),
-            )
         self._priority_panel.priority_list.set_keybinds(self._config.keybinds)
         self._priority_panel.priority_list.set_manual_actions(
             self._active_manual_actions()
@@ -1630,18 +1657,10 @@ class MainWindow(QMainWindow):
         if self._cast_gate_active and not allow_while_casting:
             self.set_next_intention_casting_wait(slot_index=None, cast_ends_at=None)
             return
-        next_slot = self._next_ready_priority_slot(states)
-        if next_slot is not None:
-            keybind = (
-                self._config.keybinds[next_slot]
-                if next_slot < len(self._config.keybinds)
-                else "?"
-            )
-            keybind = keybind or "?"
-            names = getattr(self._config, "slot_display_names", [])
-            slot_name = "Unidentified"
-            if next_slot < len(names) and (names[next_slot] or "").strip():
-                slot_name = (names[next_slot] or "").strip()
+        candidate = self._next_priority_candidate(states)
+        if candidate is not None:
+            keybind = str(candidate.get("keybind", "?") or "?").strip() or "?"
+            slot_name = str(candidate.get("display_name", "Unidentified") or "Unidentified").strip() or "Unidentified"
             if not self._config.automation_enabled:
                 suffix = "ready (paused)"
                 color = KEY_YELLOW

@@ -1352,6 +1352,11 @@ class SlotAnalyzer:
             1, int(getattr(self._config, "glow_confirm_frames", 2) or 2)
         )
         glow_mode = self._glow_mode()
+        slot_detection_mode = str(
+            getattr(self._config, "slot_detection_mode", "slot") or "slot"
+        ).strip().lower()
+        if slot_detection_mode not in ("slot", "buff_only"):
+            slot_detection_mode = "slot"
         cast_bar_active = self._cast_bar_active(
             frame,
             self._frame_action_origin_x,
@@ -1368,6 +1373,16 @@ class SlotAnalyzer:
         self._cast_gate_active = cast_gate_active
         self._analyze_buffs(frame, action_origin)
         self._update_active_form_id(now)
+        if slot_detection_mode == "buff_only":
+            cast_ends_at = (
+                self._cast_bar_active_until if now < self._cast_bar_active_until else None
+            )
+            return ActionBarState(
+                slots=[],
+                timestamp=now,
+                cast_active=bool(cast_gate_active),
+                cast_ends_at=cast_ends_at,
+            )
         form_settling = now < self._form_settle_until
         override_slots = {
             int(v)

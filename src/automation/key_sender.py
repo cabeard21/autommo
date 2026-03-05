@@ -145,19 +145,42 @@ class KeySender:
 
         slots_by_index = {s.index: s for s in state.slots}
         active_form_id = str(getattr(self._config, "active_form_id", "normal") or "normal").strip().lower()
-        # Queued key fires only when at least one slot-type priority item is READY
-        # (used as a practical "GCD over" signal).
-        any_priority_ready = any(
-            (
-                isinstance(item, dict)
-                and item_matches_form(item, active_form_id)
-                and str(item.get("type", "") or "").strip().lower() == "slot"
-                and isinstance(item.get("slot_index"), int)
-                and (slots_by_index.get(item["slot_index"]) is not None)
-                and bool(getattr(slots_by_index[item["slot_index"]], "is_ready", False))
-            )
-            for item in (priority_items or [])
-        )
+        slot_detection_mode = str(
+            getattr(self._config, "slot_detection_mode", "slot") or "slot"
+        ).strip().lower()
+        slot_detection_enabled = slot_detection_mode == "slot"
+
+        def _priority_item_eligible(item: dict) -> bool:
+            if not isinstance(item, dict):
+                return False
+            if not item_matches_form(item, active_form_id):
+                return False
+            item_type = str(item.get("type", "") or "").strip().lower()
+            if item_type == "slot":
+                if not slot_detection_enabled:
+                    return False
+                slot_index = item.get("slot_index")
+                if not isinstance(slot_index, int):
+                    return False
+                slot = slots_by_index.get(slot_index)
+                return slot_item_is_eligible_for_snapshot(
+                    item,
+                    slot,
+                    buff_states=buff_states,
+                    active_form_id=active_form_id,
+                    movement_active=movement_active,
+                )
+            if item_type == "manual":
+                return manual_item_is_eligible(
+                    item,
+                    buff_states=buff_states,
+                    active_form_id=active_form_id,
+                    movement_active=movement_active,
+                )
+            return False
+
+        # Queued key fires only when at least one priority action is currently eligible.
+        any_priority_ready = any(_priority_item_eligible(item) for item in (priority_items or []))
 
         if queued_override:
             source = queued_override.get("source")
@@ -200,6 +223,8 @@ class KeySender:
                 )
                 return None
             if source == "tracked":
+                if not slot_detection_enabled:
+                    return None
                 slot_index = queued_override.get("slot_index")
                 if slot_index is not None and key:
                     slot = slots_by_index.get(slot_index)
@@ -263,6 +288,8 @@ class KeySender:
             keybind: Optional[str] = None
 
             if item_type == "slot":
+                if not slot_detection_enabled:
+                    continue
                 slot_index = item.get("slot_index")
                 if not isinstance(slot_index, int):
                     continue

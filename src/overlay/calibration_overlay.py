@@ -49,6 +49,7 @@ class CalibrationOverlay(QWidget):
         self._slot_red_glow_fraction: dict[int, float] = {}
         self._show_active_screen_outline: bool = False
         self._capture_active: bool = False
+        self._slot_detection_mode: str = "slot"
 
         self._setup_window()
 
@@ -162,6 +163,13 @@ class CalibrationOverlay(QWidget):
         self._slot_red_glow_fraction = by_index_red_fraction
         self.update()
 
+    def update_slot_detection_mode(self, mode: str) -> None:
+        normalized = str(mode or "slot").strip().lower()
+        if normalized not in ("slot", "buff_only"):
+            normalized = "slot"
+        self._slot_detection_mode = normalized
+        self.update()
+
     def _slot_analyzed_rects(self) -> list[QRect]:
         """Compute analyzed region rects (after padding) using same math as SlotAnalyzer."""
         total_width = self._bbox.width
@@ -262,61 +270,62 @@ class CalibrationOverlay(QWidget):
             self._bbox.height,
         )
 
-        # Slot outlines. Red-ready slots use red outline, yellow-ready use yellow.
-        default_slot_pen = QPen(QColor("#FF00FF"), 1)
-        yellow_slot_pen = QPen(QColor("#FFD84D"), 2)
-        red_slot_pen = QPen(QColor("#FF5A5A"), 2)
-        for idx, rect in enumerate(self._slot_analyzed_rects()):
-            if rect.width() > 0 and rect.height() > 0:
-                red_ready = self._slot_red_glow_ready.get(idx, False)
-                yellow_ready = self._slot_yellow_glow_ready.get(idx, False)
-                if red_ready:
-                    painter.setPen(red_slot_pen)
-                elif yellow_ready:
-                    painter.setPen(yellow_slot_pen)
-                else:
-                    painter.setPen(default_slot_pen)
-                painter.drawRect(rect)
-                if red_ready or yellow_ready:
-                    marker_size = max(4, min(10, rect.width() // 5, rect.height() // 5))
-                    marker = QRect(
-                        rect.left() + 1,
-                        rect.top() + 1,
-                        marker_size,
-                        marker_size,
-                    )
-                    painter.fillRect(
-                        marker, QColor(255, 90, 90, 210) if red_ready else QColor(255, 216, 77, 200)
-                    )
-                yellow_candidate = self._slot_yellow_glow_candidate.get(idx, False)
-                red_candidate = self._slot_red_glow_candidate.get(idx, False)
-                yellow_frac = self._slot_yellow_glow_fraction.get(idx, 0.0)
-                red_frac = self._slot_red_glow_fraction.get(idx, 0.0)
-                dot_ok = (not yellow_ready and not red_ready) or red_ready
-                y_status = "Y" if yellow_ready else ("y" if yellow_candidate else ".")
-                r_status = "R" if red_ready else ("r" if red_candidate else ".")
-                d_status = "D+" if dot_ok else "D-"
-                painter.setPen(
-                    QPen(
-                        QColor("#FF5A5A")
-                        if red_ready or red_candidate
-                        else (QColor("#FFD84D") if yellow_ready or yellow_candidate else QColor("#888888")),
-                        1,
-                    )
-                )
-                painter.drawText(
-                    rect.left() + 2,
-                    self._bbox.top - 3 if self._bbox.top >= 20 else self._bbox.top + self._bbox.height + 14,
-                    f"{d_status} {y_status}{yellow_frac:.2f} {r_status}{red_frac:.2f}",
-                )
-
         space_above = self._bbox.top >= 20
-        painter.setPen(QPen(QColor("#AAAAAA"), 1))
-        painter.drawText(
-            self._bbox.left + 4,
-            self._bbox.top - 16 if space_above else self._bbox.top + self._bbox.height + 28,
-            "Dot debug: D+=eligible D-=blocked | Y/y yellow | R/r red",
-        )
+        if self._slot_detection_mode == "slot":
+            # Slot outlines. Red-ready slots use red outline, yellow-ready use yellow.
+            default_slot_pen = QPen(QColor("#FF00FF"), 1)
+            yellow_slot_pen = QPen(QColor("#FFD84D"), 2)
+            red_slot_pen = QPen(QColor("#FF5A5A"), 2)
+            for idx, rect in enumerate(self._slot_analyzed_rects()):
+                if rect.width() > 0 and rect.height() > 0:
+                    red_ready = self._slot_red_glow_ready.get(idx, False)
+                    yellow_ready = self._slot_yellow_glow_ready.get(idx, False)
+                    if red_ready:
+                        painter.setPen(red_slot_pen)
+                    elif yellow_ready:
+                        painter.setPen(yellow_slot_pen)
+                    else:
+                        painter.setPen(default_slot_pen)
+                    painter.drawRect(rect)
+                    if red_ready or yellow_ready:
+                        marker_size = max(4, min(10, rect.width() // 5, rect.height() // 5))
+                        marker = QRect(
+                            rect.left() + 1,
+                            rect.top() + 1,
+                            marker_size,
+                            marker_size,
+                        )
+                        painter.fillRect(
+                            marker, QColor(255, 90, 90, 210) if red_ready else QColor(255, 216, 77, 200)
+                        )
+                    yellow_candidate = self._slot_yellow_glow_candidate.get(idx, False)
+                    red_candidate = self._slot_red_glow_candidate.get(idx, False)
+                    yellow_frac = self._slot_yellow_glow_fraction.get(idx, 0.0)
+                    red_frac = self._slot_red_glow_fraction.get(idx, 0.0)
+                    dot_ok = (not yellow_ready and not red_ready) or red_ready
+                    y_status = "Y" if yellow_ready else ("y" if yellow_candidate else ".")
+                    r_status = "R" if red_ready else ("r" if red_candidate else ".")
+                    d_status = "D+" if dot_ok else "D-"
+                    painter.setPen(
+                        QPen(
+                            QColor("#FF5A5A")
+                            if red_ready or red_candidate
+                            else (QColor("#FFD84D") if yellow_ready or yellow_candidate else QColor("#888888")),
+                            1,
+                        )
+                    )
+                    painter.drawText(
+                        rect.left() + 2,
+                        self._bbox.top - 3 if self._bbox.top >= 20 else self._bbox.top + self._bbox.height + 14,
+                        f"{d_status} {y_status}{yellow_frac:.2f} {r_status}{red_frac:.2f}",
+                    )
+
+            painter.setPen(QPen(QColor("#AAAAAA"), 1))
+            painter.drawText(
+                self._bbox.left + 4,
+                self._bbox.top - 16 if space_above else self._bbox.top + self._bbox.height + 28,
+                "Dot debug: D+=eligible D-=blocked | Y/y yellow | R/r red",
+            )
 
         # Cyan 2px outline for cast-bar ROI (if enabled)
         cast_bar_rect = self._cast_bar_rect()

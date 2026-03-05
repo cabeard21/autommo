@@ -296,6 +296,14 @@ class SettingsDialog(QDialog):
             "Capture/analyze ticks per second. Higher is more responsive but uses more CPU."
         )
         fl.addRow(_row_label("Polling FPS:"), self._spin_polling_fps)
+        self._combo_slot_detection_mode = QComboBox()
+        self._combo_slot_detection_mode.addItem("Slot", "slot")
+        self._combo_slot_detection_mode.addItem("Buff-only", "buff_only")
+        self._combo_slot_detection_mode.setToolTip(
+            "Slot: run slot icon cooldown analysis and allow slot-based actions.\n"
+            "Buff-only: skip slot analysis and evaluate only condition/manual actions."
+        )
+        fl.addRow(_row_label("Mode:"), self._combo_slot_detection_mode)
         self._spin_cooldown_min_ms = QSpinBox()
         self._spin_cooldown_min_ms.setRange(0, 5000)
         self._spin_cooldown_min_ms.setSuffix(" ms")
@@ -977,6 +985,7 @@ class SettingsDialog(QDialog):
         self._spin_gap.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_padding.valueChanged.connect(self._on_slot_layout_changed)
         self._spin_polling_fps.valueChanged.connect(self._on_detection_changed)
+        self._combo_slot_detection_mode.currentIndexChanged.connect(self._on_detection_changed)
         self._spin_cooldown_min_ms.valueChanged.connect(self._on_detection_changed)
         self._spin_cooldown_release_confirm.valueChanged.connect(self._on_cooldown_release_confirm_changed)
         self._spin_cooldown_release_factor.valueChanged.connect(self._on_cooldown_release_factor_changed)
@@ -1107,6 +1116,7 @@ class SettingsDialog(QDialog):
         self._spin_gap.blockSignals(False)
         self._spin_padding.blockSignals(False)
         self._spin_polling_fps.blockSignals(True)
+        self._combo_slot_detection_mode.blockSignals(True)
         self._spin_cooldown_min_ms.blockSignals(True)
         self._spin_cooldown_release_confirm.blockSignals(True)
         self._spin_cooldown_release_factor.blockSignals(True)
@@ -1134,6 +1144,11 @@ class SettingsDialog(QDialog):
         self._spin_glow_red_hue_max_low.blockSignals(True)
         self._spin_glow_red_hue_min_high.blockSignals(True)
         self._spin_polling_fps.setValue(int(getattr(self._config, "polling_fps", 20)))
+        detection_mode = str(getattr(self._config, "slot_detection_mode", "slot") or "slot").strip().lower()
+        if detection_mode not in ("slot", "buff_only"):
+            detection_mode = "slot"
+        idx = self._combo_slot_detection_mode.findData(detection_mode)
+        self._combo_slot_detection_mode.setCurrentIndex(idx if idx >= 0 else 0)
         self._spin_cooldown_min_ms.setValue(int(getattr(self._config, "cooldown_min_duration_ms", 2000)))
         self._spin_cooldown_release_confirm.setValue(int(getattr(self._config, "cooldown_release_confirm_ms", 260)))
         self._spin_cooldown_release_factor.setValue(float(getattr(self._config, "cooldown_release_factor", 0.70)))
@@ -1239,6 +1254,7 @@ class SettingsDialog(QDialog):
             int(round(getattr(self._config, "cast_bar_activity_threshold", 12.0)))
         )
         self._spin_polling_fps.blockSignals(False)
+        self._combo_slot_detection_mode.blockSignals(False)
         self._spin_cooldown_min_ms.blockSignals(False)
         self._spin_cooldown_release_confirm.blockSignals(False)
         self._spin_cooldown_release_factor.blockSignals(False)
@@ -2236,6 +2252,10 @@ class SettingsDialog(QDialog):
 
     def _on_detection_changed(self) -> None:
         self._config.polling_fps = max(1, min(240, self._spin_polling_fps.value()))
+        mode = str(self._combo_slot_detection_mode.currentData() or "slot").strip().lower()
+        if mode not in ("slot", "buff_only"):
+            mode = "slot"
+        self._config.slot_detection_mode = mode
         self._config.cooldown_min_duration_ms = max(0, min(10000, self._spin_cooldown_min_ms.value()))
         region = (self._combo_detection_region.currentData() or "top_left")
         if region not in ("full", "top_left", "top_right"):

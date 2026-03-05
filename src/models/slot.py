@@ -142,6 +142,8 @@ class AppConfig:
     cooldown_release_quadrant_fraction: float = 0.22
     # Optional slot indexes where cooldown-change detector is ignored (dark detector still applies).
     cooldown_change_ignore_by_slot: list[int] = field(default_factory=list)
+    # Slot analysis mode: "slot" (normal slot cooldown detection) or "buff_only".
+    slot_detection_mode: str = "slot"
     # Which sub-region of each slot to use for cooldown fraction: "full" or "top_left" (quadrant last cleared by WoW wipe).
     detection_region: str = "top_left"
     # Per-slot override (slot_index -> "full"|"top_left"). Empty for now; allows future per-slot region.
@@ -836,6 +838,13 @@ class AppConfig:
         )
         if raw_detection_region not in ("full", "top_left", "top_right"):
             raw_detection_region = "top_left"
+        raw_slot_detection_mode = (
+            str(data.get("detection", {}).get("slot_detection_mode", "slot") or "slot")
+            .strip()
+            .lower()
+        )
+        if raw_slot_detection_mode not in ("slot", "buff_only"):
+            raw_slot_detection_mode = "slot"
         raw_region_overrides = (
             data.get("detection", {}).get("detection_region_overrides") or {}
         )
@@ -921,6 +930,7 @@ class AppConfig:
                 )
             ),
             cooldown_change_ignore_by_slot=parsed_cooldown_change_ignore_slots,
+            slot_detection_mode=raw_slot_detection_mode,
             detection_region=raw_detection_region,
             detection_region_overrides=parsed_region_overrides,
             detection_region_overrides_by_form=parsed_region_overrides_by_form,
@@ -1106,6 +1116,8 @@ class AppConfig:
         cfg.cooldown_release_factor = max(
             0.25, min(1.0, float(cfg.cooldown_release_factor))
         )
+        if cfg.slot_detection_mode not in ("slot", "buff_only"):
+            cfg.slot_detection_mode = "slot"
         cfg.cooldown_release_confirm_ms = max(0, int(cfg.cooldown_release_confirm_ms))
         cfg.cooldown_release_quadrant_fraction = max(
             0.0, min(1.0, float(cfg.cooldown_release_quadrant_fraction))
@@ -1160,6 +1172,7 @@ class AppConfig:
                 "cooldown_change_ignore_by_slot": [
                     int(v) for v in list(self.cooldown_change_ignore_by_slot or [])
                 ],
+                "slot_detection_mode": self.slot_detection_mode,
                 "detection_region": self.detection_region,
                 "detection_region_overrides": {
                     str(int(k)): str(v)

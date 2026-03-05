@@ -231,7 +231,11 @@ class CaptureWorker(QThread):
                     action_frame = frame[ay:ay + ah, ax:ax + aw]
                     if action_frame.size == 0:
                         action_frame = frame
-                    self.frame_captured.emit(action_frame)
+                    slot_detection_mode = str(
+                        getattr(self._config, "slot_detection_mode", "slot") or "slot"
+                    ).strip().lower()
+                    if slot_detection_mode != "buff_only":
+                        self.frame_captured.emit(action_frame)
 
                     state = self._analyzer.analyze_frame(frame, action_origin=action_origin)
                     form_state = self._analyzer.form_state()
@@ -415,6 +419,7 @@ def main() -> None:
     overlay.update_buff_rois(getattr(config, "buff_rois", []) or [])
     overlay.update_show_active_screen_outline(getattr(config, "show_active_screen_outline", False))
     overlay.update_form_detector(getattr(config, "form_detector", {}) or {})
+    overlay.update_slot_detection_mode(getattr(config, "slot_detection_mode", "slot"))
     overlay.update_form_state({"active_form_id": getattr(config, "active_form_id", "normal")})
     if config.overlay_enabled:
         overlay.show()
@@ -428,6 +433,7 @@ def main() -> None:
 
     def on_config_changed(new_config: AppConfig) -> None:
         nonlocal config
+        prev_mode = str(getattr(config, "slot_detection_mode", "slot") or "slot").strip().lower()
         config = new_config
         window.set_config(new_config)
         worker.update_config(new_config)
@@ -435,6 +441,7 @@ def main() -> None:
         overlay.update_cast_bar_region(getattr(new_config, "cast_bar_region", {}))
         overlay.update_buff_rois(getattr(new_config, "buff_rois", []) or [])
         overlay.update_form_detector(getattr(new_config, "form_detector", {}) or {})
+        overlay.update_slot_detection_mode(getattr(new_config, "slot_detection_mode", "slot"))
         overlay.update_bounding_box(new_config.bounding_box)
         overlay.update_slot_layout(
             new_config.slot_count,
@@ -455,6 +462,12 @@ def main() -> None:
         else:
             window.setWindowFlags(flags & ~Qt.WindowType.WindowStaysOnTopHint)
         window.show()
+        next_mode = str(getattr(new_config, "slot_detection_mode", "slot") or "slot").strip().lower()
+        if prev_mode != next_mode:
+            if next_mode == "buff_only":
+                window.show_status_message("Buff-only mode enabled: slot items are ignored.", 2200)
+            else:
+                window.show_status_message("Slot detection mode enabled.", 1800)
 
     # --- Wire signals: only Settings dialog drives overlay/bbox/slots (main window no longer has those controls) ---
     def apply_overlay_visibility(visible: bool) -> None:
@@ -770,4 +783,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
