@@ -585,6 +585,12 @@ class CalibrationOverlay(QWidget):
             self._bbox.width,
             self._bbox.height,
         )
+        if self._edit_mode_enabled:
+            # Keep bbox interior hit-testable while editing on translucent overlays.
+            painter.fillRect(
+                QRect(self._bbox.left, self._bbox.top, self._bbox.width, self._bbox.height),
+                QColor(255, 255, 255, 18),
+            )
 
         space_above = self._bbox.top >= 20
         if self._slot_detection_mode == "slot":
@@ -672,6 +678,8 @@ class CalibrationOverlay(QWidget):
             painter.setPen(QPen(color, 2))
             painter.drawRect(rect)
             if self._edit_mode_enabled:
+                # Keep ROI interior hit-testable while editing on translucent overlays.
+                painter.fillRect(rect, QColor(255, 255, 255, 18))
                 for handle_rect in self._rect_handles(rect).values():
                     painter.fillRect(handle_rect, QColor(240, 240, 240, 200))
             name = str(buff.get("name", "") or "").strip() or buff_id
