@@ -1,7 +1,7 @@
 """Calibration overlay — transparent always-on-top window for capture debug.
 
 Normally click-through; while edit mode is enabled it accepts mouse input for
-dragging and resizing bbox/buff ROIs.
+dragging and resizing bbox/cast-bar/buff ROIs.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ class CalibrationOverlay(QWidget):
     """Transparent overlay window that shows the capture bounding box and per-slot analyzed regions."""
 
     bbox_geometry_edited = pyqtSignal(int, int, int, int)
+    cast_bar_geometry_edited = pyqtSignal(int, int, int, int)
     buff_roi_geometry_edited = pyqtSignal(str, int, int, int, int)
 
     def __init__(self, monitor_geometry: QRect, parent: Optional[QWidget] = None):
@@ -305,6 +306,29 @@ class CalibrationOverlay(QWidget):
         return best
 
     def _hit_test(self, point: QPoint) -> Optional[dict]:
+        cast_rect = self._cast_bar_rect()
+        if cast_rect is not None:
+            cast_handle_hits: list[dict] = []
+            for handle_name, handle_rect in self._rect_handles(cast_rect).items():
+                if handle_rect.contains(point):
+                    cast_handle_hits.append(
+                        {
+                            "kind": "cast",
+                            "rect": cast_rect,
+                            "handle": handle_name,
+                            "anchor": handle_rect.center(),
+                        }
+                    )
+            if cast_handle_hits:
+                best = self._nearest_by_center(
+                    point, [{"rect": QRect(h["anchor"], h["anchor"]), "hit": h} for h in cast_handle_hits]
+                )
+                if best is not None:
+                    return best["hit"]
+
+            if cast_rect.contains(point):
+                return {"kind": "cast", "rect": cast_rect, "handle": "move"}
+
         buff_rects = self._all_enabled_buff_rects()
 
         buff_handle_hits: list[dict] = []
@@ -488,6 +512,29 @@ class CalibrationOverlay(QWidget):
                 self._bbox = BoundingBox(top=top, left=left, width=width, height=height)
                 self.bbox_geometry_edited.emit(left, top, width, height)
                 self.update()
+        elif self._drag_state["kind"] == "cast":
+            rel_left = int(left - int(self._bbox.left))
+            rel_top = int(top - int(self._bbox.top))
+            region = dict(self._cast_bar_region or {})
+            new_region = dict(region)
+            new_region["left"] = int(rel_left)
+            new_region["top"] = int(rel_top)
+            new_region["width"] = int(width)
+            new_region["height"] = int(height)
+            if (
+                int(region.get("left", 0)) != int(new_region["left"])
+                or int(region.get("top", 0)) != int(new_region["top"])
+                or int(region.get("width", 0)) != int(new_region["width"])
+                or int(region.get("height", 0)) != int(new_region["height"])
+            ):
+                self._cast_bar_region = new_region
+                self.cast_bar_geometry_edited.emit(
+                    int(new_region["left"]),
+                    int(new_region["top"]),
+                    int(new_region["width"]),
+                    int(new_region["height"]),
+                )
+                self.update()
         else:
             buff_id = str(self._drag_state.get("id", "") or "").strip().lower()
             rel_left = int(left - int(self._bbox.left))
@@ -655,6 +702,11 @@ class CalibrationOverlay(QWidget):
             cast_bar_pen = QPen(QColor("#00E5FF"), 2)
             painter.setPen(cast_bar_pen)
             painter.drawRect(cast_bar_rect)
+            if self._edit_mode_enabled:
+                # Keep cast ROI hit-testable while editing on translucent overlays.
+                painter.fillRect(cast_bar_rect, QColor(255, 255, 255, 18))
+                for handle_rect in self._rect_handles(cast_bar_rect).values():
+                    painter.fillRect(handle_rect, QColor(220, 250, 255, 215))
 
         for buff in self._buff_rois:
             if not isinstance(buff, dict):

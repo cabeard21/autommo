@@ -1633,6 +1633,40 @@ class SettingsDialog(QDialog):
         self.bounding_box_changed.emit(self._config.bounding_box)
         self._emit_config()
 
+    def apply_cast_bar_geometry(self, left: int, top: int, width: int, height: int) -> None:
+        """Apply externally edited cast bar geometry and emit config update."""
+        cast_bar_region = dict(getattr(self._config, "cast_bar_region", {}) or {})
+        new_left = int(left)
+        new_top = int(top)
+        new_width = max(1, int(width))
+        new_height = max(1, int(height))
+        if (
+            int(cast_bar_region.get("left", 0)) == new_left
+            and int(cast_bar_region.get("top", 0)) == new_top
+            and int(cast_bar_region.get("width", 0)) == new_width
+            and int(cast_bar_region.get("height", 0)) == new_height
+        ):
+            return
+        cast_bar_region["left"] = new_left
+        cast_bar_region["top"] = new_top
+        cast_bar_region["width"] = new_width
+        cast_bar_region["height"] = new_height
+        self._config.cast_bar_region = cast_bar_region
+
+        self._spin_cast_bar_left.blockSignals(True)
+        self._spin_cast_bar_top.blockSignals(True)
+        self._spin_cast_bar_width.blockSignals(True)
+        self._spin_cast_bar_height.blockSignals(True)
+        self._spin_cast_bar_left.setValue(new_left)
+        self._spin_cast_bar_top.setValue(new_top)
+        self._spin_cast_bar_width.setValue(new_width)
+        self._spin_cast_bar_height.setValue(new_height)
+        self._spin_cast_bar_left.blockSignals(False)
+        self._spin_cast_bar_top.blockSignals(False)
+        self._spin_cast_bar_width.blockSignals(False)
+        self._spin_cast_bar_height.blockSignals(False)
+        self._emit_config()
+
     def apply_buff_roi_geometry(
         self, roi_id: str, left: int, top: int, width: int, height: int
     ) -> None:

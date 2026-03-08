@@ -444,6 +444,9 @@ class AppCoordinator:
         )
         self._settings_dialog.config_updated.connect(self._on_config_changed)
         self._overlay.bbox_geometry_edited.connect(self._settings_dialog.apply_bbox_geometry)
+        self._overlay.cast_bar_geometry_edited.connect(
+            self._settings_dialog.apply_cast_bar_geometry
+        )
         self._overlay.buff_roi_geometry_edited.connect(
             self._settings_dialog.apply_buff_roi_geometry
         )
