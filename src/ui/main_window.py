@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import logging
 import time
 from pathlib import Path
@@ -31,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 import numpy as np
 
+from src.app.config_io import write_app_config
 from src.models import AppConfig, BoundingBox
 from src.ui.priority_panel import (
     MIME_PRIORITY_ITEM,
@@ -1701,9 +1701,7 @@ class MainWindow(QMainWindow):
         try:
             if self._before_save_callback:
                 self._before_save_callback()
-            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(CONFIG_PATH, "w") as f:
-                json.dump(self._config.to_dict(), f, indent=2)
+            write_app_config(CONFIG_PATH, self._config)
             logger.info(f"Config saved to {CONFIG_PATH}")
             self._last_saved_config = copy.deepcopy(self._config.to_dict())
             self._show_status_message("Settings saved", 2000)

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from src.app.config_io import load_app_config, write_app_config
 from src.models import AppConfig, BoundingBox
 from src.automation.global_hotkey import CaptureOneKeyThread, format_bind_for_display
 from src.automation.binds import normalize_bind
@@ -1469,9 +1469,7 @@ class SettingsDialog(QDialog):
         try:
             if self._before_save_callback:
                 self._before_save_callback()
-            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(CONFIG_PATH, "w") as f:
-                json.dump(self._config.to_dict(), f, indent=2)
+            write_app_config(CONFIG_PATH, self._config)
             self._last_auto_saved = datetime.now()
             logger.info(f"Config auto-saved to {CONFIG_PATH}")
         except Exception as e:
@@ -1501,8 +1499,7 @@ class SettingsDialog(QDialog):
         try:
             if self._before_save_callback:
                 self._before_save_callback()
-            with open(path, "w") as f:
-                json.dump(self._config.to_dict(), f, indent=2)
+            write_app_config(Path(path), self._config)
             logger.info(f"Config exported to {path}")
         except Exception as e:
             logger.error(f"Export failed: {e}")
@@ -1514,18 +1511,15 @@ class SettingsDialog(QDialog):
         if not path:
             return
         try:
-            with open(path) as f:
-                data = json.load(f)
-            self._config = AppConfig.from_dict(data)
+            loaded = load_app_config(Path(path), fallback_to_defaults=False)
+            self._config = loaded.config
             self.sync_from_config()
             self._emit_config()
             # Restore analyzer-side calibrations after config propagation so layout updates
             # do not immediately clear imported baselines.
             if self._after_import_callback:
                 self._after_import_callback(self._config)
-            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(CONFIG_PATH, "w") as f:
-                json.dump(self._config.to_dict(), f, indent=2)
+            write_app_config(CONFIG_PATH, self._config)
             logger.info(f"Config imported from {path}")
         except Exception as e:
             logger.error(f"Import failed: {e}")
@@ -1547,9 +1541,7 @@ class SettingsDialog(QDialog):
         if self._after_import_callback:
             self._after_import_callback(self._config)
         try:
-            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(CONFIG_PATH, "w") as f:
-                json.dump(self._config.to_dict(), f, indent=2)
+            write_app_config(CONFIG_PATH, self._config)
             logger.info("Config reset to factory defaults")
         except Exception as e:
             logger.error(f"Failed to save reset config: {e}")

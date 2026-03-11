@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import base64
+import binascii
+import logging
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 def encode_baselines(baselines: dict[int, np.ndarray]) -> list[dict]:
@@ -30,8 +34,15 @@ def decode_baselines(data: list[dict]) -> dict[int, np.ndarray]:
         b64 = d.get("data")
         slot_index = d.get("slot_index", i)
         if shape and b64:
-            arr = np.frombuffer(base64.b64decode(b64), dtype=np.uint8)
-            result[int(slot_index)] = arr.reshape(shape).copy()
+            try:
+                arr = np.frombuffer(base64.b64decode(b64), dtype=np.uint8)
+                result[int(slot_index)] = arr.reshape(shape).copy()
+            except (ValueError, TypeError, binascii.Error) as exc:
+                logger.warning(
+                    "Skipping invalid baseline entry for slot %s: %s",
+                    slot_index,
+                    exc,
+                )
     return result
 
 

@@ -4,8 +4,6 @@ Wires together: screen capture → slot analysis → UI + overlay.
 """
 
 from __future__ import annotations
-
-import json
 import logging
 import sys
 from pathlib import Path
@@ -13,6 +11,7 @@ from pathlib import Path
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
+from src.app.config_io import load_app_config
 from src.app.coordinator import AppCoordinator
 from src.models import AppConfig
 
@@ -33,13 +32,7 @@ ICON_PATH = _BASE_PATH / "cocktus.ico"
 
 def load_config() -> AppConfig:
     """Load config from JSON, falling back to defaults."""
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            data = json.load(f)
-        logger.info(f"Loaded config from {CONFIG_PATH}")
-        return AppConfig.from_dict(data)
-    logger.warning(f"Config not found at {CONFIG_PATH}, using defaults")
-    return AppConfig()
+    return load_app_config(CONFIG_PATH).config
 
 
 def main() -> None:
