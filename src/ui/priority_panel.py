@@ -388,6 +388,7 @@ class PriorityItemWidget(QFrame):
             event.ignore()
             return
         menu = QMenu(self)
+        copy_action = None
         rename_action = None
         rebind_action = None
         remove_action = None
@@ -404,6 +405,7 @@ class PriorityItemWidget(QFrame):
         clear_conditions_action = None
         form_actions: dict[object, str] = {}
         if self._item_type == "manual" and self._action_id:
+            copy_action = menu.addAction("Copy")
             rename_action = menu.addAction("Rename...")
             rebind_action = menu.addAction("Rebind...")
             menu.addSeparator()
@@ -578,7 +580,9 @@ class PriorityItemWidget(QFrame):
             parent = parent.parent()
         if parent is None:
             return
-        if chosen == rename_action and self._action_id:
+        if chosen == copy_action and self._action_id:
+            parent._on_manual_item_action(self._action_id, "copy")
+        elif chosen == rename_action and self._action_id:
             parent._on_manual_item_action(self._action_id, "rename")
         elif chosen == rebind_action and self._action_id:
             parent._on_manual_item_action(self._action_id, "rebind")
@@ -652,6 +656,7 @@ class PriorityListWidget(QWidget):
     """Vertical list of priority items. Accepts slot drops (add) and priority-item drops (reorder)."""
 
     items_changed = pyqtSignal(list)
+    manual_action_copy_requested = pyqtSignal(str)
     manual_action_rename_requested = pyqtSignal(str)
     manual_action_rebind_requested = pyqtSignal(str)
     manual_action_remove_requested = pyqtSignal(str)
@@ -975,7 +980,9 @@ class PriorityListWidget(QWidget):
             self._emit_items()
 
     def _on_manual_item_action(self, action_id: str, op: str) -> None:
-        if op == "rename":
+        if op == "copy":
+            self.manual_action_copy_requested.emit(action_id)
+        elif op == "rename":
             self.manual_action_rename_requested.emit(action_id)
         elif op == "rebind":
             self.manual_action_rebind_requested.emit(action_id)

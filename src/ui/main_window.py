@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 import numpy as np
 
 from src.app.config_io import write_app_config
+from src.app.priority_profiles import copy_manual_action_in_profile, next_manual_action_id
 from src.models import AppConfig, BoundingBox
 from src.ui.priority_panel import (
     MIME_PRIORITY_ITEM,
@@ -635,6 +636,9 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         self._priority_panel.priority_list.items_changed.connect(
             self._on_priority_items_changed
+        )
+        self._priority_panel.priority_list.manual_action_copy_requested.connect(
+            self._on_copy_manual_action
         )
         self._priority_panel.priority_list.manual_action_rename_requested.connect(
             self._on_rename_manual_action
@@ -1362,15 +1366,7 @@ class MainWindow(QMainWindow):
         actions = [
             a for a in list(profile.get("manual_actions", [])) if isinstance(a, dict)
         ]
-        existing_ids = {
-            str(a.get("id", "") or "").strip().lower()
-            for a in actions
-            if isinstance(a, dict)
-        }
-        i = 1
-        while f"manual_{i}" in existing_ids:
-            i += 1
-        action_id = f"manual_{i}"
+        action_id = next_manual_action_id(actions)
         actions.append({"id": action_id, "name": name, "keybind": keybind})
         profile["manual_actions"] = actions
         items = [
@@ -1399,6 +1395,22 @@ class MainWindow(QMainWindow):
         profile["priority_items"] = items
         profile["priority_order"] = self._slot_order_from_priority_items(items)
         self._config.priority_order = list(profile["priority_order"])
+        self._priority_panel.priority_list.set_manual_actions(actions)
+        self._priority_panel.priority_list.set_items(items)
+        self.config_changed.emit(self._config)
+        self._maybe_auto_save()
+
+    def _on_copy_manual_action(self, action_id: str) -> None:
+        self._config.ensure_priority_profiles()
+        profile = self._config.get_active_priority_profile()
+        actions, items = copy_manual_action_in_profile(profile, action_id)
+        if actions is None or items is None:
+            return
+        profile["manual_actions"] = actions
+        profile["priority_items"] = items
+        slot_order = self._slot_order_from_priority_items(items)
+        profile["priority_order"] = slot_order
+        self._config.priority_order = list(slot_order)
         self._priority_panel.priority_list.set_manual_actions(actions)
         self._priority_panel.priority_list.set_items(items)
         self.config_changed.emit(self._config)
