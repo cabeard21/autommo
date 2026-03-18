@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from src.models import AppConfig
 
 from src.models import ActionBarState, SlotState
-from src.automation.binds import normalize_bind
+from src.automation.binds import normalize_bind, parse_bind
 from src.automation.priority_rules import (
     item_matches_form,
     manual_item_is_eligible,
@@ -20,6 +20,9 @@ from src.automation.priority_rules import (
 )
 
 logger = logging.getLogger(__name__)
+
+_WIN_SCAN_CODE_SLASH = 53
+_WIN_SCAN_CODE_NUM_DIVIDE = 57397
 
 
 def _is_target_window_active_win(target_title: str) -> bool:
@@ -96,6 +99,27 @@ class KeySender:
     def _record_send(self, now: float) -> None:
         self._last_send_time = now
         self._next_send_allowed_at = now + self._sample_press_interval_sec()
+
+    @staticmethod
+    def _send_keybind(keyboard_module, keybind: str) -> None:
+        parsed = parse_bind(keybind)
+        if parsed is None:
+            keyboard_module.send(keybind)
+            return
+        modifiers, primary = parsed
+        if sys.platform != "win32" or primary not in ("slash", "num divide"):
+            keyboard_module.send(keybind)
+            return
+        scan_code = (
+            _WIN_SCAN_CODE_SLASH if primary == "slash" else _WIN_SCAN_CODE_NUM_DIVIDE
+        )
+        ordered_modifiers = [m for m in ("ctrl", "shift", "alt") if m in modifiers]
+        for modifier in ordered_modifiers:
+            keyboard_module.press(modifier)
+        keyboard_module.press(scan_code)
+        keyboard_module.release(scan_code)
+        for modifier in reversed(ordered_modifiers):
+            keyboard_module.release(modifier)
 
     def last_previous_action(self) -> Optional[dict]:
         if not isinstance(self._last_sent_item, dict):
@@ -239,7 +263,7 @@ class KeySender:
                         import keyboard
 
                         # Use same API as priority keys so the game receives the queued key the same way.
-                        keyboard.send(key)
+                        self._send_keybind(keyboard, key)
                     except Exception as e:
                         logger.warning("keyboard send(queued %r) failed: %s", key, e)
                         return None
@@ -284,7 +308,7 @@ class KeySender:
                         try:
                             import keyboard
 
-                            keyboard.send(key)
+                            self._send_keybind(keyboard, key)
                         except Exception as e:
                             logger.warning(
                                 "keyboard send(queued %r) failed: %s", key, e
@@ -383,7 +407,7 @@ class KeySender:
             try:
                 import keyboard
 
-                keyboard.send(keybind)
+                self._send_keybind(keyboard, keybind)
             except Exception as e:
                 logger.warning("keyboard.send(%r) failed: %s", keybind, e)
                 return None

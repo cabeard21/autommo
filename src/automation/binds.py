@@ -38,6 +38,14 @@ _KEY_ALIASES = {
     "ins": "insert",
     "del": "delete",
     "spacebar": "space",
+    "/": "slash",
+    "slash": "slash",
+    "num /": "num divide",
+    "numpad /": "num divide",
+    "num divide": "num divide",
+    "numpad divide": "num divide",
+    "numpad slash": "num divide",
+    "divide": "num divide",
 }
 
 
@@ -123,6 +131,10 @@ def format_bind_for_display(bind: str) -> str:
             tokens.append({"left": "LMB", "right": "RMB", "middle": "MMB"}[part])
         elif part.startswith("f") and part[1:].isdigit():
             tokens.append(part.upper())
+        elif part == "slash":
+            tokens.append("/")
+        elif part == "num divide":
+            tokens.append("Num/")
         elif len(part) <= 2:
             tokens.append(part.upper())
         else:

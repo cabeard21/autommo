@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from src.automation.key_sender import KeySender
+from src.automation.binds import format_bind_for_display, normalize_bind
 from src.models import ActionBarState, AppConfig, SlotSnapshot, SlotState
 
 
@@ -147,6 +148,40 @@ class KeySenderJitterTests(unittest.TestCase):
 
         defaulted = AppConfig.from_dict({"slots": {"count": 1, "keybinds": []}, "detection": {}})
         self.assertEqual(defaulted.press_interval_jitter_ms, 0)
+
+    def test_windows_slash_bind_uses_main_keyboard_scan_code(self) -> None:
+        sender, _ = self._make_sender()
+        kb = types.SimpleNamespace(send=Mock(), press=Mock(), release=Mock())
+        with patch("src.automation.key_sender.sys.platform", "win32"):
+            sender._send_keybind(kb, "slash")
+        kb.send.assert_not_called()
+        kb.press.assert_any_call(53)
+        kb.release.assert_any_call(53)
+
+    def test_windows_modified_slash_bind_presses_modifiers_then_main_slash(self) -> None:
+        sender, _ = self._make_sender()
+        kb = types.SimpleNamespace(send=Mock(), press=Mock(), release=Mock())
+        with patch("src.automation.key_sender.sys.platform", "win32"):
+            sender._send_keybind(kb, "ctrl+slash")
+        self.assertEqual(kb.press.call_args_list[0].args[0], "ctrl")
+        self.assertEqual(kb.press.call_args_list[1].args[0], 53)
+        self.assertEqual(kb.release.call_args_list[0].args[0], 53)
+        self.assertEqual(kb.release.call_args_list[1].args[0], "ctrl")
+
+    def test_windows_num_divide_bind_uses_numpad_divide_scan_code(self) -> None:
+        sender, _ = self._make_sender()
+        kb = types.SimpleNamespace(send=Mock(), press=Mock(), release=Mock())
+        with patch("src.automation.key_sender.sys.platform", "win32"):
+            sender._send_keybind(kb, "num divide")
+        kb.send.assert_not_called()
+        kb.press.assert_any_call(57397)
+        kb.release.assert_any_call(57397)
+
+    def test_bind_normalization_preserves_slash_distinction(self) -> None:
+        self.assertEqual(normalize_bind("/"), "slash")
+        self.assertEqual(normalize_bind("num divide"), "num divide")
+        self.assertEqual(format_bind_for_display("slash"), "/")
+        self.assertEqual(format_bind_for_display("num divide"), "Num/")
 
 
 class KeySenderBuffOnlyModeTests(unittest.TestCase):
