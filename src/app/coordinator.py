@@ -229,7 +229,12 @@ class AppCoordinator:
             display_name = (names[slot_index] or "").strip()
         if result.get("action") == "sent":
             self._window.record_last_action_sent(
-                result["keybind"], result.get("timestamp", 0.0), display_name
+                result["keybind"],
+                result.get("timestamp", 0.0),
+                display_name,
+                item_type=item_type,
+                slot_index=slot_index,
+                action_id=str(result.get("action_id", "") or ""),
             )
         elif result.get("action") == "blocked" and result.get("reason") == "window":
             self._window.set_next_intention_blocked(result["keybind"], display_name)

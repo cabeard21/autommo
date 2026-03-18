@@ -323,6 +323,43 @@ class AppConfig:
                     continue
                 seen.add(key)
                 normalized.append({"type": "moving", "op": op})
+            elif cond_type == "previous_action":
+                op = str(raw.get("op", "is") or "is").strip().lower()
+                if op not in ("is", "is_not"):
+                    continue
+                target_type = str(raw.get("item_type", "") or "").strip().lower()
+                if target_type == "slot":
+                    slot_index = raw.get("slot_index")
+                    if not isinstance(slot_index, int):
+                        continue
+                    key = ("previous_action", op, "slot", slot_index)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    normalized.append(
+                        {
+                            "type": "previous_action",
+                            "op": op,
+                            "item_type": "slot",
+                            "slot_index": slot_index,
+                        }
+                    )
+                elif target_type == "manual":
+                    action_id = str(raw.get("action_id", "") or "").strip().lower()
+                    if not action_id:
+                        continue
+                    key = ("previous_action", op, "manual", action_id)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    normalized.append(
+                        {
+                            "type": "previous_action",
+                            "op": op,
+                            "item_type": "manual",
+                            "action_id": action_id,
+                        }
+                    )
         if normalized:
             return normalized
         legacy_source = str(legacy_ready_source or "").strip().lower()
@@ -659,6 +696,24 @@ class AppConfig:
                     or str(item.get("action_id", "") or "") in manual_action_ids
                 )
             ]
+            valid_slot_indexes = set(range(max(0, int(self.slot_count))))
+            for item in priority_items:
+                filtered_conditions: list[dict] = []
+                for condition in list(item.get("conditions", [])):
+                    if not isinstance(condition, dict):
+                        continue
+                    if str(condition.get("type", "") or "").strip().lower() != "previous_action":
+                        filtered_conditions.append(condition)
+                        continue
+                    target_type = str(condition.get("item_type", "") or "").strip().lower()
+                    if target_type == "slot":
+                        if condition.get("slot_index") in valid_slot_indexes:
+                            filtered_conditions.append(condition)
+                    elif target_type == "manual":
+                        action_id = str(condition.get("action_id", "") or "").strip().lower()
+                        if action_id in manual_action_ids:
+                            filtered_conditions.append(condition)
+                item["conditions"] = filtered_conditions
             slot_order = [
                 int(item["slot_index"])
                 for item in priority_items

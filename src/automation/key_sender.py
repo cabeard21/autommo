@@ -97,6 +97,44 @@ class KeySender:
         self._last_send_time = now
         self._next_send_allowed_at = now + self._sample_press_interval_sec()
 
+    def last_previous_action(self) -> Optional[dict]:
+        if not isinstance(self._last_sent_item, dict):
+            return None
+        return dict(self._last_sent_item)
+
+    @staticmethod
+    def _item_previous_action_identity(
+        item: dict,
+        keybind: str,
+        timestamp: float,
+    ) -> Optional[dict]:
+        if not isinstance(item, dict):
+            return None
+        item_type = str(item.get("type", "") or "").strip().lower()
+        if item_type == "slot":
+            slot_index = item.get("slot_index")
+            if not isinstance(slot_index, int):
+                return None
+            return {
+                "item_type": "slot",
+                "slot_index": slot_index,
+                "action_id": "",
+                "keybind": keybind,
+                "timestamp": timestamp,
+            }
+        if item_type == "manual":
+            action_id = str(item.get("action_id", "") or "").strip().lower()
+            if not action_id:
+                return None
+            return {
+                "item_type": "manual",
+                "slot_index": None,
+                "action_id": action_id,
+                "keybind": keybind,
+                "timestamp": timestamp,
+            }
+        return None
+
     def evaluate_and_send(
         self,
         state: ActionBarState,
@@ -149,6 +187,7 @@ class KeySender:
             getattr(self._config, "slot_detection_mode", "slot") or "slot"
         ).strip().lower()
         slot_detection_enabled = slot_detection_mode == "slot"
+        previous_action = self.last_previous_action()
 
         def _priority_item_eligible(item: dict) -> bool:
             if not isinstance(item, dict):
@@ -169,6 +208,7 @@ class KeySender:
                     buff_states=buff_states,
                     active_form_id=active_form_id,
                     movement_active=movement_active,
+                    previous_action=previous_action,
                 )
             if item_type == "manual":
                 return manual_item_is_eligible(
@@ -176,6 +216,7 @@ class KeySender:
                     buff_states=buff_states,
                     active_form_id=active_form_id,
                     movement_active=movement_active,
+                    previous_action=previous_action,
                 )
             return False
 
@@ -297,6 +338,7 @@ class KeySender:
                 if not slot_item_is_eligible_for_snapshot(
                     item, slot, buff_states=buff_states, active_form_id=active_form_id,
                     movement_active=movement_active,
+                    previous_action=previous_action,
                 ):
                     continue
                 keybind = keybinds[slot_index] if slot_index < len(keybinds) else None
@@ -306,6 +348,7 @@ class KeySender:
                     buff_states=buff_states,
                     active_form_id=active_form_id,
                     movement_active=movement_active,
+                    previous_action=previous_action,
                 ):
                     continue
                 action_id = str(item.get("action_id", "") or "").strip().lower()
@@ -346,7 +389,7 @@ class KeySender:
                 return None
 
             self._record_send(now)
-            self._last_sent_item = item
+            self._last_sent_item = self._item_previous_action_identity(item, keybind, now)
             if single_fire_pending:
                 self._single_fire_pending = False
             logger.info("Sent key: %s", keybind)
@@ -354,6 +397,7 @@ class KeySender:
                 "keybind": keybind,
                 "display_name": display_name,
                 "item_type": item_type,
+                "action_id": str(item.get("action_id", "") or "").strip().lower(),
                 "action": "sent",
                 "timestamp": now,
                 "slot_index": slot_index,

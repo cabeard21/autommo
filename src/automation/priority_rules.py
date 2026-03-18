@@ -53,6 +53,43 @@ def normalize_conditions(
                 continue
             seen.add(key)
             normalized.append({"type": "moving", "op": op})
+        elif cond_type == "previous_action":
+            op = str(raw.get("op", "is") or "is").strip().lower()
+            if op not in ("is", "is_not"):
+                continue
+            target_type = str(raw.get("item_type", "") or "").strip().lower()
+            if target_type == "slot":
+                slot_index = raw.get("slot_index")
+                if not isinstance(slot_index, int):
+                    continue
+                key = ("previous_action", op, "slot", slot_index)
+                if key in seen:
+                    continue
+                seen.add(key)
+                normalized.append(
+                    {
+                        "type": "previous_action",
+                        "op": op,
+                        "item_type": "slot",
+                        "slot_index": slot_index,
+                    }
+                )
+            elif target_type == "manual":
+                action_id = str(raw.get("action_id", "") or "").strip().lower()
+                if not action_id:
+                    continue
+                key = ("previous_action", op, "manual", action_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                normalized.append(
+                    {
+                        "type": "previous_action",
+                        "op": op,
+                        "item_type": "manual",
+                        "action_id": action_id,
+                    }
+                )
     if normalized:
         return normalized
 
@@ -138,6 +175,36 @@ def _movement_condition_passes(condition: dict, movement_active: Optional[bool])
     return False
 
 
+def _previous_action_condition_passes(
+    condition: dict,
+    previous_action: Optional[dict[str, Any]],
+) -> bool:
+    if not isinstance(previous_action, dict):
+        return False
+    op = str(condition.get("op", "is") or "is").strip().lower()
+    if op not in ("is", "is_not"):
+        return False
+    target_type = str(condition.get("item_type", "") or "").strip().lower()
+    prev_type = str(previous_action.get("item_type", "") or "").strip().lower()
+    matches = False
+    if target_type == "slot":
+        matches = (
+            prev_type == "slot"
+            and condition.get("slot_index") == previous_action.get("slot_index")
+        )
+    elif target_type == "manual":
+        target_action_id = str(condition.get("action_id", "") or "").strip().lower()
+        prev_action_id = str(previous_action.get("action_id", "") or "").strip().lower()
+        matches = (
+            prev_type == "manual"
+            and bool(target_action_id)
+            and target_action_id == prev_action_id
+        )
+    if op == "is_not":
+        return not matches
+    return matches
+
+
 def _buff_condition_passes(
     condition: dict,
     buff_states: Optional[dict[str, Any]],
@@ -181,6 +248,7 @@ def _conditions_pass(
     buff_states: Optional[dict[str, Any]],
     item_type: str,
     movement_active: Optional[bool] = None,
+    previous_action: Optional[dict[str, Any]] = None,
 ) -> bool:
     for condition in _item_conditions(item, item_type):
         cond_type = str(condition.get("type", "") or "").strip().lower()
@@ -189,6 +257,9 @@ def _conditions_pass(
                 return False
         elif cond_type == "moving":
             if not _movement_condition_passes(condition, movement_active):
+                return False
+        elif cond_type == "previous_action":
+            if not _previous_action_condition_passes(condition, previous_action):
                 return False
     return True
 
@@ -211,13 +282,20 @@ def slot_item_is_eligible_for_snapshot(
     buff_states: Optional[dict[str, Any]] = None,
     active_form_id: str = "",
     movement_active: Optional[bool] = None,
+    previous_action: Optional[dict[str, Any]] = None,
 ) -> bool:
     if not item_matches_form(item, active_form_id):
         return False
     if slot is None:
         return False
     ready_source = normalize_ready_source(item.get("ready_source"), "slot")
-    condition_gate_ready = _conditions_pass(item, buff_states, "slot", movement_active=movement_active)
+    condition_gate_ready = _conditions_pass(
+        item,
+        buff_states,
+        "slot",
+        movement_active=movement_active,
+        previous_action=previous_action,
+    )
     has_conditions = bool(_item_conditions(item, "slot"))
     slot_ready = bool(getattr(slot, "is_ready", False))
     glow_ready = bool(getattr(slot, "glow_ready", False))
@@ -252,13 +330,20 @@ def slot_item_is_eligible_for_state_dict(
     buff_states: Optional[dict[str, Any]] = None,
     active_form_id: str = "",
     movement_active: Optional[bool] = None,
+    previous_action: Optional[dict[str, Any]] = None,
 ) -> bool:
     if not item_matches_form(item, active_form_id):
         return False
     if not isinstance(slot_state, dict):
         return False
     ready_source = normalize_ready_source(item.get("ready_source"), "slot")
-    condition_gate_ready = _conditions_pass(item, buff_states, "slot", movement_active=movement_active)
+    condition_gate_ready = _conditions_pass(
+        item,
+        buff_states,
+        "slot",
+        movement_active=movement_active,
+        previous_action=previous_action,
+    )
     has_conditions = bool(_item_conditions(item, "slot"))
     slot_ready = str(slot_state.get("state", "") or "").strip().lower() == "ready"
     glow_ready = bool(slot_state.get("glow_ready", False))
@@ -292,7 +377,14 @@ def manual_item_is_eligible(
     buff_states: Optional[dict[str, Any]] = None,
     active_form_id: str = "",
     movement_active: Optional[bool] = None,
+    previous_action: Optional[dict[str, Any]] = None,
 ) -> bool:
     if not item_matches_form(item, active_form_id):
         return False
-    return _conditions_pass(item, buff_states, "manual", movement_active=movement_active)
+    return _conditions_pass(
+        item,
+        buff_states,
+        "manual",
+        movement_active=movement_active,
+        previous_action=previous_action,
+    )

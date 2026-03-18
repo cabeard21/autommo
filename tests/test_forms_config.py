@@ -161,6 +161,183 @@ class FormsConfigTests(unittest.TestCase):
             [{"type": "buff_state", "buff_roi_id": "dot2", "op": "present"}],
         )
 
+    def test_from_dict_keeps_valid_previous_action_condition_and_serializes_it(self) -> None:
+        cfg = AppConfig.from_dict(
+            {
+                "slots": {"count": 2, "gap_pixels": 2, "padding": 3, "keybinds": []},
+                "detection": {},
+                "priority_profiles": [
+                    {
+                        "id": "default",
+                        "name": "Default",
+                        "priority_order": [0],
+                        "priority_items": [
+                            {
+                                "type": "manual",
+                                "action_id": "manual_1",
+                                "item_id": "m1",
+                                "conditions": [
+                                    {
+                                        "type": "previous_action",
+                                        "item_type": "slot",
+                                        "slot_index": 0,
+                                    },
+                                    {
+                                        "type": "previous_action",
+                                        "item_type": "slot",
+                                        "slot_index": 0,
+                                    },
+                                ],
+                            }
+                        ],
+                        "manual_actions": [{"id": "manual_1", "name": "M1", "keybind": "1"}],
+                        "toggle_bind": "",
+                        "single_fire_bind": "",
+                    }
+                ],
+                "active_priority_profile_id": "default",
+            }
+        )
+        items = cfg.get_active_priority_profile().get("priority_items", [])
+        self.assertEqual(
+            items[0].get("conditions"),
+            [{"type": "previous_action", "op": "is", "item_type": "slot", "slot_index": 0}],
+        )
+        serialized_conditions = (
+            cfg.to_dict()
+            .get("priority_profiles", [{}])[0]
+            .get("priority_items", [{}])[0]
+            .get("conditions", [])
+        )
+        self.assertEqual(
+            serialized_conditions,
+            [{"type": "previous_action", "op": "is", "item_type": "slot", "slot_index": 0}],
+        )
+
+    def test_from_dict_drops_invalid_previous_action_manual_reference(self) -> None:
+        cfg = AppConfig.from_dict(
+            {
+                "slots": {"count": 2, "gap_pixels": 2, "padding": 3, "keybinds": []},
+                "detection": {},
+                "priority_profiles": [
+                    {
+                        "id": "default",
+                        "name": "Default",
+                        "priority_order": [0],
+                        "priority_items": [
+                            {
+                                "type": "manual",
+                                "action_id": "manual_1",
+                                "item_id": "m1",
+                                "conditions": [
+                                    {
+                                        "type": "previous_action",
+                                        "item_type": "manual",
+                                        "action_id": "manual_missing",
+                                    }
+                                ],
+                            }
+                        ],
+                        "manual_actions": [{"id": "manual_1", "name": "M1", "keybind": "1"}],
+                        "toggle_bind": "",
+                        "single_fire_bind": "",
+                    }
+                ],
+                "active_priority_profile_id": "default",
+            }
+        )
+        items = cfg.get_active_priority_profile().get("priority_items", [])
+        self.assertEqual(items[0].get("conditions"), [])
+
+    def test_from_dict_keeps_valid_previous_action_is_not_and_dedupes_it(self) -> None:
+        cfg = AppConfig.from_dict(
+            {
+                "slots": {"count": 2, "gap_pixels": 2, "padding": 3, "keybinds": []},
+                "detection": {},
+                "priority_profiles": [
+                    {
+                        "id": "default",
+                        "name": "Default",
+                        "priority_order": [0],
+                        "priority_items": [
+                            {
+                                "type": "manual",
+                                "action_id": "manual_1",
+                                "item_id": "m1",
+                                "conditions": [
+                                    {
+                                        "type": "previous_action",
+                                        "op": "is_not",
+                                        "item_type": "manual",
+                                        "action_id": "manual_2",
+                                    },
+                                    {
+                                        "type": "previous_action",
+                                        "op": "is_not",
+                                        "item_type": "manual",
+                                        "action_id": "manual_2",
+                                    },
+                                ],
+                            }
+                        ],
+                        "manual_actions": [
+                            {"id": "manual_1", "name": "M1", "keybind": "1"},
+                            {"id": "manual_2", "name": "M2", "keybind": "2"},
+                        ],
+                        "toggle_bind": "",
+                        "single_fire_bind": "",
+                    }
+                ],
+                "active_priority_profile_id": "default",
+            }
+        )
+        items = cfg.get_active_priority_profile().get("priority_items", [])
+        self.assertEqual(
+            items[0].get("conditions"),
+            [{"type": "previous_action", "op": "is_not", "item_type": "manual", "action_id": "manual_2"}],
+        )
+
+    def test_from_dict_defaults_legacy_previous_action_op_to_is(self) -> None:
+        cfg = AppConfig.from_dict(
+            {
+                "slots": {"count": 2, "gap_pixels": 2, "padding": 3, "keybinds": []},
+                "detection": {},
+                "priority_profiles": [
+                    {
+                        "id": "default",
+                        "name": "Default",
+                        "priority_order": [0],
+                        "priority_items": [
+                            {
+                                "type": "manual",
+                                "action_id": "manual_1",
+                                "item_id": "m1",
+                                "conditions": [
+                                    {
+                                        "type": "previous_action",
+                                        "item_type": "manual",
+                                        "action_id": "manual_2",
+                                    }
+                                ],
+                            }
+                        ],
+                        "manual_actions": [
+                            {"id": "manual_1", "name": "M1", "keybind": "1"},
+                            {"id": "manual_2", "name": "M2", "keybind": "2"},
+                        ],
+                        "toggle_bind": "",
+                        "single_fire_bind": "",
+                    }
+                ],
+                "active_priority_profile_id": "default",
+            }
+        )
+        items = cfg.get_active_priority_profile().get("priority_items", [])
+        self.assertEqual(
+            items[0].get("conditions"),
+            [{"type": "previous_action", "op": "is", "item_type": "manual", "action_id": "manual_2"}],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

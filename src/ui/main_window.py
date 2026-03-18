@@ -379,6 +379,7 @@ class MainWindow(QMainWindow):
         self._last_action_sent_time: Optional[float] = (
             None  # for "time since last fire" on Next Intention + duration for new Last Action
         )
+        self._previous_action: Optional[dict] = None
         self._last_fired_by_keybind: dict[str, float] = (
             {}
         )  # keybind -> timestamp for priority list "Xs" display
@@ -718,6 +719,11 @@ class MainWindow(QMainWindow):
             .lower()
         )
 
+    def _previous_action_context(self) -> Optional[dict]:
+        if not isinstance(self._previous_action, dict):
+            return None
+        return dict(self._previous_action)
+
     def _slot_detection_mode(self) -> str:
         mode = str(getattr(self._config, "slot_detection_mode", "slot") or "slot").strip().lower()
         return mode if mode in ("slot", "buff_only") else "slot"
@@ -1021,7 +1027,13 @@ class MainWindow(QMainWindow):
         self._gcd_label.setText(f"Est. GCD: {gcd_seconds:.2f}s")
 
     def record_last_action_sent(
-        self, keybind: str, timestamp: float, display_name: str = "Unidentified"
+        self,
+        keybind: str,
+        timestamp: float,
+        display_name: str = "Unidentified",
+        item_type: str = "",
+        slot_index: Optional[int] = None,
+        action_id: str = "",
     ) -> None:
         """Record a sent action. Duration = time since previous action (only reset here, never when intention appears)."""
         # Elapsed is time between actions; we only update _last_action_sent_time when an action is actually sent
@@ -1036,10 +1048,30 @@ class MainWindow(QMainWindow):
         self._last_action_sent_time = (
             timestamp  # reset only on send; Next Intention counter uses this
         )
+        normalized_item_type = str(item_type or "").strip().lower()
+        if normalized_item_type == "slot" and isinstance(slot_index, int):
+            self._previous_action = {
+                "item_type": "slot",
+                "slot_index": slot_index,
+                "action_id": "",
+                "keybind": keybind,
+                "timestamp": timestamp,
+            }
+        elif normalized_item_type == "manual":
+            normalized_action_id = str(action_id or "").strip().lower()
+            if normalized_action_id:
+                self._previous_action = {
+                    "item_type": "manual",
+                    "slot_index": None,
+                    "action_id": normalized_action_id,
+                    "keybind": keybind,
+                    "timestamp": timestamp,
+                }
         self._last_fired_by_keybind[keybind] = timestamp
         self._priority_panel.priority_list.set_last_fired_timestamps(
             self._last_fired_by_keybind
         )
+        self._priority_panel.priority_list.set_previous_action(self._previous_action_context())
         self._priority_panel.record_send_timestamp(timestamp)
 
     def set_next_intention_blocked(
@@ -1196,6 +1228,7 @@ class MainWindow(QMainWindow):
                     slot,
                     buff_states=self._buff_states,
                     active_form_id=self._active_form_id(),
+                    previous_action=self._previous_action_context(),
                 ):
                     continue
                 keybind = (
@@ -1219,6 +1252,7 @@ class MainWindow(QMainWindow):
                     item,
                     buff_states=self._buff_states,
                     active_form_id=self._active_form_id(),
+                    previous_action=self._previous_action_context(),
                 ):
                     continue
                 action_id = str(item.get("action_id", "") or "").strip().lower()
@@ -1274,6 +1308,7 @@ class MainWindow(QMainWindow):
                 slot,
                 buff_states=self._buff_states,
                 active_form_id=self._active_form_id(),
+                previous_action=self._previous_action_context(),
             ):
                 return slot_index
         return None

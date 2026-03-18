@@ -24,7 +24,13 @@ class MainWindowTests(unittest.TestCase):
                     "item_id": "man1a",
                     "ready_source": "always",
                     "buff_roi_id": "",
-                    "conditions": [],
+                    "conditions": [
+                        {
+                            "type": "previous_action",
+                            "item_type": "manual",
+                            "action_id": "manual_2",
+                        }
+                    ],
                     "required_form": "",
                     "cast_does_not_block": True,
                 },
@@ -70,7 +76,10 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual("manual_3", copied["action_id"])
         self.assertNotEqual("man1a", copied["item_id"])
         self.assertEqual("always", copied["ready_source"])
-        self.assertEqual([], copied["conditions"])
+        self.assertEqual(
+            [{"type": "previous_action", "op": "is", "item_type": "manual", "action_id": "manual_2"}],
+            copied["conditions"],
+        )
         self.assertEqual("", copied["required_form"])
         self.assertTrue(copied["cast_does_not_block"])
 

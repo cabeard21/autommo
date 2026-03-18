@@ -99,6 +99,8 @@ class PriorityItemWidget(QFrame):
         required_form: str,
         buff_rois: list[dict],
         forms: list[dict],
+        slot_display_names: list[str],
+        manual_actions: list[dict],
         rank: int,
         keybind: str,
         display_name: str,
@@ -123,6 +125,8 @@ class PriorityItemWidget(QFrame):
         self._cast_does_not_block = bool(cast_does_not_block)
         self._buff_rois = [dict(r) for r in list(buff_rois or []) if isinstance(r, dict)]
         self._forms = [dict(f) for f in list(forms or []) if isinstance(f, dict)]
+        self._slot_display_names = [str(name or "").strip() for name in list(slot_display_names or [])]
+        self._manual_actions = [dict(a) for a in list(manual_actions or []) if isinstance(a, dict)]
         self._rank = rank
         self._keybind = (keybind or "?").strip()
         self._display_name = display_name or "Unidentified"
@@ -242,6 +246,20 @@ class PriorityItemWidget(QFrame):
                 return str(f.get("name", "") or "").strip() or fid
         return fid
 
+    def _slot_name(self, slot_index: object) -> str:
+        if not isinstance(slot_index, int):
+            return "Slot ?"
+        if slot_index < len(self._slot_display_names) and self._slot_display_names[slot_index]:
+            return self._slot_display_names[slot_index]
+        return f"Slot {slot_index + 1}"
+
+    def _action_name(self, action_id: str) -> str:
+        aid = str(action_id or "").strip().lower()
+        for action in self._manual_actions:
+            if str(action.get("id", "") or "").strip().lower() == aid:
+                return str(action.get("name", "") or "").strip() or aid
+        return aid or "Manual Action"
+
     def _update_rule_label(self) -> None:
         tokens: list[str] = []
         if self._item_type == "slot" and self._activation_rule == "dot_refresh":
@@ -265,6 +283,14 @@ class PriorityItemWidget(QFrame):
             elif cond_type == "moving":
                 op = str(cond.get("op", "") or "").strip().lower()
                 cond_tokens.append("MOV" if op == "active" else "IDLE")
+            elif cond_type == "previous_action":
+                op = str(cond.get("op", "is") or "is").strip().lower()
+                prefix = "PREV!=" if op == "is_not" else "PREV:"
+                target_type = str(cond.get("item_type", "") or "").strip().lower()
+                if target_type == "slot":
+                    cond_tokens.append(f"{prefix}{self._slot_name(cond.get('slot_index'))}")
+                elif target_type == "manual":
+                    cond_tokens.append(f"{prefix}{self._action_name(str(cond.get('action_id', '') or ''))}")
         if len(cond_tokens) <= 2:
             tokens.extend(cond_tokens)
         elif cond_tokens:
@@ -401,9 +427,14 @@ class PriorityItemWidget(QFrame):
         ready_actions: dict[object, tuple[str, str]] = {}
         add_condition_actions: dict[object, tuple[str, str]] = {}
         add_movement_condition_actions: dict[object, str] = {}
+        add_previous_action_actions: dict[object, dict] = {}
+        add_previous_action_not_actions: dict[object, dict] = {}
         remove_condition_actions: dict[object, int] = {}
         clear_conditions_action = None
         form_actions: dict[object, str] = {}
+        owner = self.parent()
+        while owner is not None and not hasattr(owner, "_previous_action_target_options"):
+            owner = owner.parent()
         if self._item_type == "manual" and self._action_id:
             copy_action = menu.addAction("Copy")
             rename_action = menu.addAction("Rename...")
@@ -436,6 +467,21 @@ class PriorityItemWidget(QFrame):
             add_movement_condition_actions[a_mov_active] = "active"
             a_mov_inactive = add_movement_menu.addAction("Moving (inactive)")
             add_movement_condition_actions[a_mov_inactive] = "inactive"
+            add_prev_menu = conditions_menu.addMenu("Add Previous Action Was")
+            add_prev_not_menu = conditions_menu.addMenu("Add Previous Action Was Not")
+            prev_targets = owner._previous_action_target_options(self._item_key) if owner is not None else []
+            for target in prev_targets:
+                act = add_prev_menu.addAction(str(target.get("label", "") or "Action"))
+                add_previous_action_actions[act] = dict(target.get("condition", {}))
+                act_not = add_prev_not_menu.addAction(str(target.get("label", "") or "Action"))
+                cond_not = dict(target.get("condition", {}))
+                cond_not["op"] = "is_not"
+                add_previous_action_not_actions[act_not] = cond_not
+            if not prev_targets:
+                empty_prev = add_prev_menu.addAction("(none)")
+                empty_prev.setEnabled(False)
+                empty_prev_not = add_prev_not_menu.addAction("(none)")
+                empty_prev_not.setEnabled(False)
             remove_menu = conditions_menu.addMenu("Remove")
             if self._conditions:
                 _op_labels_manual = {
@@ -449,6 +495,15 @@ class PriorityItemWidget(QFrame):
                     if cond_type == "moving":
                         op = str(cond.get("op", "") or "").strip().lower()
                         label = f"Moving: {'active' if op == 'active' else 'inactive'}"
+                    elif cond_type == "previous_action":
+                        op = str(cond.get("op", "is") or "is").strip().lower()
+                        target_type = str(cond.get("item_type", "") or "").strip().lower()
+                        if target_type == "slot":
+                            prefix = "Previous action not" if op == "is_not" else "Previous action"
+                            label = f"{prefix}: {self._slot_name(cond.get('slot_index'))}"
+                        else:
+                            prefix = "Previous action not" if op == "is_not" else "Previous action"
+                            label = f"{prefix}: {self._action_name(str(cond.get('action_id', '') or ''))}"
                     else:
                         buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
                         op = str(cond.get("op", "") or "").strip().lower()
@@ -526,6 +581,21 @@ class PriorityItemWidget(QFrame):
             add_movement_condition_actions[a_mov_active] = "active"
             a_mov_inactive = add_movement_menu.addAction("Moving (inactive)")
             add_movement_condition_actions[a_mov_inactive] = "inactive"
+            add_prev_menu = conditions_menu.addMenu("Add Previous Action Was")
+            add_prev_not_menu = conditions_menu.addMenu("Add Previous Action Was Not")
+            prev_targets = owner._previous_action_target_options(self._item_key) if owner is not None else []
+            for target in prev_targets:
+                act = add_prev_menu.addAction(str(target.get("label", "") or "Action"))
+                add_previous_action_actions[act] = dict(target.get("condition", {}))
+                act_not = add_prev_not_menu.addAction(str(target.get("label", "") or "Action"))
+                cond_not = dict(target.get("condition", {}))
+                cond_not["op"] = "is_not"
+                add_previous_action_not_actions[act_not] = cond_not
+            if not prev_targets:
+                empty_prev = add_prev_menu.addAction("(none)")
+                empty_prev.setEnabled(False)
+                empty_prev_not = add_prev_not_menu.addAction("(none)")
+                empty_prev_not.setEnabled(False)
             remove_menu = conditions_menu.addMenu("Remove")
             if self._conditions:
                 _op_labels_slot = {
@@ -539,6 +609,15 @@ class PriorityItemWidget(QFrame):
                     if cond_type == "moving":
                         op = str(cond.get("op", "") or "").strip().lower()
                         label = f"Moving: {'active' if op == 'active' else 'inactive'}"
+                    elif cond_type == "previous_action":
+                        op = str(cond.get("op", "is") or "is").strip().lower()
+                        target_type = str(cond.get("item_type", "") or "").strip().lower()
+                        if target_type == "slot":
+                            prefix = "Previous action not" if op == "is_not" else "Previous action"
+                            label = f"{prefix}: {self._slot_name(cond.get('slot_index'))}"
+                        else:
+                            prefix = "Previous action not" if op == "is_not" else "Previous action"
+                            label = f"{prefix}: {self._action_name(str(cond.get('action_id', '') or ''))}"
                     else:
                         buff_id = str(cond.get("buff_roi_id", "") or "").strip().lower()
                         op = str(cond.get("op", "") or "").strip().lower()
@@ -606,6 +685,10 @@ class PriorityItemWidget(QFrame):
             parent._on_item_condition_added(self._item_key, buff_id, op)
         elif chosen in add_movement_condition_actions:
             parent._on_item_movement_condition_added(self._item_key, add_movement_condition_actions[chosen])
+        elif chosen in add_previous_action_actions:
+            parent._on_item_previous_action_condition_added(self._item_key, add_previous_action_actions[chosen])
+        elif chosen in add_previous_action_not_actions:
+            parent._on_item_previous_action_condition_added(self._item_key, add_previous_action_not_actions[chosen])
         elif chosen in remove_condition_actions:
             parent._on_item_condition_removed(self._item_key, remove_condition_actions[chosen])
         elif chosen == clear_conditions_action:
@@ -672,6 +755,7 @@ class PriorityListWidget(QWidget):
         self._forms: list[dict] = []
         self._buff_states: dict[str, dict] = {}
         self._active_form_id: str = "normal"
+        self._previous_action: Optional[dict] = None
         self._states_by_index: dict[int, tuple[str, Optional[float], Optional[float], Optional[float]]] = {}
         self._last_fired_by_keybind: dict[str, float] = {}
         self._time_since_timer = QTimer(self)
@@ -735,6 +819,10 @@ class PriorityListWidget(QWidget):
         self._buff_states = {
             str(k): dict(v) for k, v in dict(states or {}).items() if isinstance(v, dict)
         }
+        self._apply_manual_item_states()
+
+    def set_previous_action(self, previous_action: Optional[dict]) -> None:
+        self._previous_action = dict(previous_action) if isinstance(previous_action, dict) else None
         self._apply_manual_item_states()
 
     def set_items(self, items: list[dict]) -> None:
@@ -823,6 +911,60 @@ class PriorityListWidget(QWidget):
                 return action
         return None
 
+    def _slot_condition_label(self, slot_index: int) -> str:
+        if 0 <= slot_index < len(self._display_names) and self._display_names[slot_index].strip():
+            return self._display_names[slot_index].strip()
+        return f"Slot {slot_index + 1}"
+
+    def _previous_action_target_options(self, current_item_key: str) -> list[dict]:
+        options: list[dict] = []
+        seen: set[tuple] = set()
+        for item in self._items:
+            item_type = str(item.get("type", "") or "").strip().lower()
+            if item_type == "slot":
+                slot_index = item.get("slot_index")
+                if not isinstance(slot_index, int):
+                    continue
+                key = ("slot", slot_index)
+                if key in seen:
+                    continue
+                seen.add(key)
+                options.append(
+                    {
+                        "label": self._slot_condition_label(slot_index),
+                        "condition": {
+                            "type": "previous_action",
+                            "item_type": "slot",
+                            "slot_index": slot_index,
+                        },
+                    }
+                )
+            elif item_type == "manual":
+                action_id = str(item.get("action_id", "") or "").strip().lower()
+                if not action_id:
+                    continue
+                key = ("manual", action_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                action = self._manual_action_by_id(action_id)
+                label = (
+                    str(action.get("name", "") or "").strip()
+                    if isinstance(action, dict)
+                    else action_id
+                ) or "Manual Action"
+                options.append(
+                    {
+                        "label": label,
+                        "condition": {
+                            "type": "previous_action",
+                            "item_type": "manual",
+                            "action_id": action_id,
+                        },
+                    }
+                )
+        return options
+
     def _rebuild_items(self) -> None:
         for w in self._item_widgets:
             w.deleteLater()
@@ -870,6 +1012,8 @@ class PriorityListWidget(QWidget):
                 required_form,
                 self._buff_rois,
                 self._forms,
+                self._display_names,
+                self._manual_actions,
                 rank,
                 keybind or "?",
                 name,
@@ -913,6 +1057,7 @@ class PriorityListWidget(QWidget):
                 item,
                 buff_states=self._buff_states,
                 active_form_id=self._active_form_id,
+                previous_action=self._previous_action,
             )
             w.set_state("ready" if eligible else "on_cooldown", None, None, None)
 
@@ -1050,6 +1195,25 @@ class PriorityListWidget(QWidget):
                 legacy_buff_roi_id=item.get("buff_roi_id"),
             )
             existing.append({"type": "moving", "op": norm_op})
+            item["conditions"] = normalize_conditions(existing, item_type=item_type)
+            self._rebuild_items()
+            self._emit_items()
+            return
+
+    def _on_item_previous_action_condition_added(self, item_key: str, condition: dict) -> None:
+        if not isinstance(condition, dict):
+            return
+        for item in self._items:
+            if self._item_key(item) != item_key:
+                continue
+            item_type = str(item.get("type", "") or "").strip().lower()
+            existing = normalize_conditions(
+                item.get("conditions", []),
+                item_type=item_type,
+                legacy_ready_source=item.get("ready_source"),
+                legacy_buff_roi_id=item.get("buff_roi_id"),
+            )
+            existing.append(dict(condition))
             item["conditions"] = normalize_conditions(existing, item_type=item_type)
             self._rebuild_items()
             self._emit_items()

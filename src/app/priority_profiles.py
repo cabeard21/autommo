@@ -98,10 +98,39 @@ def _normalize_manual_conditions(raw_conditions: object) -> list[dict]:
             key = (cond_type, op)
             if op not in ("active", "inactive"):
                 continue
+        elif cond_type == "previous_action":
+            op = str(raw.get("op", "is") or "is").strip().lower()
+            if op not in ("is", "is_not"):
+                continue
+            target_type = str(raw.get("item_type", "") or "").strip().lower()
+            if target_type == "slot":
+                slot_index = raw.get("slot_index")
+                key = (cond_type, op, target_type, slot_index)
+                if not isinstance(slot_index, int):
+                    continue
+                normalized_raw = {
+                    "type": "previous_action",
+                    "op": op,
+                    "item_type": "slot",
+                    "slot_index": slot_index,
+                }
+            elif target_type == "manual":
+                action_id = str(raw.get("action_id", "") or "").strip().lower()
+                key = (cond_type, op, target_type, action_id)
+                if not action_id:
+                    continue
+                normalized_raw = {
+                    "type": "previous_action",
+                    "op": op,
+                    "item_type": "manual",
+                    "action_id": action_id,
+                }
+            else:
+                continue
         else:
             continue
         if key in seen:
             continue
         seen.add(key)
-        normalized.append(dict(raw))
+        normalized.append(normalized_raw if cond_type == "previous_action" else dict(raw))
     return normalized
