@@ -1,0 +1,135 @@
+
+╭─── Claude Code v2.1.47 ──────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                 Welcome back Chad!                 │ started                 │
+│                                                    │ ✔ Run /init to create … │
+│                                                    │ ─────────────────────── │
+│                          ·                         │ Recent activity         │
+│                          |                         │ No recent activity      │
+│                         ▟█▙                        │                         │
+│                       ▐▛███▜▌                      │                         │
+│                      ▝▜█████▛▘                     │                         │
+│                        ▘▘ ▝▝                       │                         │
+│                                                    │                         │
+│  Sonnet 4.6 · Claude Pro · cabeard21@gmail.com's   │                         │
+│  Organization                                      │                         │
+│                   ~/Repo/autommo                   │                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+❯ /clear 
+  ⎿  (no content)
+
+❯ Can you help me understand how the timing of keys sent by the app work?   
+  What settings affect it and how                                           
+
+● Read 2 files (ctrl+o to expand)
+
+● Here's a breakdown of all the timing-related settings and how they interact:
+
+  ---
+  Core Loop Timing
+
+  polling_fps (default: 20)
+  - How many times per second CaptureWorker grabs a frame and calls
+  evaluate_and_send().
+  - At 20fps, the loop ticks every 50ms — this is the fundamental time
+  resolution of everything.
+
+  ---
+  Key Send Gate: min_press_interval_ms (default: 150ms)
+
+  The most direct throttle on sends (key_sender.py:107). After any key is sent,
+  the next send is blocked until at least this many ms have passed. It's a
+  global floor — no two keys can ever be sent faster than this regardless of
+  other settings.
+
+  ---
+  Cast Blocking
+
+  When allow_cast_while_casting = False (the default), sends are blocked while
+  any slot is CASTING or CHANNELING — except in the queue window:
+
+  queue_window_ms (default: 120ms) — key_sender.py:117–127
+  - Near the end of a cast, once now >= cast_ends_at - queue_window_ms, the cast
+   block lifts early.
+  - This lets the app fire the next key slightly before the cast animation fully
+   ends (game-server spell queue).
+
+  ---
+  Queued Key Timing
+
+  When a spell-queue key fires (from queue_whitelist or a tracked slot):
+
+  queue_fire_delay_ms (default: 100ms) — key_sender.py:151–154
+  - A time.sleep() inserted right before sending the queued key.
+  - Guards against firing 1 frame early when the visual "ready" appears before
+  the GCD actually expires.
+
+  gcd_ms (default: 1500ms) — key_sender.py:165–166
+  - After a queued key is sent, priority automation is suppressed for this many
+  ms (_suppress_priority_until = now + gcd_ms).
+  - Prevents the app from immediately auto-sending another priority key on the
+  same GCD.
+
+  ---
+  Detection Confirmation Delays
+
+  These add latency between when a state visually appears and when the app acts
+  on it:
+
+  glow_confirm_frames (default: 2) — glow must appear in N consecutive frames
+  before glow_ready = True.
+  cast_confirm_frames (default: 2) — same for cast state entry.
+
+  At 20fps, 2 frames = ~100ms of confirmation delay built into state detection.
+
+  ---
+  Summary: Decision Tree Each Tick
+
+  Every (1000 / polling_fps) ms:
+    1. Automation enabled OR single-fire armed?
+    2. Is a cast in progress AND now < (cast_ends_at - queue_window_ms)? → BLOCK
+    3. Handle queued override if present:
+         → any_priority_ready AND min_interval_ok AND window_ok?
+         → sleep(queue_fire_delay_ms) → send → suppress priority for gcd_ms
+    4. Priority send:
+         → (now - last_send) >= min_press_interval_ms?
+         → now >= _suppress_priority_until?
+         → walk priority list, first eligible → send
+
+  ---
+  Settings Quick Reference
+
+  Setting: polling_fps
+  Default: 20
+  Effect: Tick rate (50ms/tick)
+  ────────────────────────────────────────
+  Setting: min_press_interval_ms
+  Default: 150
+  Effect: Floor between any two sends
+  ────────────────────────────────────────
+  Setting: queue_window_ms
+  Default: 120
+  Effect: Early cast-end window for queuing
+  ────────────────────────────────────────
+  Setting: queue_fire_delay_ms
+  Default: 100
+  Effect: Sleep before firing a queued key
+  ────────────────────────────────────────
+  Setting: gcd_ms
+  Default: 1500
+  Effect: Priority suppression after queued send
+  ────────────────────────────────────────
+  Setting: glow_confirm_frames
+  Default: 2
+  Effect: Frames to confirm glow state (~100ms at 20fps)
+  ────────────────────────────────────────
+  Setting: cast_confirm_frames
+  Default: 2
+  Effect: Frames to confirm cast state
+  ────────────────────────────────────────
+  Setting: queue_timeout_ms
+  Default: 5000
+  Effect: Stale queue discard
+
+✻ Cogitated for 38s
