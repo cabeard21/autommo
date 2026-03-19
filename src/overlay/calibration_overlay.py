@@ -31,6 +31,7 @@ class CalibrationOverlay(QWidget):
         self._border_width = 2
         self._cast_bar_region: dict = {}
         self._buff_rois: list[dict] = []
+        self._action_history_tracker: dict = {}
         self._buff_states: dict[str, dict] = {}
         self._form_detector: dict = {}
         self._form_state: dict = {
@@ -126,6 +127,10 @@ class CalibrationOverlay(QWidget):
 
     def update_buff_rois(self, rois: Optional[list[dict]]) -> None:
         self._buff_rois = [dict(r) for r in list(rois or []) if isinstance(r, dict)]
+        self.update()
+
+    def update_action_history_tracker(self, tracker: Optional[dict]) -> None:
+        self._action_history_tracker = dict(tracker or {})
         self.update()
 
     def update_buff_states(self, states: Optional[dict]) -> None:
@@ -249,6 +254,18 @@ class CalibrationOverlay(QWidget):
             return None
         x = self._bbox.left + int(buff.get("left", 0))
         y = self._bbox.top + int(buff.get("top", 0))
+        return QRect(x, y, w, h)
+
+    def _action_history_tracker_rect(self) -> Optional[QRect]:
+        tracker = self._action_history_tracker or {}
+        if not bool(tracker.get("enabled", False)):
+            return None
+        w = int(tracker.get("width", 0))
+        h = int(tracker.get("height", 0))
+        if w <= 0 or h <= 0:
+            return None
+        x = self._bbox.left + int(tracker.get("left", 0))
+        y = self._bbox.top + int(tracker.get("top", 0))
         return QRect(x, y, w, h)
 
     def _all_enabled_buff_rects(self) -> list[dict]:
@@ -707,6 +724,31 @@ class CalibrationOverlay(QWidget):
                 painter.fillRect(cast_bar_rect, QColor(255, 255, 255, 18))
                 for handle_rect in self._rect_handles(cast_bar_rect).values():
                     painter.fillRect(handle_rect, QColor(220, 250, 255, 215))
+
+        tracker_rect = self._action_history_tracker_rect()
+        if tracker_rect is not None:
+            painter.setPen(QPen(QColor("#C992FF"), 2))
+            painter.drawRect(tracker_rect)
+            spawn_width = min(
+                tracker_rect.width(),
+                max(
+                    4,
+                    int((self._action_history_tracker or {}).get("spawn_width", 36) or 36),
+                ),
+            )
+            spawn_rect = QRect(
+                tracker_rect.right() - spawn_width + 1,
+                tracker_rect.top(),
+                spawn_width,
+                tracker_rect.height(),
+            )
+            painter.setPen(QPen(QColor("#F3C4FF"), 1, Qt.PenStyle.DashLine))
+            painter.drawRect(spawn_rect)
+            painter.drawText(
+                tracker_rect.left() + 2,
+                tracker_rect.top() - 4 if tracker_rect.top() > 10 else tracker_rect.bottom() + 12,
+                "TRACKER",
+            )
 
         for buff in self._buff_rois:
             if not isinstance(buff, dict):

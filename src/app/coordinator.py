@@ -111,6 +111,9 @@ class AppCoordinator:
         self._overlay.update_bounding_box(self._config.bounding_box)
         self._overlay.update_cast_bar_region(getattr(self._config, "cast_bar_region", {}))
         self._overlay.update_buff_rois(getattr(self._config, "buff_rois", []) or [])
+        self._overlay.update_action_history_tracker(
+            getattr(self._config, "action_history_tracker", {}) or {}
+        )
         self._overlay.update_show_active_screen_outline(
             getattr(self._config, "show_active_screen_outline", False)
         )
@@ -174,6 +177,9 @@ class AppCoordinator:
         self._key_sender.update_config(new_config)
         self._overlay.update_cast_bar_region(getattr(new_config, "cast_bar_region", {}))
         self._overlay.update_buff_rois(getattr(new_config, "buff_rois", []) or [])
+        self._overlay.update_action_history_tracker(
+            getattr(new_config, "action_history_tracker", {}) or {}
+        )
         self._overlay.update_form_detector(getattr(new_config, "form_detector", {}) or {})
         self._overlay.update_slot_detection_mode(
             getattr(new_config, "slot_detection_mode", "slot")
@@ -387,6 +393,7 @@ class AppCoordinator:
                 action_bbox=action,
                 cast_bar_region=getattr(self._config, "cast_bar_region", {}) or {},
                 buff_rois=rois,
+                action_history_tracker=getattr(self._config, "action_history_tracker", {}) or {},
                 monitor_width=mw,
                 monitor_height=mh,
             )
@@ -432,6 +439,110 @@ class AppCoordinator:
             logger.error("Per-slot calibration failed: %s", e)
             self._window.show_status_message(f"Calibration failed: {e}", 2000)
 
+    def _capture_tracker_spawn_crop(self) -> tuple[object, object]:
+        tracker = dict(getattr(self._config, "action_history_tracker", {}) or {})
+        if not bool(tracker.get("enabled", False)):
+            raise ValueError("Tracker ROI is disabled")
+        width = int(tracker.get("width", 0))
+        height = int(tracker.get("height", 0))
+        if width <= 1 or height <= 1:
+            raise ValueError("Tracker ROI size must be > 1x1")
+        spawn_width = min(width, max(4, int(tracker.get("spawn_width", 36) or 36)))
+        cap = ScreenCapture(monitor_index=self._config.monitor_index)
+        try:
+            cap.start()
+            monitor = cap.monitor_info
+            bbox, action_origin = compute_capture_plan(
+                action_bbox=self._config.bounding_box,
+                cast_bar_region=getattr(self._config, "cast_bar_region", {}) or {},
+                buff_rois=getattr(self._config, "buff_rois", []) or [],
+                action_history_tracker=tracker,
+                monitor_width=int(monitor["width"]),
+                monitor_height=int(monitor["height"]),
+            )
+            frame = cap.grab_region(bbox)
+        finally:
+            cap.stop()
+        x1 = int(action_origin[0]) + int(tracker.get("left", 0))
+        y1 = int(action_origin[1]) + int(tracker.get("top", 0))
+        x2 = x1 + width
+        y2 = y1 + height
+        if x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
+            raise ValueError("Tracker ROI is out of capture frame")
+        roi = frame[y1:y2, x1:x2]
+        spawn = roi[:, width - spawn_width : width]
+        gray = cv2.cvtColor(spawn, cv2.COLOR_BGR2GRAY)
+        return spawn, gray
+
+    def _calibrate_tracker_slot(self, slot_index: int) -> None:
+        try:
+            logger.info("Tracker calibration started for slot %s", slot_index)
+            spawn, gray = self._capture_tracker_spawn_crop()
+            while len(self._config.slot_tracker_templates) <= slot_index:
+                self._config.slot_tracker_templates.append({})
+            self._config.slot_tracker_templates[slot_index] = {
+                "gray": encode_gray_template(gray),
+                "color": encode_color_template(spawn),
+                "threshold": 0.88,
+                "color_threshold": 0.85,
+                "color_enabled": True,
+            }
+            self._window.config_changed.emit(self._config)
+            self._window._maybe_auto_save()
+            logger.info(
+                "Tracker calibration saved for slot %s with spawn shape %sx%s",
+                slot_index,
+                gray.shape[1],
+                gray.shape[0],
+            )
+            self._window.show_status_message(
+                f"Tracker icon calibrated for slot {slot_index + 1} ({gray.shape[1]}x{gray.shape[0]})",
+                2500,
+            )
+        except Exception as e:
+            logger.error("Tracker slot calibration failed: %s", e, exc_info=True)
+            self._window.show_status_message(f"Tracker calibration failed: {e}", 2500)
+
+    def _calibrate_tracker_manual_action(self, action_id: str) -> None:
+        aid = str(action_id or "").strip().lower()
+        if not aid:
+            return
+        try:
+            logger.info("Tracker calibration started for manual action %s", aid)
+            spawn, gray = self._capture_tracker_spawn_crop()
+            profile = self._config.get_active_priority_profile()
+            actions = [a for a in list(profile.get("manual_actions", [])) if isinstance(a, dict)]
+            action = next(
+                (a for a in actions if str(a.get("id", "") or "").strip().lower() == aid),
+                None,
+            )
+            if not isinstance(action, dict):
+                raise ValueError(f"Manual action not found: {aid}")
+            action["tracker_template"] = {
+                "gray": encode_gray_template(gray),
+                "color": encode_color_template(spawn),
+                "threshold": 0.88,
+                "color_threshold": 0.85,
+                "color_enabled": True,
+            }
+            self._window.config_changed.emit(self._config)
+            self._window._maybe_auto_save()
+            display_name = str(action.get("name", "") or "").strip() or aid
+            logger.info(
+                "Tracker calibration saved for manual action %s (%s) with spawn shape %sx%s",
+                aid,
+                display_name,
+                gray.shape[1],
+                gray.shape[0],
+            )
+            self._window.show_status_message(
+                f"Tracker icon calibrated for {display_name} ({gray.shape[1]}x{gray.shape[0]})",
+                2500,
+            )
+        except Exception as e:
+            logger.error("Tracker manual calibration failed: %s", e, exc_info=True)
+            self._window.show_status_message(f"Tracker calibration failed: {e}", 2500)
+
     # ------------------------------------------------------------------
     # Signal wiring
     # ------------------------------------------------------------------
@@ -465,6 +576,7 @@ class AppCoordinator:
         self._worker.buff_state_updated.connect(self._window.update_buff_states)
         self._worker.buff_state_updated.connect(self._overlay.update_buff_states)
         self._worker.cast_bar_debug.connect(self._window.update_cast_bar_debug)
+        self._worker.action_history_debug.connect(self._window.update_action_history_debug)
         self._worker.key_action.connect(self._on_key_action)
 
         self._window._btn_start.clicked.connect(self._toggle_capture)
@@ -479,6 +591,10 @@ class AppCoordinator:
             self._calibrate_buff_roi_present
         )
         self._window.calibrate_slot_requested.connect(self._calibrate_single_slot)
+        self._window.calibrate_tracker_slot_requested.connect(self._calibrate_tracker_slot)
+        self._window.calibrate_tracker_manual_requested.connect(
+            self._calibrate_tracker_manual_action
+        )
 
     def _wire_hotkeys(self) -> None:
         self._hotkey_listener = GlobalToggleListener(get_binds=self._all_profile_binds)

@@ -179,11 +179,11 @@ def _previous_action_condition_passes(
     condition: dict,
     previous_action: Optional[dict[str, Any]],
 ) -> bool:
-    if not isinstance(previous_action, dict):
-        return False
     op = str(condition.get("op", "is") or "is").strip().lower()
     if op not in ("is", "is_not"):
         return False
+    if not isinstance(previous_action, dict):
+        return op == "is_not"
     target_type = str(condition.get("item_type", "") or "").strip().lower()
     prev_type = str(previous_action.get("item_type", "") or "").strip().lower()
     matches = False

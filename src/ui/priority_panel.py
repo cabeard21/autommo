@@ -418,6 +418,7 @@ class PriorityItemWidget(QFrame):
         rename_action = None
         rebind_action = None
         remove_action = None
+        calibrate_tracker_action = None
         always_action = None
         dot_refresh_action = None
         require_glow_action = None
@@ -439,6 +440,7 @@ class PriorityItemWidget(QFrame):
             copy_action = menu.addAction("Copy")
             rename_action = menu.addAction("Rename...")
             rebind_action = menu.addAction("Rebind...")
+            calibrate_tracker_action = menu.addAction("Calibrate Tracker Icon")
             menu.addSeparator()
             ready_menu = menu.addMenu("Ready Source")
             ready_always_action = ready_menu.addAction("Always")
@@ -537,6 +539,8 @@ class PriorityItemWidget(QFrame):
             menu.addSeparator()
             remove_action = menu.addAction("Remove")
         elif self._item_type == "slot":
+            calibrate_tracker_action = menu.addAction("Calibrate Tracker Icon")
+            menu.addSeparator()
             always_action = menu.addAction("Activation: Always")
             always_action.setCheckable(True)
             always_action.setChecked(self._activation_rule == "always")
@@ -665,8 +669,12 @@ class PriorityItemWidget(QFrame):
             parent._on_manual_item_action(self._action_id, "rename")
         elif chosen == rebind_action and self._action_id:
             parent._on_manual_item_action(self._action_id, "rebind")
+        elif chosen == calibrate_tracker_action and self._action_id:
+            parent._on_manual_item_action(self._action_id, "calibrate_tracker")
         elif chosen == remove_action and self._action_id:
             parent._on_manual_item_action(self._action_id, "remove")
+        elif chosen == calibrate_tracker_action and self._item_type == "slot":
+            parent._on_slot_item_tracker_calibrate_requested(self._item_key)
         elif chosen == always_action:
             parent._on_slot_item_activation_rule_changed(self._item_key, "always")
         elif chosen == dot_refresh_action:
@@ -743,6 +751,8 @@ class PriorityListWidget(QWidget):
     manual_action_rename_requested = pyqtSignal(str)
     manual_action_rebind_requested = pyqtSignal(str)
     manual_action_remove_requested = pyqtSignal(str)
+    manual_action_tracker_calibrate_requested = pyqtSignal(str)
+    slot_tracker_calibrate_requested = pyqtSignal(int)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -804,15 +814,24 @@ class PriorityListWidget(QWidget):
                     w.set_display_name("Unidentified")
 
     def set_manual_actions(self, actions: list[dict]) -> None:
-        self._manual_actions = list(actions)
+        normalized = [dict(a) for a in list(actions or []) if isinstance(a, dict)]
+        if normalized == self._manual_actions:
+            return
+        self._manual_actions = normalized
         self._rebuild_items()
 
     def set_buff_rois(self, rois: list[dict]) -> None:
-        self._buff_rois = [dict(r) for r in list(rois or []) if isinstance(r, dict)]
+        normalized = [dict(r) for r in list(rois or []) if isinstance(r, dict)]
+        if normalized == self._buff_rois:
+            return
+        self._buff_rois = normalized
         self._rebuild_items()
 
     def set_forms(self, forms: list[dict]) -> None:
-        self._forms = [dict(f) for f in list(forms or []) if isinstance(f, dict)]
+        normalized = [dict(f) for f in list(forms or []) if isinstance(f, dict)]
+        if normalized == self._forms:
+            return
+        self._forms = normalized
         self._rebuild_items()
 
     def set_buff_states(self, states: dict) -> None:
@@ -860,6 +879,8 @@ class PriorityListWidget(QWidget):
                 out["buff_roi_id"] = str(out.get("buff_roi_id", "") or "").strip().lower()
             out["required_form"] = normalize_required_form(out.get("required_form"))
             normalized.append(out)
+        if normalized == self._items:
+            return
         self._items = normalized
         self._rebuild_items()
 
@@ -1133,6 +1154,16 @@ class PriorityListWidget(QWidget):
             self.manual_action_rebind_requested.emit(action_id)
         elif op == "remove":
             self.manual_action_remove_requested.emit(action_id)
+        elif op == "calibrate_tracker":
+            self.manual_action_tracker_calibrate_requested.emit(action_id)
+
+    def _on_slot_item_tracker_calibrate_requested(self, item_key: str) -> None:
+        item = self._item_by_key(item_key)
+        if not isinstance(item, dict):
+            return
+        slot_index = item.get("slot_index")
+        if isinstance(slot_index, int):
+            self.slot_tracker_calibrate_requested.emit(slot_index)
 
     def _on_slot_item_activation_rule_changed(self, item_key: str, activation_rule: str) -> None:
         rule = normalize_activation_rule(activation_rule)

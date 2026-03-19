@@ -360,6 +360,8 @@ class MainWindow(QMainWindow):
     monitor_changed = pyqtSignal(int)
     # Emitted when user chooses "Calibrate This Slot" for a slot index
     calibrate_slot_requested = pyqtSignal(int)
+    calibrate_tracker_slot_requested = pyqtSignal(int)
+    calibrate_tracker_manual_requested = pyqtSignal(str)
     start_capture_requested = pyqtSignal()
 
     def __init__(self, config: AppConfig, parent: Optional[QWidget] = None):
@@ -383,6 +385,8 @@ class MainWindow(QMainWindow):
         self._last_fired_by_keybind: dict[str, float] = (
             {}
         )  # keybind -> timestamp for priority list "Xs" display
+        self._action_history_recent_event: str = "none"
+        self._action_history_recent_until: float = 0.0
         self.setWindowTitle("Cooldown Reader")
         self.setMinimumSize(580, 400)
         # Default height: fit full layout without main scrollbar (generous for DPI/fonts)
@@ -411,6 +415,11 @@ class MainWindow(QMainWindow):
             "font-size: 10px; font-family: monospace; color: #666;"
         )
         self.statusBar().addPermanentWidget(self._cast_bar_debug_label)
+        self._action_history_debug_label = QLabel("Prev: send_attempt")
+        self._action_history_debug_label.setStyleSheet(
+            "font-size: 10px; font-family: monospace; color: #666;"
+        )
+        self.statusBar().addPermanentWidget(self._action_history_debug_label)
         self._form_state_label = QLabel("Form: normal")
         self._form_state_label.setStyleSheet(
             "font-size: 10px; font-family: monospace; color: #666;"
@@ -650,6 +659,12 @@ class MainWindow(QMainWindow):
         self._priority_panel.priority_list.manual_action_remove_requested.connect(
             self._on_remove_manual_action
         )
+        self._priority_panel.priority_list.manual_action_tracker_calibrate_requested.connect(
+            self._on_calibrate_tracker_manual_action
+        )
+        self._priority_panel.priority_list.slot_tracker_calibrate_requested.connect(
+            self._on_calibrate_tracker_slot
+        )
         self._priority_panel.add_manual_action_requested.connect(
             self._on_add_manual_action
         )
@@ -720,6 +735,10 @@ class MainWindow(QMainWindow):
         )
 
     def _previous_action_context(self) -> Optional[dict]:
+        if self._key_sender is not None:
+            previous = self._key_sender.last_previous_action()
+            if isinstance(previous, dict):
+                return dict(previous)
         if not isinstance(self._previous_action, dict):
             return None
         return dict(self._previous_action)
@@ -976,6 +995,7 @@ class MainWindow(QMainWindow):
 
     def set_key_sender(self, key_sender: Optional["KeySender"]) -> None:
         self._key_sender = key_sender
+        self._priority_panel.priority_list.set_previous_action(self._previous_action_context())
 
     def _on_priority_items_changed(self, items: list) -> None:
         profile = self._active_priority_profile()
@@ -1402,7 +1422,14 @@ class MainWindow(QMainWindow):
             a for a in list(profile.get("manual_actions", [])) if isinstance(a, dict)
         ]
         action_id = next_manual_action_id(actions)
-        actions.append({"id": action_id, "name": name, "keybind": keybind})
+        actions.append(
+            {
+                "id": action_id,
+                "name": name,
+                "keybind": keybind,
+                "tracker_template": {},
+            }
+        )
         profile["manual_actions"] = actions
         items = [
             i for i in list(profile.get("priority_items", [])) if isinstance(i, dict)
@@ -1517,6 +1544,27 @@ class MainWindow(QMainWindow):
         self._priority_panel.priority_list.set_items(items)
         self.config_changed.emit(self._config)
         self._maybe_auto_save()
+
+    def _on_calibrate_tracker_slot(self, slot_index: int) -> None:
+        if isinstance(slot_index, int):
+            self.show_status_message(
+                f"Tracker calibration requested for slot {slot_index + 1}", 1200
+            )
+            self.calibrate_tracker_slot_requested.emit(slot_index)
+
+    def _on_calibrate_tracker_manual_action(self, action_id: str) -> None:
+        aid = str(action_id or "").strip().lower()
+        if aid:
+            action = self._find_manual_action(aid)
+            display_name = (
+                str(action.get("name", "") or "").strip()
+                if isinstance(action, dict)
+                else aid
+            ) or aid
+            self.show_status_message(
+                f"Tracker calibration requested for {display_name}", 1200
+            )
+            self.calibrate_tracker_manual_requested.emit(aid)
 
     def _start_listening_for_key(self, slot_index: int) -> None:
         """Turn slot button blue and show status; next keypress will bind (or Esc cancel)."""
@@ -1676,6 +1724,7 @@ class MainWindow(QMainWindow):
         self._priority_panel.priority_list.set_manual_actions(
             self._active_manual_actions()
         )
+        self._priority_panel.priority_list.set_previous_action(self._previous_action_context())
         self._priority_panel.priority_list.update_states(states)
         if self._queued_override:
             keybind = (self._queued_override.get("key") or "?").strip() or "?"
@@ -1804,6 +1853,80 @@ class MainWindow(QMainWindow):
         self._cast_bar_debug_label.setStyleSheet(
             f"font-size: 10px; font-family: monospace; color: {color};"
         )
+
+    def update_action_history_debug(self, debug: dict) -> None:
+        if not isinstance(debug, dict):
+            return
+        now = time.time()
+        source = str(
+            getattr(self._config, "previous_action_source", "send_attempt")
+            or "send_attempt"
+        ).strip().lower()
+        event = str(debug.get("event", "none") or "none")
+        pending = debug.get("pending_previous_action")
+        confirmed = debug.get("confirmed_previous_action")
+        pending_name = "-"
+        confirmed_name = "-"
+        if isinstance(pending, dict):
+            pending_name = str(
+                pending.get("action_id")
+                or pending.get("slot_index")
+                or pending.get("keybind")
+                or "-"
+            )
+        if isinstance(confirmed, dict):
+            confirmed_name = str(
+                confirmed.get("action_id")
+                or confirmed.get("slot_index")
+                or confirmed.get("keybind")
+                or "-"
+            )
+        status = str(debug.get("status", "off") or "off")
+        stable_present = bool(debug.get("stable_present", False))
+        cast_active = bool(debug.get("cast_active", False))
+        expected_action = str(debug.get("expected_action_label", "") or "").strip()
+        template_available = bool(debug.get("template_available", False))
+        match_effective = float(debug.get("match_effective_similarity", 0.0) or 0.0)
+        match_threshold = float(debug.get("match_threshold", 0.0) or 0.0)
+        if event in ("instant_confirmed", "cast_confirmed", "template_confirmed"):
+            self._action_history_recent_event = "confirmed"
+            self._action_history_recent_until = now + 0.8
+        elif event == "cast_started":
+            self._action_history_recent_event = "cast_started"
+            self._action_history_recent_until = now + 0.8
+        elif event in ("cast_cancelled", "timeout", "template_missing"):
+            self._action_history_recent_event = event
+            self._action_history_recent_until = now + 1.0
+        elif status == "motion-gated":
+            self._action_history_recent_event = "motion-gated"
+            self._action_history_recent_until = now + 0.6
+        elif now >= self._action_history_recent_until:
+            self._action_history_recent_event = "none"
+
+        match_part = "tmpl -"
+        if template_available:
+            match_part = f"m {match_effective:.2f}/{match_threshold:.2f}"
+        elif expected_action:
+            match_part = "tmpl missing"
+        self._action_history_debug_label.setText(
+            f"Prev: {source} | {status}/{event} | p {pending_name} | e {expected_action or '-'} | {match_part} | c {confirmed_name}"
+        )
+        color = "#777" if status in ("off", "invalid-roi", "out-of-frame") else "#9aa0a6"
+        recent_event = self._action_history_recent_event
+        if recent_event == "confirmed":
+            color = "#88ff88"
+        elif recent_event in ("cast_cancelled", "timeout", "template_missing"):
+            color = "#ff9966"
+        elif cast_active or recent_event == "cast_started":
+            color = "#eecc55"
+        elif recent_event == "motion-gated" or status == "motion-gated":
+            color = "#d8b377"
+        elif stable_present:
+            color = "#9aa0a6"
+        self._action_history_debug_label.setStyleSheet(
+            f"font-size: 10px; font-family: monospace; color: {color};"
+        )
+        self._priority_panel.priority_list.set_previous_action(self._previous_action_context())
 
     def _on_settings_clicked(self) -> None:
         """No-op; main.py connects _btn_settings to settings_dialog.show_or_raise."""

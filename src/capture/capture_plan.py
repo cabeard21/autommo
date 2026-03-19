@@ -13,6 +13,7 @@ def compute_capture_plan(
     action_bbox: BoundingBox,
     cast_bar_region: dict,
     buff_rois: list,
+    action_history_tracker: dict,
     monitor_width: int,
     monitor_height: int,
 ) -> tuple[BoundingBox, tuple[int, int]]:
@@ -60,6 +61,18 @@ def compute_capture_plan(
         top = min(top, roi_top)
         right = max(right, roi_left + roi_w)
         bottom = max(bottom, roi_top + roi_h)
+
+    tracker = dict(action_history_tracker or {})
+    if bool(tracker.get("enabled", False)):
+        tracker_w = int(tracker.get("width", 0))
+        tracker_h = int(tracker.get("height", 0))
+        if tracker_w > 1 and tracker_h > 1:
+            tracker_left = int(action_bbox.left) + int(tracker.get("left", 0))
+            tracker_top = int(action_bbox.top) + int(tracker.get("top", 0))
+            left = min(left, tracker_left)
+            top = min(top, tracker_top)
+            right = max(right, tracker_left + tracker_w)
+            bottom = max(bottom, tracker_top + tracker_h)
 
     left = max(0, min(left, monitor_width - 1))
     top = max(0, min(top, monitor_height - 1))

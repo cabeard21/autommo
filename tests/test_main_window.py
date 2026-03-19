@@ -7,7 +7,12 @@ class MainWindowTests(unittest.TestCase):
     def test_copy_manual_action_duplicates_action_and_inserts_new_item_below(self) -> None:
         profile = {
             "manual_actions": [
-                {"id": "manual_1", "name": "Kick", "keybind": "F"},
+                {
+                    "id": "manual_1",
+                    "name": "Kick",
+                    "keybind": "F",
+                    "tracker_template": {"gray": {"shape": [2, 2], "data": "AAAA"}, "threshold": 0.9},
+                },
                 {"id": "manual_2", "name": "Stun", "keybind": "G"},
             ],
             "priority_items": [
@@ -66,6 +71,10 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(["manual_1", "manual_2", "manual_3"], [a["id"] for a in actions])
         self.assertEqual("Kick", actions[-1]["name"])
         self.assertEqual("f", actions[-1]["keybind"])
+        self.assertEqual(
+            {"gray": {"shape": [2, 2], "data": "AAAA"}, "threshold": 0.9},
+            actions[-1]["tracker_template"],
+        )
 
         self.assertEqual(["slot", "manual_1", "manual_3", "manual_1", "manual_2"], [
             ("slot" if item.get("type") == "slot" else item.get("action_id"))

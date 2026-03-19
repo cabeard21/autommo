@@ -23,6 +23,7 @@ class CaptureWorker(QThread):
     form_state_updated = pyqtSignal(object)  # Dict with active_form_id and settle state
     buff_state_updated = pyqtSignal(object)  # Dict of buff ROI states
     cast_bar_debug = pyqtSignal(object)  # Live cast-bar ROI motion/status info
+    action_history_debug = pyqtSignal(object)  # Live tracker / previous-action debug info
     key_action = pyqtSignal(object)  # Dict when a key was sent or blocked (action, keybind, etc.)
 
     def __init__(self, analyzer, config: AppConfig, key_sender=None):
@@ -61,9 +62,103 @@ class CaptureWorker(QThread):
             action_bbox=self._config.bounding_box,
             cast_bar_region=getattr(self._config, "cast_bar_region", {}) or {},
             buff_rois=getattr(self._config, "buff_rois", []) or [],
+            action_history_tracker=getattr(self._config, "action_history_tracker", {}) or {},
             monitor_width=monitor_width,
             monitor_height=monitor_height,
         )
+
+    def _resolve_previous_action_from_tracker(
+        self, tracker_debug: dict, timestamp: float
+    ) -> dict:
+        result = dict(tracker_debug or {})
+        if self._key_sender is not None:
+            pending = self._key_sender.pending_previous_action()
+            if self._key_sender.pending_previous_action_timed_out(timestamp):
+                result["event"] = "timeout"
+                pending = None
+            match = self._pending_action_tracker_match(pending)
+            result.update(match)
+            event = str(result.get("event", "none") or "none")
+            status = str(result.get("status", "off") or "off")
+            stable_present = bool(result.get("stable_present", False))
+            confirm_frames = max(
+                1,
+                int(
+                    (
+                        getattr(self._config, "action_history_tracker", {}) or {}
+                    ).get("confirm_frames", 2)
+                    or 2
+                ),
+            )
+            stationary_frames = int(result.get("spawn_stationary_frames", 0) or 0)
+            template_confirmed = (
+                match.get("matched", False)
+                and status == "ok"
+                and stable_present
+                and stationary_frames >= confirm_frames
+            )
+            if pending is not None and not match.get("template_available", False):
+                if event == "none":
+                    result["event"] = "template_missing"
+                self._key_sender.clear_confirmed_previous_action()
+                self._key_sender.cancel_pending_previous_action()
+            elif match.get("template_available", False):
+                if template_confirmed:
+                    if event == "none":
+                        result["event"] = "template_confirmed"
+                    self._key_sender.confirm_pending_previous_action(timestamp=timestamp)
+                elif match.get("matched", False) and event == "cast_cancelled":
+                    self._key_sender.cancel_pending_previous_action()
+            result["pending_previous_action"] = self._key_sender.pending_previous_action()
+            result["confirmed_previous_action"] = self._key_sender.confirmed_previous_action()
+        return result
+
+    def _pending_action_tracker_match(self, pending: dict | None) -> dict:
+        if not isinstance(pending, dict):
+            return {
+                "template_available": False,
+                "matched": False,
+                "expected_action_label": "",
+            }
+        item_type = str(pending.get("item_type", "") or "").strip().lower()
+        label = ""
+        template: dict | None = None
+        if item_type == "slot":
+            slot_index = pending.get("slot_index")
+            if isinstance(slot_index, int):
+                templates = list(getattr(self._config, "slot_tracker_templates", []) or [])
+                if 0 <= slot_index < len(templates):
+                    template = templates[slot_index] if isinstance(templates[slot_index], dict) else None
+                label = f"slot:{slot_index}"
+        elif item_type == "manual":
+            action_id = str(pending.get("action_id", "") or "").strip().lower()
+            for action in self._config.active_manual_actions():
+                if str(action.get("id", "") or "").strip().lower() == action_id:
+                    template = (
+                        dict(action.get("tracker_template", {}) or {})
+                        if isinstance(action.get("tracker_template", {}), dict)
+                        else None
+                    )
+                    label = str(action.get("name", "") or "").strip() or action_id
+                    break
+        if not isinstance(template, dict) or not template:
+            return {
+                "template_available": False,
+                "matched": False,
+                "expected_action_label": label,
+            }
+        match = self._analyzer.action_history_match(template)
+        return {
+            "template_available": bool(match.get("available", False)),
+            "matched": bool(match.get("matched", False)),
+            "expected_action_label": label,
+            "match_gray_similarity": float(match.get("gray_similarity", 0.0) or 0.0),
+            "match_color_similarity": float(match.get("color_similarity", 0.0) or 0.0),
+            "match_effective_similarity": float(match.get("effective_similarity", 0.0) or 0.0),
+            "match_threshold": float(match.get("threshold", 0.0) or 0.0),
+            "match_color_threshold": float(match.get("color_threshold", 0.0) or 0.0),
+            "match_color_enabled": bool(match.get("color_enabled", False)),
+        }
 
     def run(self) -> None:
         self._running = True
@@ -134,6 +229,10 @@ class CaptureWorker(QThread):
                     buff_states = self._analyzer.buff_states()
                     self.buff_state_updated.emit(buff_states)
                     self.cast_bar_debug.emit(self._analyzer.cast_bar_debug())
+                    tracker_debug = self._resolve_previous_action_from_tracker(
+                        self._analyzer.action_history_debug(), state.timestamp
+                    )
+                    self.action_history_debug.emit(tracker_debug)
                     if self._key_sender is not None:
                         on_queued_sent = (
                             self._queue_listener.clear_queue if self._queue_listener else None

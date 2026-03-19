@@ -56,6 +56,7 @@ def copy_manual_action_in_profile(
             "id": new_action_id,
             "name": str(source_action.get("name", "") or "").strip() or "Manual Action",
             "keybind": normalize_bind(str(source_action.get("keybind", "") or "").strip()),
+            "tracker_template": dict(source_action.get("tracker_template", {}) or {}),
         }
     )
 

@@ -63,6 +63,20 @@ class _CooldownGroupRuntime:
     cooldown_release_candidate_started_at: Optional[float] = None
 
 
+@dataclass
+class _ActionHistoryTrackerRuntime:
+    prev_spawn_gray: Optional[np.ndarray] = None
+    prev_tracker_gray: Optional[np.ndarray] = None
+    prev_spawn_present: bool = False
+    present_frames: int = 0
+    absent_frames: int = 0
+    stable_present: bool = False
+    candidate_frames: int = 0
+    stationary_frames: int = 0
+    cast_active: bool = False
+    motion_score: float = 0.0
+
+
 class SlotAnalyzer:
     """Analyzes a captured action bar image to determine per-slot cooldown state."""
 
@@ -105,6 +119,10 @@ class SlotAnalyzer:
         self._buff_runtime: dict[str, _BuffRuntime] = {}
         self._buff_states: dict[str, dict] = {}
         self._buff_template_cache: dict[str, np.ndarray] = {}
+        self._action_history_runtime = _ActionHistoryTrackerRuntime()
+        self._action_history_debug: dict[str, object] = {"status": "off", "event": "none"}
+        self._action_history_spawn_gray: Optional[np.ndarray] = None
+        self._action_history_spawn_color: Optional[np.ndarray] = None
         self._detection_region: str = (
             (getattr(config, "detection_region", None) or "top_left").strip().lower()
         )
@@ -217,6 +235,245 @@ class SlotAnalyzer:
         self._buff_runtime = {}
         self._buff_states = {}
         self._cooldown_group_runtime = {}
+        self._action_history_runtime = _ActionHistoryTrackerRuntime()
+        self._action_history_debug = {"status": "off", "event": "none"}
+        self._action_history_spawn_gray = None
+        self._action_history_spawn_color = None
+
+    def _action_history_tracker_rect(self) -> Optional[tuple[int, int, int, int]]:
+        tracker = dict(getattr(self._config, "action_history_tracker", {}) or {})
+        if not bool(tracker.get("enabled", False)):
+            return None
+        width = int(tracker.get("width", 0))
+        height = int(tracker.get("height", 0))
+        if width <= 1 or height <= 1:
+            return None
+        x1 = self._frame_action_origin_x + int(tracker.get("left", 0))
+        y1 = self._frame_action_origin_y + int(tracker.get("top", 0))
+        return x1, y1, width, height
+
+    @staticmethod
+    def _tracker_cancel_fraction(gray: np.ndarray) -> float:
+        h, w = gray.shape[:2]
+        if h <= 2 or w <= 2:
+            return 0.0
+        threshold = max(180, int(np.percentile(gray, 85)))
+        mask = gray >= threshold
+        yy, xx = np.indices((h, w))
+        diag1 = np.abs((xx / max(1, w - 1)) - (yy / max(1, h - 1))) <= 0.12
+        diag2 = np.abs((xx / max(1, w - 1)) - (1.0 - (yy / max(1, h - 1)))) <= 0.12
+        d1 = float(np.mean(mask[diag1])) if np.any(diag1) else 0.0
+        d2 = float(np.mean(mask[diag2])) if np.any(diag2) else 0.0
+        return min(d1, d2)
+
+    def _analyze_action_history_tracker(
+        self, frame: np.ndarray, action_origin: tuple[int, int]
+    ) -> None:
+        tracker = dict(getattr(self._config, "action_history_tracker", {}) or {})
+        runtime = self._action_history_runtime
+        debug: dict[str, object] = {
+            "status": "off",
+            "event": "none",
+            "spawn_present": False,
+            "stable_present": bool(runtime.stable_present),
+            "spawn_changed": False,
+            "spawn_motion": 0.0,
+            "spawn_diff": 0.0,
+            "spawn_stationary_frames": int(runtime.stationary_frames),
+            "candidate_frames": int(runtime.candidate_frames),
+            "cancel_candidate": False,
+            "cancel_fraction": 0.0,
+            "cast_active": bool(runtime.cast_active),
+            "motion_gate_threshold": float(tracker.get("motion_gate_threshold", 12.0) or 12.0),
+        }
+        if not bool(tracker.get("enabled", False)):
+            runtime.prev_spawn_gray = None
+            runtime.prev_tracker_gray = None
+            runtime.prev_spawn_present = False
+            runtime.present_frames = 0
+            runtime.absent_frames = 0
+            runtime.stable_present = False
+            runtime.candidate_frames = 0
+            runtime.stationary_frames = 0
+            runtime.cast_active = False
+            runtime.motion_score = 0.0
+            self._action_history_spawn_gray = None
+            self._action_history_spawn_color = None
+            self._action_history_debug = debug
+            return
+
+        rect = self._action_history_tracker_rect()
+        if rect is None:
+            debug["status"] = "invalid-roi"
+            self._action_history_spawn_gray = None
+            self._action_history_spawn_color = None
+            self._action_history_debug = debug
+            return
+        x1, y1, width, height = rect
+        x2 = x1 + width
+        y2 = y1 + height
+        if x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
+            debug["status"] = "out-of-frame"
+            self._action_history_spawn_gray = None
+            self._action_history_spawn_color = None
+            self._action_history_debug = debug
+            return
+
+        roi = frame[y1:y2, x1:x2]
+        spawn_width = min(width, max(4, int(tracker.get("spawn_width", 36) or 36)))
+        spawn = roi[:, width - spawn_width : width]
+        self._action_history_spawn_color = spawn.copy()
+        roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(spawn, cv2.COLOR_BGR2GRAY)
+        self._action_history_spawn_gray = gray.copy()
+        motion_gate_threshold = float(tracker.get("motion_gate_threshold", 12.0) or 12.0)
+        if (
+            motion_gate_threshold > 0
+            and runtime.prev_tracker_gray is not None
+            and runtime.prev_tracker_gray.shape == roi_gray.shape
+        ):
+            runtime.motion_score = float(
+                np.mean(cv2.absdiff(roi_gray, runtime.prev_tracker_gray))
+            )
+        else:
+            runtime.motion_score = 0.0
+        runtime.prev_tracker_gray = roi_gray
+        motion_gated = motion_gate_threshold > 0 and runtime.motion_score > motion_gate_threshold
+        mean_val = float(np.mean(gray))
+        std_val = float(np.std(gray))
+        raw_present = bool(std_val >= 10.0 and mean_val <= 245.0)
+        diff = 0.0
+        if runtime.prev_spawn_gray is not None and runtime.prev_spawn_gray.shape == gray.shape:
+            diff = float(np.mean(cv2.absdiff(gray, runtime.prev_spawn_gray)))
+        if motion_gated:
+            raw_present = runtime.stable_present
+        present_confirm_frames = max(
+            1, int(tracker.get("present_confirm_frames", 2) or 2)
+        )
+        if raw_present:
+            runtime.present_frames += 1
+            runtime.absent_frames = 0
+        else:
+            runtime.absent_frames += 1
+            runtime.present_frames = 0
+        if runtime.present_frames >= present_confirm_frames:
+            runtime.stable_present = True
+        elif runtime.absent_frames >= present_confirm_frames:
+            runtime.stable_present = False
+        present = bool(runtime.stable_present)
+        stable = present and runtime.prev_spawn_gray is not None and diff <= 4.0 and not motion_gated
+        changed = (not motion_gated) and present and (
+            (not runtime.prev_spawn_present) or (runtime.prev_spawn_gray is not None and diff >= 8.0)
+        )
+        if changed:
+            runtime.candidate_frames += 1
+        elif present:
+            runtime.candidate_frames = max(0, runtime.candidate_frames - 1)
+        else:
+            runtime.candidate_frames = 0
+        if stable:
+            runtime.stationary_frames += 1
+        else:
+            runtime.stationary_frames = 0
+
+        cancel_fraction = 0.0
+        cancel_candidate = False
+        if bool(tracker.get("cancel_x_enabled", True)) and present:
+            cancel_fraction = self._tracker_cancel_fraction(gray)
+            cancel_candidate = cancel_fraction >= float(
+                tracker.get("cancel_x_threshold", 0.10) or 0.10
+            )
+
+        event = "none"
+        stationary_for_cast = max(
+            1, int(tracker.get("stationary_frames_for_cast", 3) or 3)
+        )
+        confirm_frames = max(1, int(tracker.get("confirm_frames", 2) or 2))
+        if motion_gated:
+            event = "none"
+        elif cancel_candidate and runtime.cast_active:
+            event = "cast_cancelled"
+            runtime.cast_active = False
+            runtime.candidate_frames = 0
+        elif present and runtime.stationary_frames >= stationary_for_cast and not runtime.cast_active:
+            event = "cast_started"
+            runtime.cast_active = True
+        elif runtime.cast_active and present and not stable and diff >= 8.0:
+            event = "cast_confirmed"
+            runtime.cast_active = False
+            runtime.candidate_frames = 0
+        elif changed and runtime.candidate_frames >= confirm_frames and runtime.stationary_frames < stationary_for_cast:
+            event = "instant_confirmed"
+            runtime.cast_active = False
+            runtime.candidate_frames = 0
+
+        runtime.prev_spawn_gray = gray
+        runtime.prev_spawn_present = present
+        debug.update(
+            {
+                "status": "motion-gated" if motion_gated else "ok",
+                "event": event,
+                "spawn_present": bool(present),
+                "stable_present": bool(runtime.stable_present),
+                "spawn_changed": bool(changed),
+                "spawn_motion": float(diff),
+                "spawn_diff": float(diff),
+                "spawn_stationary_frames": int(runtime.stationary_frames),
+                "candidate_frames": int(runtime.candidate_frames),
+                "cancel_candidate": bool(cancel_candidate),
+                "cancel_fraction": float(cancel_fraction),
+                "cast_active": bool(runtime.cast_active),
+                "motion_score": float(runtime.motion_score),
+                "mean": mean_val,
+                "std": std_val,
+            }
+        )
+        self._action_history_debug = debug
+
+    def action_history_match(self, tracker_template: object) -> dict:
+        template = tracker_template if isinstance(tracker_template, dict) else {}
+        gray_template = self._decode_gray_template(template.get("gray"))
+        color_template = self._decode_color_template(template.get("color"))
+        gray = self._action_history_spawn_gray
+        color = self._action_history_spawn_color
+        if gray_template is None or gray is None or color is None:
+            return {
+                "available": False,
+                "matched": False,
+                "gray_similarity": 0.0,
+                "color_similarity": 0.0,
+                "effective_similarity": 0.0,
+                "threshold": float(template.get("threshold", 0.88) or 0.88),
+                "color_threshold": float(template.get("color_threshold", 0.85) or 0.85),
+                "color_enabled": bool(template.get("color_enabled", color_template is not None)),
+            }
+        gray_similarity = self._template_similarity(gray, gray_template)
+        color_enabled = bool(template.get("color_enabled", color_template is not None))
+        color_similarity = (
+            self._saturation_similarity(color, color_template)
+            if color_enabled and color_template is not None
+            else 1.0
+        )
+        effective_similarity = (
+            min(gray_similarity, color_similarity) if color_enabled else gray_similarity
+        )
+        threshold = max(0.0, min(1.0, float(template.get("threshold", 0.88) or 0.88)))
+        color_threshold = max(
+            0.0, min(1.0, float(template.get("color_threshold", 0.85) or 0.85))
+        )
+        matched = gray_similarity >= threshold and (
+            (not color_enabled) or color_template is None or color_similarity >= color_threshold
+        )
+        return {
+            "available": True,
+            "matched": bool(matched),
+            "gray_similarity": float(gray_similarity),
+            "color_similarity": float(color_similarity),
+            "effective_similarity": float(effective_similarity),
+            "threshold": float(threshold),
+            "color_threshold": float(color_threshold),
+            "color_enabled": bool(color_enabled),
+        }
 
     def crop_slot(self, frame: np.ndarray, slot: SlotConfig) -> np.ndarray:
         """Extract a single slot's image from the action bar frame.
@@ -1272,6 +1529,9 @@ class SlotAnalyzer:
     def buff_states(self) -> dict[str, dict]:
         return {k: dict(v) for k, v in self._buff_states.items()}
 
+    def action_history_debug(self) -> dict:
+        return dict(self._action_history_debug)
+
     def cast_bar_debug(self) -> dict:
         """Latest cast-bar ROI motion debug info for UI."""
         return {
@@ -1372,6 +1632,7 @@ class SlotAnalyzer:
         )
         self._cast_gate_active = cast_gate_active
         self._analyze_buffs(frame, action_origin)
+        self._analyze_action_history_tracker(frame, action_origin)
         self._update_active_form_id(now)
         if slot_detection_mode == "buff_only":
             cast_ends_at = (

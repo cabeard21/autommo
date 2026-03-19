@@ -64,6 +64,8 @@ class KeySender:
         self._suppress_priority_until = 0.0
         self._single_fire_pending = False
         self._last_sent_item: Optional[dict] = None
+        self._pending_previous_action: Optional[dict] = None
+        self._confirmed_previous_action: Optional[dict] = None
 
     def update_config(self, config: "AppConfig") -> None:
         self._config = config
@@ -122,9 +124,67 @@ class KeySender:
             keyboard_module.release(modifier)
 
     def last_previous_action(self) -> Optional[dict]:
+        source = str(
+            getattr(self._config, "previous_action_source", "send_attempt")
+            or "send_attempt"
+        ).strip().lower()
+        if source == "tracker_confirmed":
+            return self.confirmed_previous_action()
+        if source == "tracker_with_fallback":
+            confirmed = self.confirmed_previous_action()
+            if confirmed is not None:
+                return confirmed
         if not isinstance(self._last_sent_item, dict):
             return None
         return dict(self._last_sent_item)
+
+    def pending_previous_action(self) -> Optional[dict]:
+        if not isinstance(self._pending_previous_action, dict):
+            return None
+        return dict(self._pending_previous_action)
+
+    def confirmed_previous_action(self) -> Optional[dict]:
+        if not isinstance(self._confirmed_previous_action, dict):
+            return None
+        return dict(self._confirmed_previous_action)
+
+    def clear_confirmed_previous_action(self) -> None:
+        self._confirmed_previous_action = None
+
+    def confirm_pending_previous_action(self, timestamp: Optional[float] = None) -> Optional[dict]:
+        if not isinstance(self._pending_previous_action, dict):
+            return None
+        confirmed = dict(self._pending_previous_action)
+        if timestamp is not None:
+            confirmed["timestamp"] = float(timestamp)
+        self._confirmed_previous_action = confirmed
+        self._pending_previous_action = None
+        return dict(confirmed)
+
+    def cancel_pending_previous_action(self) -> None:
+        self._pending_previous_action = None
+
+    def pending_previous_action_timed_out(self, now: Optional[float] = None) -> bool:
+        pending = self._pending_previous_action
+        if not isinstance(pending, dict):
+            return False
+        timeout_ms = max(
+            100,
+            int(
+                (
+                    getattr(self._config, "action_history_tracker", {}) or {}
+                ).get("pending_timeout_ms", 2500)
+                or 2500
+            ),
+        )
+        timestamp = float(pending.get("timestamp", 0.0) or 0.0)
+        if timestamp <= 0:
+            return False
+        current = time.time() if now is None else float(now)
+        if current >= timestamp + (timeout_ms / 1000.0):
+            self._pending_previous_action = None
+            return True
+        return False
 
     @staticmethod
     def _item_previous_action_identity(
@@ -413,7 +473,9 @@ class KeySender:
                 return None
 
             self._record_send(now)
-            self._last_sent_item = self._item_previous_action_identity(item, keybind, now)
+            identity = self._item_previous_action_identity(item, keybind, now)
+            self._last_sent_item = identity
+            self._pending_previous_action = dict(identity) if isinstance(identity, dict) else None
             if single_fire_pending:
                 self._single_fire_pending = False
             logger.info("Sent key: %s", keybind)

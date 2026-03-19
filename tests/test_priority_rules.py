@@ -543,7 +543,7 @@ class PriorityRulesTests(unittest.TestCase):
             manual_item_is_eligible(item, buff_states=None, previous_action=previous_action)
         )
 
-    def test_manual_previous_action_is_not_fails_without_previous_action(self) -> None:
+    def test_manual_previous_action_is_not_passes_without_previous_action(self) -> None:
         item = {
             "type": "manual",
             "action_id": "manual_2",
@@ -556,7 +556,7 @@ class PriorityRulesTests(unittest.TestCase):
                 }
             ],
         }
-        self.assertFalse(manual_item_is_eligible(item, buff_states=None, previous_action=None))
+        self.assertTrue(manual_item_is_eligible(item, buff_states=None, previous_action=None))
 
     def test_slot_previous_action_is_not_and_buff_conditions_are_anded(self) -> None:
         item = {

@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from src.automation.key_sender import KeySender
 from src.automation.binds import format_bind_for_display, normalize_bind
+from src.capture.worker import CaptureWorker
 from src.models import ActionBarState, AppConfig, SlotSnapshot, SlotState
 
 
@@ -257,6 +258,89 @@ class KeySenderBuffOnlyModeTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(kb.send.call_count, 1)
         self.assertEqual(kb.send.call_args_list[0].args[0], "e")
+
+
+class KeySenderPreviousActionTests(unittest.TestCase):
+    def test_tracker_confirmed_source_uses_confirmed_action_only(self) -> None:
+        cfg = AppConfig()
+        cfg.previous_action_source = "tracker_confirmed"
+        cfg.keybinds = ["1"]
+        cfg.queue_fire_delay_ms = 0
+        sender = KeySender(cfg)
+        kb = types.SimpleNamespace(send=Mock())
+        state = _ready_state()
+        item = _priority_items()
+
+        with patch.dict(sys.modules, {"keyboard": kb}):
+            with patch("src.automation.key_sender.time.time", return_value=100.0):
+                sender.evaluate_and_send(state, item, ["1"], [], True)
+
+        self.assertIsNone(sender.last_previous_action())
+        pending = sender.pending_previous_action()
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending["slot_index"], 0)
+        confirmed = sender.confirm_pending_previous_action(timestamp=101.0)
+        self.assertIsNotNone(confirmed)
+        self.assertEqual(sender.last_previous_action()["slot_index"], 0)
+
+    def test_tracker_with_fallback_uses_attempt_until_confirmed(self) -> None:
+        cfg = AppConfig()
+        cfg.previous_action_source = "tracker_with_fallback"
+        cfg.keybinds = ["1"]
+        cfg.queue_fire_delay_ms = 0
+        sender = KeySender(cfg)
+        kb = types.SimpleNamespace(send=Mock())
+
+        with patch.dict(sys.modules, {"keyboard": kb}):
+            with patch("src.automation.key_sender.time.time", return_value=200.0):
+                sender.evaluate_and_send(_ready_state(), _priority_items(), ["1"], [], True)
+
+        previous = sender.last_previous_action()
+        self.assertIsNotNone(previous)
+        self.assertEqual(previous["slot_index"], 0)
+        sender.confirm_pending_previous_action(timestamp=201.0)
+        confirmed = sender.last_previous_action()
+        self.assertIsNotNone(confirmed)
+        self.assertEqual(confirmed["timestamp"], 201.0)
+
+    def test_pending_previous_action_timeout_clears_pending_without_confirming(self) -> None:
+        cfg = AppConfig()
+        cfg.previous_action_source = "tracker_confirmed"
+        cfg.action_history_tracker = {"pending_timeout_ms": 100}
+        cfg.keybinds = ["1"]
+        sender = KeySender(cfg)
+        kb = types.SimpleNamespace(send=Mock())
+
+        with patch.dict(sys.modules, {"keyboard": kb}):
+            with patch("src.automation.key_sender.time.time", return_value=300.0):
+                sender.evaluate_and_send(_ready_state(), _priority_items(), ["1"], [], True)
+
+        self.assertTrue(sender.pending_previous_action_timed_out(300.2))
+        self.assertIsNone(sender.pending_previous_action())
+        self.assertIsNone(sender.confirmed_previous_action())
+
+    def test_uncalibrated_pending_action_clears_confirmed_previous_action(self) -> None:
+        cfg = AppConfig()
+        cfg.previous_action_source = "tracker_confirmed"
+        cfg.slot_tracker_templates = [{}]
+        sender = KeySender(cfg)
+        sender._confirmed_previous_action = {
+            "item_type": "manual",
+            "action_id": "manual_echo",
+            "timestamp": 100.0,
+        }
+        sender._pending_previous_action = {
+            "item_type": "slot",
+            "slot_index": 0,
+            "timestamp": 101.0,
+        }
+        worker = CaptureWorker(analyzer=types.SimpleNamespace(), config=cfg, key_sender=sender)
+
+        debug = worker._resolve_previous_action_from_tracker({"status": "ok", "event": "none"}, 101.1)
+
+        self.assertEqual(debug["event"], "template_missing")
+        self.assertIsNone(sender.pending_previous_action())
+        self.assertIsNone(sender.confirmed_previous_action())
 
 if __name__ == "__main__":
     unittest.main()

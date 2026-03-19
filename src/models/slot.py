@@ -202,6 +202,8 @@ class AppConfig:
     )  # keybinds[slot_index] = key string, e.g. "5", "F"
     # User-defined display names per slot (e.g. "Fireball"); empty/missing = "Unidentified"
     slot_display_names: list[str] = field(default_factory=list)
+    # Optional tracker icon templates keyed by slot index.
+    slot_tracker_templates: list[dict] = field(default_factory=list)
     # Persisted baselines: list of {"shape": [h, w], "data": base64} per slot (decoded at runtime in analyzer)
     slot_baselines: list = field(default_factory=list)
     # Persisted per-form baselines: {form_id: [{shape:[h,w], data:base64}, ...]}
@@ -218,6 +220,10 @@ class AppConfig:
     overwritten_baseline_slots: list[int] = field(default_factory=list)
     # Buff ROI templates used for buff-present / buff-missing readiness rules.
     buff_rois: list[dict] = field(default_factory=list)
+    # Source of truth for previous_action conditions.
+    previous_action_source: str = "send_attempt"
+    # Optional action history / GCD tracker ROI configuration.
+    action_history_tracker: dict = field(default_factory=dict)
     # Priority order for automation: kept for backward compatibility with older config files.
     priority_order: list[int] = field(default_factory=list)
     automation_enabled: bool = False
@@ -267,8 +273,46 @@ class AppConfig:
                 str(raw.get("name", "") or "").strip() or aid.replace("_", " ").title()
             )
             keybind = normalize_bind(str(raw.get("keybind", "") or ""))
-            normalized.append({"id": aid, "name": name, "keybind": keybind})
+            normalized.append(
+                {
+                    "id": aid,
+                    "name": name,
+                    "keybind": keybind,
+                    "tracker_template": AppConfig._normalize_tracker_template(
+                        raw.get("tracker_template")
+                    ),
+                }
+            )
         return normalized
+
+    @staticmethod
+    def _normalize_tracker_template(raw_template: object) -> dict:
+        if not isinstance(raw_template, dict):
+            return {}
+        gray = AppConfig._normalize_buff_template(raw_template.get("gray"))
+        color = AppConfig._normalize_buff_template_color(raw_template.get("color"))
+        if gray is None:
+            return {}
+        threshold = max(0.0, min(1.0, float(raw_template.get("threshold", 0.88) or 0.88)))
+        return {
+            "gray": gray,
+            "color": color,
+            "threshold": threshold,
+            "color_threshold": max(
+                0.0, min(1.0, float(raw_template.get("color_threshold", 0.85) or 0.85))
+            ),
+            "color_enabled": bool(raw_template.get("color_enabled", color is not None)),
+        }
+
+    @staticmethod
+    def _normalize_slot_tracker_templates(raw_templates: object, slot_count: int) -> list[dict]:
+        templates: list[dict] = []
+        for idx in range(max(0, int(slot_count))):
+            raw = None
+            if isinstance(raw_templates, list) and idx < len(raw_templates):
+                raw = raw_templates[idx]
+            templates.append(AppConfig._normalize_tracker_template(raw))
+        return templates
 
     @staticmethod
     def _normalize_slot_keybinds(raw_keybinds: object) -> list[str]:
@@ -290,6 +334,46 @@ class AppConfig:
         if source in ("slot", "always"):
             return source
         return "always" if item_type == "manual" else "slot"
+
+    @staticmethod
+    def _normalize_previous_action_source(raw_source: object) -> str:
+        source = str(raw_source or "send_attempt").strip().lower()
+        if source in ("send_attempt", "tracker_confirmed", "tracker_with_fallback"):
+            return source
+        return "send_attempt"
+
+    @staticmethod
+    def _normalize_action_history_tracker(raw_tracker: object) -> dict:
+        tracker = dict(raw_tracker or {}) if isinstance(raw_tracker, dict) else {}
+        return {
+            "enabled": bool(tracker.get("enabled", False)),
+            "left": int(tracker.get("left", 0) or 0),
+            "top": int(tracker.get("top", 0) or 0),
+            "width": int(tracker.get("width", 0) or 0),
+            "height": int(tracker.get("height", 0) or 0),
+            "spawn_width": max(4, int(tracker.get("spawn_width", 36) or 36)),
+            "confirm_frames": max(1, int(tracker.get("confirm_frames", 2) or 2)),
+            "present_confirm_frames": max(
+                1, int(tracker.get("present_confirm_frames", 2) or 2)
+            ),
+            "stationary_frames_for_cast": max(
+                1, int(tracker.get("stationary_frames_for_cast", 3) or 3)
+            ),
+            "pending_timeout_ms": max(
+                100, int(tracker.get("pending_timeout_ms", 2500) or 2500)
+            ),
+            "cancel_x_enabled": bool(tracker.get("cancel_x_enabled", True)),
+            "cancel_x_threshold": max(
+                0.01, min(1.0, float(tracker.get("cancel_x_threshold", 0.10) or 0.10))
+            ),
+            "motion_gate_threshold": max(
+                0.0, float(tracker.get("motion_gate_threshold", 12.0) or 12.0)
+            ),
+            "fade_ignore_left_fraction": max(
+                0.0,
+                min(0.95, float(tracker.get("fade_ignore_left_fraction", 0.20) or 0.20)),
+            ),
+        }
 
     @staticmethod
     def _normalize_conditions(
@@ -652,6 +736,9 @@ class AppConfig:
     def _normalize_profiles(self) -> None:
         """Ensure automation profiles are valid and there is always an active profile."""
         self.keybinds = self._normalize_slot_keybinds(self.keybinds)
+        self.slot_tracker_templates = self._normalize_slot_tracker_templates(
+            self.slot_tracker_templates, self.slot_count
+        )
         self.buff_rois = self._normalize_buff_rois(self.buff_rois)
         self.forms = self._normalize_forms(self.forms)
         form_ids = {str(f.get("id", "") or "").strip().lower() for f in self.forms}
@@ -1093,6 +1180,10 @@ class AppConfig:
                 data.get("slots", {}).get("keybinds", [])
             ),
             slot_display_names=data.get("slot_display_names", []),
+            slot_tracker_templates=cls._normalize_slot_tracker_templates(
+                data.get("slot_tracker_templates", []),
+                int(data.get("slots", {}).get("count", 0) or 0),
+            ),
             slot_baselines=data.get("slot_baselines", []),
             slot_baselines_by_form=data.get("slot_baselines_by_form", {}),
             forms=data.get("forms", [{"id": "normal", "name": "Normal"}]),
@@ -1100,6 +1191,12 @@ class AppConfig:
             form_detector=data.get("form_detector", {}),
             overwritten_baseline_slots=data.get("overwritten_baseline_slots", []),
             buff_rois=cls._normalize_buff_rois(data.get("buff_rois", [])),
+            previous_action_source=cls._normalize_previous_action_source(
+                data.get("previous_action_source", "send_attempt")
+            ),
+            action_history_tracker=cls._normalize_action_history_tracker(
+                data.get("action_history_tracker", {})
+            ),
             priority_order=data.get("priority_order", []),
             automation_enabled=data.get("automation_enabled", False),
             automation_toggle_bind=data.get("automation_toggle_bind", ""),
@@ -1200,6 +1297,12 @@ class AppConfig:
         cfg.glow_motion_min_hold_ms = max(0, int(cfg.glow_motion_min_hold_ms))
         cfg.glow_motion_min_off_ms = max(0, int(cfg.glow_motion_min_off_ms))
         cfg.press_interval_jitter_ms = max(0, min(500, int(cfg.press_interval_jitter_ms)))
+        cfg.previous_action_source = cls._normalize_previous_action_source(
+            getattr(cfg, "previous_action_source", "send_attempt")
+        )
+        cfg.action_history_tracker = cls._normalize_action_history_tracker(
+            getattr(cfg, "action_history_tracker", {})
+        )
         return cfg
 
     def to_dict(self) -> dict:
@@ -1214,6 +1317,7 @@ class AppConfig:
                 "keybinds": self.keybinds,
             },
             "slot_display_names": self.slot_display_names,
+            "slot_tracker_templates": self.slot_tracker_templates,
             "detection": {
                 "polling_fps": self.polling_fps,
                 "brightness_threshold": self.brightness_threshold,
@@ -1305,6 +1409,8 @@ class AppConfig:
             "form_detector": self.form_detector,
             "overwritten_baseline_slots": self.overwritten_baseline_slots,
             "buff_rois": self.buff_rois,
+            "previous_action_source": self.previous_action_source,
+            "action_history_tracker": self.action_history_tracker,
             "priority_order": self.priority_order,
             "automation_enabled": self.automation_enabled,
             "automation_toggle_bind": self.automation_toggle_bind,
